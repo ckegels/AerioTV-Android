@@ -1433,15 +1433,43 @@
     // probe that arrives with the first connection is not missed. Wrapped:
     // this page must still run on a platform whose API lacks the listener.
     try {
+      // 2026-09-13 (Chromecast Ultra, iPhone log 02:38:56-02:39:02): the caps
+      // message went out once at READY on the debug namespace, and a sender
+      // that attached that channel after READY saw nothing, so it logged
+      // "caps not received, assuming no AC-3" and refused the stream. The
+      // hello reply is the one message every sender is guaranteed to read
+      // before it plans the audio, so the measurement rides along with it;
+      // an explicit {cmd:"caps"} request is answered too, on either channel,
+      // for a sender that got a reply from an older page.
+      const answerCaps = function (namespace, senderId) {
+        context.sendCustomMessage(namespace, senderId, {
+          type: 'caps',
+          ev: 'request',
+          mse: mseCapabilities(),
+        });
+      };
       context.addCustomMessageListener(CONTROL_NAMESPACE, function (event) {
         const data = event && event.data;
         const cmd = data && (data.cmd || data.type);
+        if (cmd === 'caps') {
+          answerCaps(CONTROL_NAMESPACE, event.senderId);
+          return;
+        }
         if (cmd !== 'hello') return;
         context.sendCustomMessage(CONTROL_NAMESPACE, event.senderId, {
           type: 'receiverInfo',
           cmd: 'receiverInfo',
           platform: 'web-receiver',
+          // Same keys as the 'caps' message: the FIELD NAMES are the
+          // contract both senders parse and must not change.
+          mse: mseCapabilities(),
         });
+      });
+      context.addCustomMessageListener(DEBUG_NAMESPACE, function (event) {
+        const data = event && event.data;
+        const cmd = data && (data.cmd || data.type);
+        if (cmd !== 'caps') return;
+        answerCaps(DEBUG_NAMESPACE, event.senderId);
       });
     } catch (e) {
       console.warn('AerioTV: control namespace listener not registered', e);
