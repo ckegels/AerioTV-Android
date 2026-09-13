@@ -316,7 +316,7 @@
 
     function loadingText(nowMs) {
       if (bufferingSince && renderingSince) {
-        return 'Buffering  ' + secondsSince(bufferingSince, nowMs) + ' s';
+        return 'Loading  ' + secondsSince(bufferingSince, nowMs) + ' s';
       }
       if (!manifestSeenAt) return 'Connecting to server';
       const bytes = downloadedBytes();
