@@ -288,6 +288,126 @@ class AerioExoPlayerHolder @Inject constructor(
             cachedLiveStartBuffers =
                 appPreferences.setLiveStartBufferMs(channelId, next, learnedAtMs)
         }
+        // A raised hold-back used to apply only on the NEXT tune, so the
+        // session that taught us the gap kept stalling on it. Media3 cannot
+        // retarget a live offset mid-stream, so the running session honors it
+        // the only way it can: hold playback until that much media is buffered
+        // ahead. Posted to the watchdog scope because this callback arrives on
+        // the analytics thread.
+        watchdogScope.launch { armResumeGate("learned hold-back $next ms") }
+    }
+
+    /** Learned per-channel hold-back for the channel currently primed, with the
+     *  same 30 minute expiry [playUrl] applies. 0 when nothing is learned. */
+    private fun learnedHoldbackMs(): Long {
+        val id = currentChannelIdForRebuild ?: return 0L
+        val entry = cachedLiveStartBuffers[id] ?: return 0L
+        if (System.currentTimeMillis() - entry.learnedAtMs > HOLDBACK_LEARNED_TTL_MS) return 0L
+        return entry.ms.toLong()
+    }
+
+    /**
+     * How much media must be buffered AHEAD of the playhead before the resume
+     * gate lets playback run again:
+     *
+     *   target = min(
+     *       max(worst observed delivery gap + 2 s, learned hold-back),
+     *       20 s cap,
+     *       maxBufferMs - 1 s          // what the LoadControl will actually hold
+     *   )
+     *
+     * The worst gap comes from the tracer's rolling 30 s feed ring, so it is the
+     * measured shape of THIS feed, not a guess.
+     */
+    private fun resumeGateTargetMs(): Long {
+        val worstGapMs = tracer.worstGapMs().coerceAtLeast(0L)
+        val want = maxOf(worstGapMs + RESUME_GATE_HEADROOM_MS, learnedHoldbackMs())
+            .coerceAtMost(RESUME_GATE_CAP_MS)
+        val holdable = (builtMaxBufferMs - 1_000L).coerceAtLeast(0L)
+        return if (holdable > 0L) minOf(want, holdable) else want
+    }
+
+    /** True when a resume gate may hold this playback: a live direct stream that
+     *  had already reached steady playback (a cold start is the tune path's job,
+     *  and timeshift / catch-up read a local buffer that cannot burst). */
+    private fun resumeGateEligible(): Boolean {
+        val p = player ?: return false
+        val url = lastPlayUrl ?: return false
+        if (isTimeshifting || isCatchup) return false
+        if (PlaybackTracer.urlKind(url) != "live") return false
+        if (!hasReachedPlaybackRestart || !videoFrameRendered) return false
+        return p.playWhenReady || resumeGateActive
+    }
+
+    /** Arm (or re-arm) the gate. Safe to call repeatedly: an already-held gate
+     *  simply keeps holding, and its target is re-read every watchdog tick so a
+     *  hold-back learned during the hold raises the bar it must clear. */
+    private fun armResumeGate(reason: String) {
+        if (resumeGateActive) return
+        if (!resumeGateEligible()) return
+        val p = player ?: return
+        val target = resumeGateTargetMs()
+        val ahead = bufferedAheadMs(p)
+        if (target <= 0L || ahead >= target) return
+        resumeGateActive = true
+        resumeGateArmedAtMs = SystemClock.elapsedRealtime()
+        resumeGateLoggedTargetMs = target
+        Log.i(
+            TAG,
+            "[HOLDBACK] resume gate armed ch=$currentChannelId reason=$reason: " +
+                "hold until ${target}ms buffered ahead (have ${ahead}ms, " +
+                "worst gap ${tracer.worstGapMs()}ms, learned ${learnedHoldbackMs()}ms, " +
+                "timeout ${RESUME_GATE_TIMEOUT_MS}ms)",
+        )
+        p.playWhenReady = false
+    }
+
+    /** Release the gate and let playback run. */
+    private fun releaseResumeGate(reason: String) {
+        if (!resumeGateActive) return
+        val p = player
+        Log.i(TAG, "[HOLDBACK] resume gate released ch=$currentChannelId: $reason")
+        // Flag stays true across the assignment so onPlayWhenReadyChanged still
+        // treats this as gate traffic and not a user resume.
+        p?.playWhenReady = true
+        resumeGateActive = false
+        resumeGateArmedAtMs = 0L
+        resumeGateLoggedTargetMs = 0L
+    }
+
+    /** Buffered media ahead of the playhead, the quantity the gate measures. */
+    private fun bufferedAheadMs(p: ExoPlayer): Long {
+        val buffered = p.bufferedPosition
+        if (buffered == C.TIME_UNSET) return 0L
+        return (buffered - p.currentPosition).coerceAtLeast(0L)
+    }
+
+    /** Drive the armed gate from the 1 s watchdog poll. */
+    private fun tickResumeGate(p: ExoPlayer, now: Long) {
+        if (!resumeGateActive) return
+        if (!resumeGateEligible()) {
+            releaseResumeGate("session changed")
+            return
+        }
+        val target = resumeGateTargetMs()
+        if (target > resumeGateLoggedTargetMs) {
+            Log.i(
+                TAG,
+                "[HOLDBACK] resume gate target raised ${resumeGateLoggedTargetMs}ms -> ${target}ms " +
+                    "ch=$currentChannelId (learned ${learnedHoldbackMs()}ms)",
+            )
+            resumeGateLoggedTargetMs = target
+        }
+        val ahead = bufferedAheadMs(p)
+        val heldMs = now - resumeGateArmedAtMs
+        when {
+            ahead >= target -> releaseResumeGate("buffered ${ahead}ms >= target ${target}ms after ${heldMs}ms")
+            heldMs >= RESUME_GATE_TIMEOUT_MS ->
+                releaseResumeGate(
+                    "hard timeout ${RESUME_GATE_TIMEOUT_MS}ms reached with only ${ahead}ms " +
+                        "of ${target}ms buffered; resuming anyway",
+                )
+        }
     }
 
     private val watchdogScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
@@ -302,6 +422,29 @@ class AerioExoPlayerHolder @Inject constructor(
     // reloads in 18s -> player wedged -> terminal NO-DATA give-up).
     private var lastKnownBufferedPositionMs = 0L
     private var lastBufferAdvanceAtMs = 0L
+
+    // ---- stall resume gate (live) ----
+    // Apple parity (2026-09-13): a bursty live feed (worst delivery gap 4.8-7 s)
+    // stalled six times in two minutes because the player resumed with ~2 s
+    // buffered and then crept back toward the live edge, so the very next
+    // delivery gap starved it again. After a buffer-underrun rebuffer we now
+    // HOLD playback (playWhenReady=false, which keeps the LoadControl filling)
+    // until there is enough media ahead to ride the worst observed gap out.
+    // Deliberately a gate and not a bigger global buffer: the steady bounds in
+    // [acquireOrCreate] govern every channel, this only costs the channels that
+    // actually burst, and only right after they stall.
+    /** True while the gate is holding playback. Also suppresses the Live Rewind
+     *  pause/resume plumbing in [onPlayWhenReadyChanged]: this is not a user pause. */
+    private var resumeGateActive = false
+    /** elapsedRealtime the current gate was armed at (hard-timeout clock). */
+    private var resumeGateArmedAtMs = 0L
+    /** Last target logged, so a rising target logs once instead of every tick. */
+    private var resumeGateLoggedTargetMs = 0L
+    /** maxBufferMs the live LoadControl was built with. The gate can never wait
+     *  for more media than the load control is willing to hold, so the target is
+     *  clamped to just under it (a raised hold-back past this bound only takes
+     *  full effect on the next tune, which rebuilds the player). */
+    private var builtMaxBufferMs = 0
 
     /** Milliseconds since the live buffer last grew (ingest freshness).
      *  GH #82: the Dispatcharr status follower must not declare a session
@@ -555,6 +698,10 @@ class AerioExoPlayerHolder @Inject constructor(
             // playWhenReady=false is a real user pause again.
             if (playbackState == Player.STATE_READY) errorPending = false
             if (playbackState == Player.STATE_READY && player?.isPlaying == true) armWatchdog()
+            // Buffer-underrun rebuffer on a live stream that was already
+            // playing: hold the resume until the cushion is deep enough to
+            // survive the worst delivery gap this feed has shown.
+            if (playbackState == Player.STATE_BUFFERING) armResumeGate("rebuffer")
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -578,6 +725,10 @@ class AerioExoPlayerHolder @Inject constructor(
             // playWhenReady=true then immediately enters timeshift, and by the
             // time this runs isTimeshifting is already true, so the filler
             // (which timeshift playback needs) is left alone.
+            // The resume gate drives playWhenReady itself; it is neither a user
+            // pause nor a live-edge resume, so the Live Rewind filler lifecycle
+            // must not see it.
+            if (resumeGateActive) return
             if (isTimeshifting || isCatchup) return
             val ts = timeshift.get()
             if (ts.activeWriter == null) return
@@ -1040,6 +1191,7 @@ class AerioExoPlayerHolder @Inject constructor(
         builtWithPassthrough = audioPassthrough
         builtWithBufferFloorMs = bufferFloorMs
         builtWithStartGateMs = startGateMs
+        builtMaxBufferMs = minBufferMs * 2
         startWatchdog()
         return fresh
     }
@@ -1798,6 +1950,7 @@ class AerioExoPlayerHolder @Inject constructor(
         val p = player ?: return
         player = null
         _playerInstance.value = null
+        resumeGateActive = false
         currentChannelId = null
         currentChannelIdForRebuild = null
         // Full teardown clears the stream-failover walk and any pending
@@ -1862,6 +2015,11 @@ class AerioExoPlayerHolder @Inject constructor(
                     }
                 }
                 lastWatchdogTickAtMs = now
+
+                // Live resume gate: runs before every heal below, because while it
+                // holds, playWhenReady is false and the stale-position check
+                // deliberately skips the stream.
+                tickResumeGate(p, now)
 
                 // Cold-start NO-DATA net (never-started stream). Runs INDEPENDENT
                 // of hasReachedPlaybackRestart: a dead Dispatcharr proxy stream
@@ -2026,6 +2184,9 @@ class AerioExoPlayerHolder @Inject constructor(
         }
         lastForcedReloadAtMs = now
         consecutiveReloads++
+        // A re-prime throws the buffer away, so any gate holding against it is
+        // stale; the fresh stream is governed by the tune-path start gate.
+        resumeGateActive = false
         Log.w(TAG, "[MPV-RELOAD] live stall reload ch=$currentChannelId reason=$reason attempt=$consecutiveReloads")
         clearPauseStamp("re-prime")
         tracer.recover("in-place reload reason=$reason attempt=$consecutiveReloads")
@@ -2202,6 +2363,10 @@ class AerioExoPlayerHolder @Inject constructor(
 
     /** Reset watchdog state for a brand-new stream (iOS play(url:)/swapStream). */
     private fun resetWatchdogStateForNewStream() {
+        // A fresh stream gets the tune-path start gate, not a stale hold.
+        resumeGateActive = false
+        resumeGateArmedAtMs = 0L
+        resumeGateLoggedTargetMs = 0L
         hasReachedPlaybackRestart = false
         consecutiveReloads = 0
         lastForcedReloadAtMs = 0L
@@ -2423,6 +2588,15 @@ class AerioExoPlayerHolder @Inject constructor(
          *  and uses the base gate, so one bad session does not pin a channel
          *  (Logan 2026-09-12). A fresh learn re-arms it. */
         private const val HOLDBACK_LEARNED_TTL_MS = 30L * 60L * 1_000L
+        /** Cushion added on top of the worst observed delivery gap so the feed
+         *  has room to land the next burst before the buffer runs dry. */
+        private const val RESUME_GATE_HEADROOM_MS = 2_000L
+        /** Ceiling on the resume gate: past 20 s of rebuilt cushion the wait
+         *  costs more than the stall it prevents. */
+        private const val RESUME_GATE_CAP_MS = 20_000L
+        /** Hard timeout: a feed that cannot rebuild the cushion in 25 s is not
+         *  going to, so resume with whatever is buffered and log why. */
+        private const val RESUME_GATE_TIMEOUT_MS = 25_000L
         private const val TAG_DIAG = "AerioPlayerDiag"
 
         /** How long after a tune a decoder failure still counts as the codec

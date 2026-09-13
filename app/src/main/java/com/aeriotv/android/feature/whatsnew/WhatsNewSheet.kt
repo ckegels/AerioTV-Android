@@ -286,6 +286,11 @@ object WhatsNewContent {
                 "to another stream when one goes silent.",
         ),
         WhatsNewItem(
+            title = "A deeper buffer after a stall",
+            body = "Live channels that arrive in bursts now rebuild a bigger " +
+                "buffer after a stall instead of stalling again.",
+        ),
+        WhatsNewItem(
             title = "Better looking artwork",
             body = "Posters, backdrops and related titles come from TMDB " +
                 "when you add a key, and are cached so they load instantly " +
