@@ -293,21 +293,15 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Steadier live playback",
-            body = "Channels that arrive in bursts now rebuild a bigger " +
-                "buffer after a stall, sized to the gap that caused it, so " +
-                "playback settles instead of stalling again.",
+            title = "Mini player clears the timeline",
+            body = "In Live TV with the hero banner off, the mini player now " +
+                "sits above the guide timeline instead of over the channel " +
+                "rows.",
         ),
         WhatsNewItem(
-            title = "A rejoin instead of repeat stalls",
-            body = "If a feed stalls again soon after, AerioTV rejoins from " +
-                "the local buffer with the hold-back it has learned for that " +
-                "channel.",
-        ),
-        WhatsNewItem(
-            title = "What's New sheet",
-            body = "The sheet no longer bounces when you scroll to the end " +
-                "of the notes.",
+            title = "Group sidebar fits your names",
+            body = "The Live TV group sidebar widens to fit your longest " +
+                "group name.",
         ),
     )
 }
