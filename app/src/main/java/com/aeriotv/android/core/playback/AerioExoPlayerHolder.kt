@@ -2550,21 +2550,31 @@ class AerioExoPlayerHolder @Inject constructor(
      *  of cushion. The target is clamped INSIDE the buffered range, so the seek
      *  is served from the local buffer and never restarts the load. */
     private fun joinAfterBurst(p: ExoPlayer, bufferedMs: Long, holdBackMs: Int, dumpMs: Long) {
+        // Size the cushion to the DUMP, not just to the start gate. A Dispatcharr
+        // proxy channel that dumps 12 s at tune then delivers 6 s chunks every
+        // 7-11 s (Apple device test 2026-09-13), so joining 4 s behind the
+        // buffered end starves inside 8 s. A dump that big is itself the measure
+        // of the feed's chunk cadence: keep nearly all of it, capped at 10 s.
+        val burstBackMs = (bufferedMs - BURST_CUSHION_SLACK_MS)
+            .coerceAtMost(BURST_CUSHION_MAX_MS)
+        val backMs = maxOf(holdBackMs.toLong(), BURST_MIN_HOLDBACK_MS.toLong(), burstBackMs)
         val ceiling = (bufferedMs - BURST_SEEK_MARGIN_MS).coerceAtLeast(0L)
-        val target = (bufferedMs - holdBackMs).coerceIn(0L, ceiling)
+        val target = (bufferedMs - backMs).coerceIn(0L, ceiling)
         val pos = p.currentPosition.coerceAtLeast(0L)
         if (target <= pos + BURST_MIN_SEEK_MS) {
             Log.i(
                 TAG,
                 "[HOLDBACK] burst join skipped: buffered ${fmtSeconds(bufferedMs)} s, " +
-                    "hold-back ${fmtSeconds(holdBackMs.toLong())} s leaves nothing to skip",
+                    "cushion ${fmtSeconds(backMs)} s leaves nothing to skip",
             )
             return
         }
         Log.i(
             TAG,
             "[HOLDBACK] burst join: ${fmtSeconds(bufferedMs)} s dumped in ${dumpMs} ms, " +
-                "seeking to buffered - ${fmtSeconds(holdBackMs.toLong())} s (${target} ms)",
+                "seeking to buffered - ${fmtSeconds(backMs)} s " +
+                "(cushion: gate ${fmtSeconds(holdBackMs.toLong())} s, " +
+                "burst ${fmtSeconds(burstBackMs.coerceAtLeast(0L))} s; target ${target} ms)",
         )
         p.seekTo(target)
         // The dump inflated both the tune-time buffer reading and the learner's
@@ -2863,6 +2873,12 @@ class AerioExoPlayerHolder @Inject constructor(
         /** Floor on the cushion kept behind the end of the dump when the
          *  learned start gate is smaller. */
         private const val BURST_MIN_HOLDBACK_MS = 4_000
+        /** Slack taken off the dump when sizing the cushion to it, so the join
+         *  still lands inside the dumped media. */
+        private const val BURST_CUSHION_SLACK_MS = 2_000L
+        /** Ceiling on a dump-sized cushion: past this the user is watching
+         *  meaningfully old live. */
+        private const val BURST_CUSHION_MAX_MS = 10_000L
         /** Never seek to the very end of the buffered range. */
         private const val BURST_SEEK_MARGIN_MS = 500L
         /** A shorter jump than this is not worth a seek. */
