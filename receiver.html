@@ -1322,9 +1322,26 @@
     // (2026-09-12 review), and a skipped segment is the other way into a
     // stalled renderer.
     //
-    // gapDetectionThreshold: jump holes as small as 0.1 s. Our worst case
-    // is a sub-frame seam at a segment boundary, far under Shaka's older
-    // 0.5 s default, which would leave the renderer parked at it.
+    // gapDetectionThreshold: how far BEHIND the end of the previous
+    // buffered range the playhead may sit and still have the gap jumped
+    // (GapJumpingController.onPollGapJump_ -> TimeRangesUtils.getGapIndex,
+    // which tests prevRange.end - currentTime <= threshold). A playhead
+    // parked exactly on the seam always passes, so 0.1 s stays as the
+    // tolerance for a playhead that has drifted a little behind it; making
+    // it smaller would only detect FEWER gaps.
+    //
+    // gapPadding: where the jump LANDS. Shaka seeks to
+    // buffered.start(gapIndex) + gapPadding, and with no padding the target
+    // is the first sample of the new range, which platform rounding can put
+    // back on the wrong side of the seam so the renderer re-stalls right
+    // after a gapsJumped. Measured 2026-09-13 on the proxy's own output, a
+    // new generation starts with video tfdt 0 and audio inside one audio
+    // frame of it (AAC 16.67 ms, AC-3 6.00 ms above the first video
+    // presentation time), so the hole at a channel change is that sub-frame
+    // seam and nothing more: 50 ms clears it in one jump and still lands
+    // inside the first video frame of the generation. gapPadding is a
+    // Shaka 4.12 key (shaka-project #7331); on an older CAF-bundled Shaka
+    // it is ignored with a config warning and the behaviour is unchanged.
     //
     // Built with `new cast.framework.PlaybackConfig()` and handed to
     // context.start() below. getPlaybackConfig() returns null before the
@@ -1347,6 +1364,7 @@
         },
         streaming: {
           gapDetectionThreshold: 0.1,
+          gapPadding: 0.05,
           // Nudge the playhead if it ever does stop advancing, instead of
           // sitting on one frame forever (these are Shaka's defaults, set
           // explicitly because the CAF-bundled version is not pinned).
