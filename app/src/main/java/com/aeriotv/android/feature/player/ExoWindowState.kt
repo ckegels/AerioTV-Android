@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.player
 
+import androidx.compose.ui.unit.dp
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,6 +53,25 @@ object MiniPlayerChrome {
      *  copy and the corner mini share one baseline"), which is what keeps the
      *  mini clear of the guide's time bar whatever the bar and banner measure. */
     val bannerArtBottomPx = MutableStateFlow(0f)
+
+    /** Mini frame size (tvOS 410x231 pt halved). Lives here so the screens that
+     *  RESERVE a slot for the mini reserve exactly what the window draws. */
+    val miniWidth = 205.dp
+    val miniHeight = 115.dp
+
+    /** Gap between the mini's bottom edge and whatever sits under it. */
+    val miniGap = 8.dp
+
+    /** Top of the Live TV time header (the guide timeline) in root px,
+     *  published by GuideScreen while the Channel Preview banner is OFF and the
+     *  mini is Active; 0 otherwise. With the banner off there is no art card to
+     *  share a baseline with, so the mini's BOTTOM edge is anchored to the
+     *  MEASURED timeline top instead of a fixed inset, and the screen reserves
+     *  [miniHeight] + [miniGap] above the timeline so the timeline and the
+     *  channel rows start below the mini rather than under it (Logan
+     *  2026-09-13). Measured rather than computed so any future header change
+     *  keeps the two aligned. */
+    val timelineTopPx = MutableStateFlow(0f)
 }
 
 @Singleton

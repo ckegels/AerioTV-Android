@@ -11,6 +11,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,6 +68,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import com.aeriotv.android.feature.player.MiniPlayerChrome
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.focus.FocusRequester
@@ -628,6 +630,26 @@ fun GuideScreen(
             onDown = { runCatching { gridFocus.requestFocus() }.isSuccess },
             leadInset = railWidth,
         )
+        // Channel Preview OFF + corner mini Active: the mini has no banner art
+        // card to share a baseline with, so it gets its OWN slot here -- a
+        // reserved band immediately above the time header whose measured bottom
+        // IS the timeline top. The mini's bottom edge is anchored to that
+        // (published below), so the timeline and every channel row start below
+        // the mini instead of being drawn under it (Logan 2026-09-13).
+        val reserveMiniSlot = isTv && !previewMode && miniActive
+        if (reserveMiniSlot) {
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(MiniPlayerChrome.miniHeight + MiniPlayerChrome.miniGap)
+                    .onGloballyPositioned {
+                        MiniPlayerChrome.timelineTopPx.value = it.boundsInRoot().bottom
+                    },
+            )
+        }
+        androidx.compose.runtime.DisposableEffect(reserveMiniSlot) {
+            onDispose { if (reserveMiniSlot) MiniPlayerChrome.timelineTopPx.value = 0f }
+        }
         if (rows.isEmpty && favoritesOnly && favoritesOrNull == null) {
             // Favorites not loaded yet: draw nothing rather than flash the
             // empty-group notice for a frame (Streamer 2026-09-03).

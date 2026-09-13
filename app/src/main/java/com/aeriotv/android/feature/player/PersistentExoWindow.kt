@@ -68,8 +68,8 @@ import com.aeriotv.android.feature.settings.SettingsViewModel
  * wrapper.
  */
 /** tvOS mini frame, halved from the 1080 pt canvas (HomeView.swift:4848). */
-private val MINI_WIDTH = 205.dp
-private val MINI_HEIGHT = 115.dp
+private val MINI_WIDTH = MiniPlayerChrome.miniWidth
+private val MINI_HEIGHT = MiniPlayerChrome.miniHeight
 private val MINI_END_INSET = 20.dp
 private val MINI_CORNER = 6.dp
 
@@ -116,8 +116,16 @@ fun BoxScope.PersistentExoWindow(
     // tabs) the mini keeps its full size at bar bottom + 4 dp.
     val localDensity = androidx.compose.ui.platform.LocalDensity.current
     val artBottomPx by MiniPlayerChrome.bannerArtBottomPx.collectAsStateWithLifecycle()
+    // With the Channel Preview banner OFF there is no art card, so the guide
+    // publishes its MEASURED timeline top instead and the mini's bottom edge
+    // lands on it (the guide reserves that band, so rows start below the mini).
+    val timelineTopPx by MiniPlayerChrome.timelineTopPx.collectAsStateWithLifecycle()
+    val anchorBottomPx = if (artBottomPx > 0f) artBottomPx else timelineTopPx
     val barBottomInset = miniTopInsetDp.dp
-    val artBottom = if (artBottomPx > 0f) with(localDensity) { artBottomPx.toDp() } else 0.dp
+    val artBottom = if (anchorBottomPx > 0f) {
+        (with(localDensity) { anchorBottomPx.toDp() } - if (artBottomPx > 0f) 0.dp else MiniPlayerChrome.miniGap)
+            .coerceAtLeast(0.dp)
+    } else 0.dp
     val band = artBottom - barBottomInset
     val miniFitHeight = when {
         artBottom <= 0.dp -> MINI_HEIGHT

@@ -138,21 +138,7 @@ internal fun GroupSidebarPanel(
     // clamp to a sane min/max so one very long name can't dominate the guide
     // and a single short group isn't cramped. A LazyColumn can't be intrinsic-
     // measured, so this text-measure approach is the reliable way to fit.
-    val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
-    val rowLabelStyle = groupSidebarRowStyle()
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val panelWidth = remember(groups, rowLabelStyle) {
-        val widestPx = groups.maxOfOrNull { token ->
-            textMeasurer.measure(
-                text = groupSidebarLabel(token),
-                style = rowLabelStyle.copy(fontWeight = FontWeight.Medium),
-                maxLines = 1,
-            ).size.width
-        } ?: 0
-        // Row padding each side + 2dp focus border each side + a little
-        // breathing room past the text.
-        with(density) { widestPx.toDp() } + 44.dp
-    }.coerceIn(
+    val panelWidth = rememberGroupLabelPanelWidth(groups).coerceIn(
         // GH #57: the header now carries the Manage Groups button beside the
         // title, so a short group list must not squeeze it off the panel.
         // 10dp lead + "Groups" + 12dp gap + the 30dp circle + 10dp trail.
@@ -263,6 +249,33 @@ internal fun GroupSidebarPanel(
                 )
             }
         }
+    }
+}
+
+/**
+ * Width that fits the LONGEST group label at the sidebar row's own type scale,
+ * plus the row's horizontal chrome (padding each side, the 2dp focus border
+ * each side and a little breathing room). Callers clamp it to their own
+ * min/max; rows ellipsize past that. Recomputed whenever the group list or the
+ * row style changes, so a playlist switch resizes the panel.
+ *
+ * A LazyColumn cannot be intrinsic-measured, so measuring the text is the
+ * reliable way to fit the panel to its content.
+ */
+@Composable
+internal fun rememberGroupLabelPanelWidth(groups: List<String>): Dp {
+    val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val rowLabelStyle = groupSidebarRowStyle()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    return remember(groups, rowLabelStyle, density) {
+        val widestPx = groups.maxOfOrNull { token ->
+            textMeasurer.measure(
+                text = groupSidebarLabel(token),
+                style = rowLabelStyle.copy(fontWeight = FontWeight.Medium),
+                maxLines = 1,
+            ).size.width
+        } ?: 0
+        with(density) { widestPx.toDp() } + 44.dp
     }
 }
 
@@ -429,13 +442,21 @@ internal fun GuideGroupSidebarPane(
         }
     }
     val tv = rememberIsTvDevice()
+    // Fit the drawer to the longest group name instead of the fixed tvOS 180dp
+    // (Logan 2026-09-13: names like "Auto | Football | N..." were truncated).
+    // Floor = the old 180dp so short lists look unchanged; ceiling = 40% of the
+    // screen so one very long name cannot swallow the guide (rows ellipsize
+    // past it). 20dp covers the pane's own 10dp side padding.
+    val screenWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+    val measuredPaneWidth = rememberGroupLabelPanelWidth(groups)
+    val tvPaneWidth = (measuredPaneWidth + 20.dp).coerceIn(180.dp, screenWidth * 0.4f)
     Row(modifier = Modifier.fillMaxHeight().padding(top = topOffset).then(if (tv) Modifier.background(MaterialTheme.colorScheme.background) else Modifier)) {
         Column(
             modifier = Modifier
                 .fillMaxHeight()
                 // tvOS GuideGroupSidebarPane: 360 pt with 20 pt side padding
                 // and 4 pt on top, halved.
-                .then(if (tv) Modifier.width(180.dp).padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 12.dp)
+                .then(if (tv) Modifier.width(tvPaneWidth).padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 12.dp)
                       else Modifier.padding(start = 20.dp, end = 12.dp, bottom = 12.dp))
                 // tvOS lands on the ACTIVE group (defaultFocus). Route the
                 // pane's first focus entry straight to that row so focus

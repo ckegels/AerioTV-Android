@@ -30,6 +30,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import com.aeriotv.android.feature.player.MiniPlayerChrome
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -220,6 +225,9 @@ fun ChannelListScreen(
     // the "collection:<id>" selectedGroup sentinel, so a collection picked in
     // one view stays active in the other.
     val collectionsVm: CollectionsViewModel = hiltViewModel()
+    val miniPlayerVm: com.aeriotv.android.feature.miniplayer.MiniPlayerViewModel = hiltViewModel()
+    val miniState by miniPlayerVm.state.collectAsStateWithLifecycle()
+    val miniActive = miniState is com.aeriotv.android.feature.miniplayer.MiniPlayerSession.State.Active
     val collections by collectionsVm.collections.collectAsStateWithLifecycle()
     var collectionPickerFor by remember { mutableStateOf<Pair<String, String>?>(null) }
     val collectionsMenu = remember(collections, state.selectedGroup) {
@@ -681,6 +689,24 @@ fun ChannelListScreen(
                     )
                 }
             }
+        }
+        // Corner mini Active on TV: give it its own slot above the list, the
+        // same rule the guide applies above its timeline (Logan 2026-09-13).
+        // The reserved band's measured bottom is the list's top and the mini's
+        // bottom edge, so channel rows never start under the mini.
+        val reserveMiniSlot = isTv && miniActive
+        if (reserveMiniSlot) {
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(MiniPlayerChrome.miniHeight + MiniPlayerChrome.miniGap)
+                    .onGloballyPositioned {
+                        MiniPlayerChrome.timelineTopPx.value = it.boundsInRoot().bottom
+                    },
+            )
+        }
+        DisposableEffect(reserveMiniSlot) {
+            onDispose { if (reserveMiniSlot) MiniPlayerChrome.timelineTopPx.value = 0f }
         }
         if (isTv) {
             channelList()
