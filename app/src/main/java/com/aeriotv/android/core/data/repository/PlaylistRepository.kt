@@ -8,7 +8,6 @@ import com.aeriotv.android.core.data.db.dao.ChannelSnapshotDao
 import com.aeriotv.android.core.data.db.dao.EpgChunkCoverageDao
 import com.aeriotv.android.core.data.db.dao.EpgProgrammeDao
 import com.aeriotv.android.core.data.db.dao.PlaylistDao
-import com.aeriotv.android.core.data.db.entity.CAST_AAC_PROFILE_NONE
 import com.aeriotv.android.core.data.db.entity.ChannelSnapshotEntity
 import com.aeriotv.android.core.data.db.entity.EpgProgrammeEntity
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
@@ -160,7 +159,6 @@ class PlaylistRepository @Inject constructor(
 
     /** Last successful cast-profile re-resolve per playlist id, so the launch
      *  and foreground triggers coalesce to one lookup per 15 minutes. */
-    private val castAacReresolvedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
      * Audit task #54: push the active playlist's apiKey + URL prefix set into
@@ -235,101 +233,12 @@ class PlaylistRepository @Inject constructor(
         return dispatcharrClient.streamUrl(base, channelUuid)
     }
 
-    /**
-     * Look up the server's AAC output profile for casting and log what was
-     * found. Returns the id to persist, [CAST_AAC_PROFILE_NONE] when the
-     * server has no AAC profile, or null when the lookup itself failed (so
-     * the caller keeps whatever is already stored and tries again later).
-     */
-    private suspend fun captureCastAacProfile(base: String, apiKey: String): Int? {
-        val profiles = dispatcharrClient.fetchOutputProfiles(base, apiKey) ?: return null
-        val chosen = dispatcharrClient.pickAacOutputProfile(profiles)
-        return if (chosen == null) {
-            Log.i("PlaylistRepo", "[Cast] no AAC output profile on this server")
-            CAST_AAC_PROFILE_NONE
-        } else {
-            Log.i("PlaylistRepo", "[Cast] AAC output profile id=${chosen.id} name=${chosen.name}")
-            chosen.id
-        }
-    }
-
-    /**
-     * Re-resolve the cast AAC output profile against the CURRENT server
-     * list and return the id to persist when it differs from [storedId],
-     * or null when nothing should be written (lookup failed, or the
-     * stored id is still the right answer).
-     *
-     * Re-resolving (rather than "capture once when blank") is what lets a
-     * profile the user creates after setup -- an "AerioTV Cast" profile
-     * added in Dispatcharr -- get picked up on the next EPG load or
-     * launch: a stored id that is no longer in the server list, or a
-     * stored id that a newly created preferred profile now outranks, both
-     * surface as a different pick here.
-     */
-    private suspend fun reresolveCastAacProfile(
-        base: String,
-        apiKey: String,
-        storedId: Int?,
-    ): Int? {
-        val profiles = dispatcharrClient.fetchOutputProfiles(base, apiKey) ?: return null
-        val chosen = dispatcharrClient.pickAacOutputProfile(profiles)
-        val resolved = chosen?.id ?: CAST_AAC_PROFILE_NONE
-        if (resolved == storedId) return null
-        if (chosen == null) {
-            Log.i("PlaylistRepo", "[Cast] no AAC output profile on this server (was id=$storedId)")
-        } else {
-            Log.i(
-                "PlaylistRepo",
-                "[Cast] AAC output profile re-resolved id=${chosen.id} " +
-                    "name=${chosen.name} (was id=$storedId)",
-            )
-        }
-        return resolved
-    }
-
-    /**
-     * Re-resolve the cast AAC output profile for every Dispatcharr playlist,
-     * at most once per [CAST_AAC_RERESOLVE_INTERVAL_MS] per playlist. Called
-     * from the app's launch / foreground observer
-     * ([com.aeriotv.android.core.network.DispatcharrWarmupCoordinator]) so it
-     * is independent of the EPG load: the cached-EPG path used to skip the
-     * re-resolve entirely, which left a relaunched phone casting with a stale
-     * profile id after the user created a stereo AAC profile on the server
-     * (nplogs/session18.txt, 16:28 relaunch still using profile 2 at 16:31).
-     *
-     * Persists with the targeted column update so a concurrent refresh or
-     * guide writer is never clobbered by a stale row snapshot.
-     */
-    suspend fun refreshCastAacProfilesIfDue(trigger: String) {
-        val playlists = runCatching { dao.allOnce() }.getOrNull() ?: return
-        val now = System.currentTimeMillis()
-        for (playlist in playlists) {
-            val sourceType = playlist.resolvedSourceType()
-            if (sourceType != SourceType.DispatcharrApiKey &&
-                sourceType != SourceType.DispatcharrUserPass
-            ) continue
-            val last = castAacReresolvedAt[playlist.id]
-            if (last != null && now - last < CAST_AAC_RERESOLVE_INTERVAL_MS) continue
-            castAacReresolvedAt[playlist.id] = now
-            val base = runCatching { effectiveBaseUrl(playlist) }.getOrNull() ?: continue
-            val resolved = runCatching {
-                dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                    reresolveCastAacProfile(base, key, playlist.dispatcharrCastAacProfileId)
-                }
-            }.getOrNull()
-            if (resolved == null) {
-                // Lookup failed: allow the next trigger to try again.
-                castAacReresolvedAt.remove(playlist.id)
-                continue
-            }
-            runCatching { dao.updateCastAacProfileId(playlist.id, resolved) }
-                .onFailure { Log.w("PlaylistRepo", "cast profile persist failed ($trigger)", it) }
-            Log.i(
-                "PlaylistRepo",
-                "[Cast] output profile persisted id=$resolved trigger=$trigger",
-            )
-        }
-    }
+    // Cast audio, 2026-09-13: the Dispatcharr output-profile lookup and the
+    // launch / foreground re-resolve that lived here are GONE. Cast sessions
+    // ingest the plain stream and AC-3 / E-AC-3 passes through to the
+    // receiver's own audio/mp4 SourceBuffer, so there is nothing to resolve
+    // or persist. The `dispatcharrCastAacProfileId` column stays on the row
+    // (untouched) rather than forcing a migration.
 
     /** Inputs for creating or updating a playlist row. */
     data class SaveRequest(
@@ -467,13 +376,6 @@ class PlaylistRepository @Inject constructor(
             resolvedApiKey?.takeIf { it.isNotBlank() }
                 ?.let { dispatcharrClient.fetchServerVersion(normalisedBase, it) }
         } else null
-        // Cast audio: which output profile casting should ask for, so the
-        // phone never transcodes cast audio (Logan 2026-09-12).
-        val aacProfile = if (isDispatcharr) {
-            resolvedApiKey?.takeIf { it.isNotBlank() }
-                ?.let { captureCastAacProfile(normalisedBase, it) }
-        } else null
-
         val channels = try {
             fetchChannelsFor(
                 sourceType = sourceType,
@@ -527,7 +429,6 @@ class PlaylistRepository @Inject constructor(
             dispatcharrVodMoviesEnabled = perms?.vodMoviesEnabled ?: true,
             dispatcharrVodSeriesEnabled = perms?.vodSeriesEnabled ?: true,
             dispatcharrServerVersion = serverVersion ?: "",
-            dispatcharrCastAacProfileId = aacProfile,
             vodEnabled = request.vodEnabled,
             epgRetentionDays = sanitizeGuideDays(request.epgRetentionDays),
         )
@@ -606,13 +507,6 @@ class PlaylistRepository @Inject constructor(
             playlist.apiKey?.takeIf { it.isNotBlank() }
                 ?.let { dispatcharrClient.fetchServerVersion(base, it) }
         } else null
-        // Cast audio: re-read the AAC output profile on every refresh, so a
-        // profile added (or removed) server-side applies without an
-        // Edit-Playlist Save. Null keeps the persisted value.
-        val liveAacProfile = if (liveUserLevel != null) {
-            playlist.apiKey?.takeIf { it.isNotBlank() }
-                ?.let { captureCastAacProfile(base, it) }
-        } else null
         val channels = when (sourceType) {
             SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass ->
                 dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
@@ -644,8 +538,6 @@ class PlaylistRepository @Inject constructor(
             dispatcharrVodMoviesEnabled = livePerms?.vodMoviesEnabled ?: playlist.dispatcharrVodMoviesEnabled,
             dispatcharrVodSeriesEnabled = livePerms?.vodSeriesEnabled ?: playlist.dispatcharrVodSeriesEnabled,
             dispatcharrServerVersion = liveVersion ?: playlist.dispatcharrServerVersion,
-            dispatcharrCastAacProfileId =
-                liveAacProfile ?: playlist.dispatcharrCastAacProfileId,
         )
         dao.update(refreshed)
         // Persist the freshly-fetched channels so the next cold launch repaints
@@ -1822,14 +1714,8 @@ class PlaylistRepository @Inject constructor(
                         Log.i("PlaylistRepo", "[EPG] server version captured $version at EPG load")
                     }
                 }
-                // Cast audio: the re-resolve no longer lives here. It runs at
-                // every launch and on every foreground return (rate limited,
-                // see [refreshCastAacProfilesIfDue]) INDEPENDENT of the EPG
-                // load, because the cached-EPG path skipped this block
-                // entirely: measured in nplogs/session18.txt, the phone
-                // relaunched at 16:28 after the profile was created and was
-                // still casting with profile 2 at 16:31. Re-read the row here
-                // so the rest of this pass sees whatever that path persisted.
+                // Re-read the row here so the rest of this pass sees
+                // whatever the warmup / permissions paths persisted.
                 dao.byId(playlist.id)?.let { gated = it }
                 if (gated.dispatcharrVersionAtLeast("0.30.0")) {
                     // Dispatcharr 0.30: the grid serves history and days ahead
@@ -3267,4 +3153,3 @@ private fun Double.formatChannelNumber(): String {
 
 /** How often the launch / foreground cast-profile re-resolve may hit the
  *  server per playlist. */
-private const val CAST_AAC_RERESOLVE_INTERVAL_MS = 15L * 60L * 1000L

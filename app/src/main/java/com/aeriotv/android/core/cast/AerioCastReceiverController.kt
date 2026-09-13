@@ -23,6 +23,7 @@ import com.aeriotv.android.feature.player.selectSubtitleTrack
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.tv.CastReceiverContext
+import com.google.android.gms.cast.tv.media.MediaCommandCallback
 import com.google.android.gms.cast.tv.media.MediaLoadCommandCallback
 import com.google.android.gms.cast.tv.media.MediaManager
 import com.google.android.gms.tasks.Task
@@ -103,6 +104,15 @@ class AerioCastReceiverController @Inject constructor(
     private val _castChannelRequest = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     val castChannelRequest: kotlinx.coroutines.flow.StateFlow<String?> = _castChannelRequest
 
+    // Cast card X / STOP (2026-09-13). The sender's X sends a media STOP before
+    // it ends the session; the MediaSession bridge alone would only stop the
+    // ExoPlayer and strand the TV on a dead player screen. This mirrors the LAN
+    // companion's CMD_STOP end state exactly: holder.stop() (so the stall
+    // watchdog's bookkeeping is disarmed, not left armed to re-prime a channel
+    // nobody is watching), the media service down, and the UI back on Live TV.
+    private val _exitRequests = Channel<Unit>(Channel.CONFLATED)
+    val exitRequests: Flow<Unit> = _exitRequests.receiveAsFlow()
+
     /** Ask the on-screen live player to re-tune to [channelId] in place. */
     fun requestCastChannel(channelId: String) {
         _castChannelRequest.value = channelId
@@ -150,6 +160,10 @@ class AerioCastReceiverController @Inject constructor(
             CastReceiverContext.initInstance(app)
             val mgr = CastReceiverContext.getInstance().mediaManager
             mgr.setMediaLoadCommandCallback(LoadCallback())
+            // Transport (play/pause/seek) still rides the MediaSession bridge
+            // setSessionCompatToken installs; only STOP is intercepted, because
+            // "stop" for AerioTV means "leave the player", not "park ExoPlayer".
+            mgr.setMediaCommandCallback(StopCallback(app))
             mediaManager = mgr
             // GH #33 full-parity cast remote: listen for the sender's audio /
             // subtitle / speed / aspect commands on the custom namespace and
@@ -256,6 +270,28 @@ class AerioCastReceiverController @Inject constructor(
         return runCatching { mediaManager?.onNewIntent(intent) ?: false }.getOrDefault(false)
     }
 
+    /**
+     * Cast STOP from the sender card's X. Ends playback the way the companion
+     * remote's stop does (CompanionHostController.CMD_STOP): through
+     * AerioExoPlayerHolder.stop() rather than the raw ExoPlayer, so lastPlayUrl /
+     * currentChannelId / the stall-watchdog deadline are all disarmed and nothing
+     * re-primes the channel ten seconds later, then the media notification goes
+     * away and the UI pops back to Live TV.
+     */
+    private inner class StopCallback(private val context: Context) : MediaCommandCallback() {
+        override fun onStop(senderId: String?, requestData: com.google.android.gms.cast.RequestData): Task<Void> {
+            scope.launch {
+                runCatching { holder.stop() }
+                runCatching {
+                    com.aeriotv.android.core.playback.AerioMediaPlaybackService.stop(context)
+                }
+                _exitRequests.trySend(Unit)
+                android.util.Log.i("CastReceiver", "cast stop: playback stopped, exiting to Live TV")
+            }
+            return com.google.android.gms.tasks.Tasks.forResult(null)
+        }
+    }
+
     private inner class LoadCallback : MediaLoadCommandCallback() {
         override fun onLoad(
             senderId: String?,
@@ -344,6 +380,30 @@ class AerioCastReceiverController @Inject constructor(
                 // across senders/messages (never double-launches the ticker).
                 ensurePositionTicker()
                 when (json.optString(CastControl.KEY_CMD)) {
+                    // Receiver-type handshake (2026-09-13). The sender cannot ask
+                    // the Cast SDK whether Cast Connect launched this native app or
+                    // the web receiver, so it asks here. Answering identifies THIS
+                    // app; the web receiver never implements the command, so the
+                    // sender's silence timeout means "web receiver". Answered
+                    // directly (not via replyState) so the reply costs nothing and
+                    // lands before the player even exists.
+                    CastControl.CMD_HELLO -> {
+                        senderId?.let { sid ->
+                            runCatching {
+                                CastReceiverContext.getInstance().sendMessage(
+                                    CastControl.NAMESPACE,
+                                    sid,
+                                    CastControl.command(CastControl.CMD_RECEIVER_INFO) {
+                                        put(
+                                            CastControl.KEY_PLATFORM,
+                                            CastControl.VALUE_PLATFORM_ANDROID_TV,
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                        return@launch
+                    }
                     CastControl.CMD_GET_STATE -> {} // just reply below
                     CastControl.CMD_SET_AUDIO ->
                         runCatching {

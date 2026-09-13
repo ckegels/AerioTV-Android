@@ -23,6 +23,25 @@ import kotlinx.coroutines.flow.asStateFlow
  *   /init<G>.mp4    fMP4 init segment for ingest generation G
  *   /seg<N>.m4s     CMAF media segment, monotonic sequence N
  *
+ * and, since 2026-09-13, the DEMUXED shape the sender actually loads:
+ *
+ *   /demuxed.m3u8   master: EXT-X-MEDIA audio rendition + EXT-X-STREAM-INF
+ *   /video.m3u8     video-only media playlist (vinit / vseg)
+ *   /audio.m3u8     audio-only media playlist (ainit / aseg)
+ *   /vinit<G>.mp4   video-only moov for generation G
+ *   /ainit<G>.mp4   audio-only moov for generation G
+ *   /vseg<N>.m4s    video traf only, sequence N
+ *   /aseg<N>.m4s    audio traf only, sequence N
+ *
+ * Why both: measured on the Google TV Streamer's Cast runtime,
+ * isTypeSupported("video/mp4; codecs=\"avc1.64002A,ac-3\"") is false and
+ * so is isTypeSupported("video/mp4; codecs=\"ac-3\""), but
+ * isTypeSupported("audio/mp4; codecs=\"ac-3\"") is TRUE. A single muxed
+ * rendition can therefore only ever declare AAC, which is what forces the
+ * server-side AAC output profile; a separate audio rendition appended into
+ * its own SourceBuffer is how Emby's web receiver reaches
+ * MediaCodecAudioDecoder. The muxed endpoints stay for one release.
+ *
  * Every response carries `Access-Control-Allow-Origin: *` because the
  * receiver page's origin is Google's, not ours, and Chromium enforces
  * CORS on MSE fetches.
@@ -81,8 +100,13 @@ class CastHlsProxyServer(
 
         private const val MIME_PLAYLIST = "application/vnd.apple.mpegurl"
         private const val MIME_MP4 = "video/mp4"
+        private const val MIME_AUDIO_MP4 = "audio/mp4"
         private const val MIME_SEGMENT = "video/iso.segment"
     }
+
+    /** Which rendition of a cut a request names. MUXED is the legacy
+     *  one-SourceBuffer shape; VIDEO and AUDIO are the demuxed pair. */
+    private enum class Rendition { MUXED, VIDEO, AUDIO }
 
     private class SegmentEntry(
         val seq: Int,
@@ -90,6 +114,13 @@ class CastHlsProxyServer(
         val data: ByteArray,
         val durationTicks: Long,
         val discontinuity: Boolean,
+        /** Demuxed renditions of the same cut, same sequence number.
+         *  Null only for a remuxer that did not report them (old tests). */
+        val videoData: ByteArray?,
+        val audioData: ByteArray?,
+        /** The audio rendition's own EXTINF; within one audio frame of
+         *  [durationTicks]. */
+        val audioDurationTicks: Long,
     )
 
     /** Guards the store; also the monitor held segment fetches wait on
@@ -99,6 +130,9 @@ class CastHlsProxyServer(
     /** False after [stop]; wakes and fails any held segment fetch. */
     private var storeOpen = true
     private val inits = HashMap<Int, ByteArray>()
+    /** Demuxed init segments per generation, evicted alongside [inits]. */
+    private val videoInits = HashMap<Int, ByteArray>()
+    private val audioInits = HashMap<Int, ByteArray>()
     private var nextSeq = 0
     private var generation = 0
     /** First segment committed after [beginGeneration] gets the
@@ -118,6 +152,9 @@ class CastHlsProxyServer(
      *  a failing cast can be read back from the log without the device. */
     private val masterTextLogged = AtomicBoolean(false)
     private val playlistTextLogged = AtomicBoolean(false)
+    private val demuxedMasterTextLogged = AtomicBoolean(false)
+    private val videoPlaylistTextLogged = AtomicBoolean(false)
+    private val audioPlaylistTextLogged = AtomicBoolean(false)
     /** Requests served this session, for the log rate limit. */
     private val requestsServed = java.util.concurrent.atomic.AtomicInteger(0)
 
@@ -164,6 +201,8 @@ class CastHlsProxyServer(
         synchronized(lock) {
             ring.clear()
             inits.clear()
+            videoInits.clear()
+            audioInits.clear()
             _segmentsInGeneration.value = 0
             _mediaTicksInGeneration.value = 0
             storeOpen = false
@@ -171,6 +210,9 @@ class CastHlsProxyServer(
         }
         firstPlaylistServed.set(false)
         masterTextLogged.set(false)
+        demuxedMasterTextLogged.set(false)
+        videoPlaylistTextLogged.set(false)
+        audioPlaylistTextLogged.set(false)
         playlistTextLogged.set(false)
         requestsServed.set(0)
     }
@@ -207,7 +249,24 @@ class CastHlsProxyServer(
         inits[gen] = data
     }
 
-    fun addSegment(gen: Int, data: ByteArray, durationTicks: Long) {
+    /** Demuxed init segments for [gen]. [audio] is null for a video-only
+     *  mux, in which case the demuxed master carries no audio rendition. */
+    fun setDemuxedInitSegments(gen: Int, video: ByteArray, audio: ByteArray?) = synchronized(lock) {
+        videoInits[gen] = video
+        if (audio != null) audioInits[gen] = audio else audioInits.remove(gen)
+    }
+
+    fun addSegment(
+        gen: Int,
+        data: ByteArray,
+        durationTicks: Long,
+        /** Demuxed renditions of the same cut, from the remuxer's
+         *  onDemuxedMediaSegments; defaulted so the muxed-only callers in
+         *  the unit tests keep compiling. */
+        videoData: ByteArray? = null,
+        audioData: ByteArray? = null,
+        audioDurationTicks: Long = durationTicks,
+    ) {
         synchronized(lock) {
             if (gen != generation) return // stale ingest racing a channel change
             val entry = SegmentEntry(
@@ -216,6 +275,9 @@ class CastHlsProxyServer(
                 data = data,
                 durationTicks = durationTicks,
                 discontinuity = pendingDiscontinuity,
+                videoData = videoData,
+                audioData = audioData,
+                audioDurationTicks = audioDurationTicks,
             )
             pendingDiscontinuity = false
             ring.addLast(entry)
@@ -227,6 +289,8 @@ class CastHlsProxyServer(
                     evicted.generation != generation
                 ) {
                     inits.remove(evicted.generation)
+                    videoInits.remove(evicted.generation)
+                    audioInits.remove(evicted.generation)
                 }
             }
             _segmentsInGeneration.value += 1
@@ -239,17 +303,34 @@ class CastHlsProxyServer(
     /** Init segment for [gen], or null when no longer retained. */
     internal fun initSegment(gen: Int): ByteArray? = synchronized(lock) { inits[gen] }
 
+    internal fun videoInitSegment(gen: Int): ByteArray? = synchronized(lock) { videoInits[gen] }
+
+    internal fun audioInitSegment(gen: Int): ByteArray? = synchronized(lock) { audioInits[gen] }
+
     /**
      * Segment [seq]'s bytes. A fetch naming a sequence the ingest has not
      * published yet, up to [MAX_FUTURE_SEGMENTS] past the newest one, is
      * held up to [timeoutMs] instead of 404ing; anything already evicted
      * from the ring or further in the future fails immediately.
      */
-    internal fun awaitSegment(seq: Int, timeoutMs: Long = NEXT_SEGMENT_WAIT_MS): ByteArray? {
+    internal fun awaitSegment(seq: Int, timeoutMs: Long = NEXT_SEGMENT_WAIT_MS): ByteArray? =
+        awaitSegment(seq, Rendition.MUXED, timeoutMs)
+
+    private fun awaitSegment(
+        seq: Int,
+        rendition: Rendition,
+        timeoutMs: Long = NEXT_SEGMENT_WAIT_MS,
+    ): ByteArray? {
         val deadline = System.currentTimeMillis() + timeoutMs
         synchronized(lock) {
             while (true) {
-                ring.firstOrNull { it.seq == seq }?.let { return it.data }
+                ring.firstOrNull { it.seq == seq }?.let {
+                    return when (rendition) {
+                        Rendition.MUXED -> it.data
+                        Rendition.VIDEO -> it.videoData
+                        Rendition.AUDIO -> it.audioData
+                    }
+                }
                 if (!storeOpen || seq < nextSeq || seq > nextSeq + MAX_FUTURE_SEGMENTS) return null
                 val remaining = deadline - System.currentTimeMillis()
                 if (remaining <= 0) return null
@@ -288,6 +369,40 @@ class CastHlsProxyServer(
             "live.m3u8\n"
     }
 
+    /**
+     * DEMUXED master playlist: the URL the sender must load (see
+     * CastHlsProxySession.demuxedMasterUrl). Two renditions, one
+     * SourceBuffer each, so the audio can declare ac-3 / ec-3 honestly on
+     * a receiver that answers isTypeSupported false for any muxed
+     * video/mp4 carrying those codecs but TRUE for audio/mp4 with them.
+     *
+     * The audio codec comes from the AUDIO init's own sample entry and the
+     * video codec from the VIDEO init's avcC, so neither can disagree with
+     * the bytes. CLOSED-CAPTIONS=NONE for the same reason the muxed master
+     * carries it: it keeps Shaka's Mp4CeaParser off the video segments.
+     */
+    internal fun demuxedMasterPlaylistText(): String {
+        val videoInit = synchronized(lock) { videoInits[generation] }
+        val audioInit = synchronized(lock) { audioInits[generation] }
+        val videoCodec = videoInit?.let { avcCodecString(it) } ?: "avc1.640028"
+        val audioCodec = audioInit?.let { audioCodecString(it) }
+        val sb = StringBuilder(320)
+        sb.append("#EXTM3U\n")
+        if (audioCodec != null) {
+            sb.append(
+                "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"Main\"," +
+                    "DEFAULT=YES,AUTOSELECT=YES,URI=\"audio.m3u8\"\n",
+            )
+        }
+        sb.append("#EXT-X-STREAM-INF:BANDWIDTH=12000000,CODECS=\"").append(videoCodec)
+        if (audioCodec != null) sb.append(',').append(audioCodec)
+        sb.append('"')
+        if (audioCodec != null) sb.append(",AUDIO=\"aud\"")
+        sb.append(",CLOSED-CAPTIONS=NONE\n")
+        sb.append("video.m3u8\n")
+        return sb.toString()
+    }
+
     /** RFC 6381 audio codec string from the init segment's audio sample
      *  entry: ac-3 / ec-3 for the passthrough paths, mp4a.40.2 for AAC-LC
      *  (the only AAC profile an ADTS IPTV mux carries in practice). */
@@ -324,13 +439,41 @@ class CastHlsProxyServer(
         return null
     }
 
-    internal fun playlistText(): String = synchronized(lock) {
+    internal fun playlistText(): String = playlistText(Rendition.MUXED)
+
+    /** The video-only media playlist the demuxed master's STREAM-INF
+     *  points at. */
+    internal fun videoPlaylistText(): String = playlistText(Rendition.VIDEO)
+
+    /** The audio-only media playlist the demuxed master's EXT-X-MEDIA
+     *  points at. Identical sequence numbering, target duration and
+     *  discontinuity tags to [videoPlaylistText]; only the EXTINF values
+     *  differ, by less than one audio frame. */
+    internal fun audioPlaylistText(): String = playlistText(Rendition.AUDIO)
+
+    private fun playlistText(rendition: Rendition): String = synchronized(lock) {
+        val initPrefix = when (rendition) {
+            Rendition.MUXED -> "init"
+            Rendition.VIDEO -> "vinit"
+            Rendition.AUDIO -> "ainit"
+        }
+        val segPrefix = when (rendition) {
+            Rendition.MUXED -> "seg"
+            Rendition.VIDEO -> "vseg"
+            Rendition.AUDIO -> "aseg"
+        }
         val window = ring.takeLast(WINDOW_SIZE)
         val sb = StringBuilder(512)
         sb.append("#EXTM3U\n")
         sb.append("#EXT-X-VERSION:7\n")
+        // Deliberately the max over BOTH renditions' spans, so the two
+        // demuxed playlists advertise the SAME target duration even though
+        // their EXTINF values differ by up to an audio frame.
         val targetSeconds = window.maxOfOrNull {
-            ceil(it.durationTicks / TsToFmp4Remuxer.TICKS_PER_SECOND.toDouble()).toInt()
+            ceil(
+                maxOf(it.durationTicks, it.audioDurationTicks) /
+                    TsToFmp4Remuxer.TICKS_PER_SECOND.toDouble(),
+            ).toInt()
         }?.coerceAtLeast(1) ?: 4
         sb.append("#EXT-X-TARGETDURATION:").append(targetSeconds).append('\n')
         sb.append("#EXT-X-MEDIA-SEQUENCE:").append(window.firstOrNull()?.seq ?: nextSeq).append('\n')
@@ -359,12 +502,14 @@ class CastHlsProxyServer(
             // media time 0, which is exactly where our tfdt timestamps put
             // them, and the same playlist reached PLAYING (session10).
             if (seg.generation != lastGen) {
-                sb.append("#EXT-X-MAP:URI=\"init").append(seg.generation).append(".mp4\"\n")
+                sb.append("#EXT-X-MAP:URI=\"").append(initPrefix)
+                    .append(seg.generation).append(".mp4\"\n")
                 lastGen = seg.generation
             }
-            val seconds = seg.durationTicks / TsToFmp4Remuxer.TICKS_PER_SECOND.toDouble()
+            val ticks = if (rendition == Rendition.AUDIO) seg.audioDurationTicks else seg.durationTicks
+            val seconds = ticks / TsToFmp4Remuxer.TICKS_PER_SECOND.toDouble()
             sb.append("#EXTINF:").append(String.format(java.util.Locale.US, "%.3f", seconds)).append(",\n")
-            sb.append("seg").append(seg.seq).append(".m4s\n")
+            sb.append(segPrefix).append(seg.seq).append(".m4s\n")
         }
         // LIVE playlist: no EXT-X-ENDLIST, ever; the advancing
         // MEDIA-SEQUENCE is the manifest clock the progressive URL lacked.
@@ -439,6 +584,57 @@ class CastHlsProxyServer(
                     if (playlistTextLogged.compareAndSet(false, true)) {
                         log("media playlist: ${escaped(text)}")
                     }
+                }
+                path == "/demuxed.m3u8" -> {
+                    val text = demuxedMasterPlaylistText()
+                    body = text.toByteArray(Charsets.UTF_8)
+                    mime = MIME_PLAYLIST
+                    if (demuxedMasterTextLogged.compareAndSet(false, true)) {
+                        log("demuxed master playlist: ${escaped(text)}")
+                    }
+                }
+                path == "/video.m3u8" -> {
+                    val text = videoPlaylistText()
+                    body = text.toByteArray(Charsets.UTF_8)
+                    mime = MIME_PLAYLIST
+                    if (firstPlaylistServed.compareAndSet(false, true)) {
+                        log("receiver fetched the playlist for the first time (${sock.inetAddress?.hostAddress})")
+                    }
+                    if (videoPlaylistTextLogged.compareAndSet(false, true)) {
+                        log("video playlist: ${escaped(text)}")
+                    }
+                }
+                path == "/audio.m3u8" -> {
+                    val text = audioPlaylistText()
+                    body = text.toByteArray(Charsets.UTF_8)
+                    mime = MIME_PLAYLIST
+                    if (audioPlaylistTextLogged.compareAndSet(false, true)) {
+                        log("audio playlist: ${escaped(text)}")
+                    }
+                }
+                path.startsWith("/vinit") && path.endsWith(".mp4") -> {
+                    val gen = path.removePrefix("/vinit").removeSuffix(".mp4").toIntOrNull()
+                    body = gen?.let { g -> videoInitSegment(g) }
+                    mime = MIME_MP4
+                }
+                path.startsWith("/ainit") && path.endsWith(".mp4") -> {
+                    val gen = path.removePrefix("/ainit").removeSuffix(".mp4").toIntOrNull()
+                    body = gen?.let { g -> audioInitSegment(g) }
+                    mime = MIME_AUDIO_MP4
+                }
+                path.startsWith("/vseg") && path.endsWith(".m4s") -> {
+                    val seq = path.removePrefix("/vseg").removeSuffix(".m4s").toIntOrNull()
+                    val began = System.currentTimeMillis()
+                    body = seq?.let { s -> awaitSegment(s, Rendition.VIDEO) }
+                    waitMs = System.currentTimeMillis() - began
+                    mime = MIME_SEGMENT
+                }
+                path.startsWith("/aseg") && path.endsWith(".m4s") -> {
+                    val seq = path.removePrefix("/aseg").removeSuffix(".m4s").toIntOrNull()
+                    val began = System.currentTimeMillis()
+                    body = seq?.let { s -> awaitSegment(s, Rendition.AUDIO) }
+                    waitMs = System.currentTimeMillis() - began
+                    mime = MIME_SEGMENT
                 }
                 path.startsWith("/init") && path.endsWith(".mp4") -> {
                     val gen = path.removePrefix("/init").removeSuffix(".mp4").toIntOrNull()

@@ -57,6 +57,23 @@ object CastControl {
     const val CMD_SEEK_BY = "seekBy" // signed delta ms (e.g. -30000 / +30000)
     const val CMD_SEEK_WALL = "seekWall" // absolute wall-clock target ms (scrubber)
     const val CMD_GO_LIVE = "goLive" // jump the receiver back to the live edge
+    // Receiver-type handshake (Cast Connect pivot back, 2026-09-13). A sender
+    // cannot ask the Cast SDK whether the session it just started is the native
+    // Android TV app (Cast Connect) or the web receiver: neither CastSession nor
+    // ApplicationMetadata exposes it publicly. So the sender asks the RECEIVER:
+    // it sends CMD_HELLO on connect and only the AerioTV Android TV receiver
+    // answers with CMD_RECEIVER_INFO / platform=android-tv-app. The web receiver
+    // does not implement this command, so no answer inside the probe window
+    // means "web receiver" and the sender keeps its phone-local HLS proxy path.
+    const val CMD_HELLO = "hello"
+    const val CMD_RECEIVER_INFO = "receiverInfo"
+    const val KEY_PLATFORM = "platform"
+    const val VALUE_PLATFORM_ANDROID_TV = "android-tv-app"
+    /** The WEB receiver page answers too (ghpages receiver.html, 2026-09-13), so a
+     *  slow native cold start is never mistaken for a web receiver. It spells the
+     *  discriminator "type" as well as "cmd"; senders read either. */
+    const val VALUE_PLATFORM_WEB = "web-receiver"
+    const val KEY_TYPE = "type"
     const val CMD_STATE = "state" // receiver -> sender snapshot
     // Lightweight ~1Hz position tick (receiver -> sender). Separate from CMD_STATE
     // so the crawling scrubber never triggers the heavy full-track state rebuild.

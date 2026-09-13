@@ -933,6 +933,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // Cast card X / STOP (2026-09-13): the sender stopped playback, so leave
+        // the player and land on Live TV, the same end state the companion
+        // remote's stop produces. Playback itself is already stopped by the
+        // receiver controller; this is navigation only. No-op off Android TV.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                castReceiver.exitRequests.collect {
+                    deepLinkTarget.value = DeepLinkTarget.ExitPlayer
+                }
+            }
+        }
         // GH #33 companion VOD/DVR: a paired phone asked this TV to play a movie /
         // episode / recording. Route through the same deep-link navigation the
         // cast loads use; the VodPlay/RecordingPlay targets AUTOPLAY (straight to

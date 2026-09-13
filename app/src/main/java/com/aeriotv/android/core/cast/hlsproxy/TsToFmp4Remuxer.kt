@@ -117,6 +117,45 @@ class TsToFmp4Remuxer(
             segmentStartSeconds: Double,
         ) {}
 
+        /** DEMUXED renditions of the init segment (2026-09-13), fired
+         *  immediately after [onInitSegment] from the same configuration:
+         *  [video] is a video-only moov, [audio] an audio-only moov
+         *  carrying the ac-3 / ec-3 / mp4a sample entry, and [audio] is
+         *  null for a video-only mux. Both keep the mehd/mvhd 24 h
+         *  declared duration. Default no-op so existing tests need not
+         *  care.
+         *
+         *  Why demuxed: measured on the Google TV Streamer's Cast runtime,
+         *  isTypeSupported("video/mp4; codecs=\"avc1.64002A,ac-3\"") and
+         *  isTypeSupported("video/mp4; codecs=\"ac-3\"") are both false,
+         *  but isTypeSupported("audio/mp4; codecs=\"ac-3\"") is TRUE, and
+         *  Emby's web receiver plays AC-3 through MediaCodecAudioDecoder
+         *  from a SEPARATE audio SourceBuffer. One muxed rendition can
+         *  therefore only ever declare an AAC codec string, which is what
+         *  forces the server-side AAC output profile; two renditions let
+         *  the audio declare what it really is. */
+        fun onDemuxedInitSegments(video: ByteArray, audio: ByteArray?) {}
+
+        /** DEMUXED renditions of the segment [onMediaSegment] is about to
+         *  receive, fired immediately before it, cut at exactly the same
+         *  boundary and carrying the same moof sequence number: [video]
+         *  holds the video traf only, [audio] the audio traf only. When the
+         *  cut span carried no audio frame at all [audio] is still emitted,
+         *  as a zero-sample traf, so the two media playlists keep identical
+         *  sequence numbering; it is null only for a video-only mux.
+         *
+         *  [audioDurationTicks] is the sum of the segment's audio frame
+         *  durations, i.e. the audio rendition's own EXTINF. It may differ
+         *  from [videoDurationTicks] by less than one audio frame, which
+         *  HLS allows, and falls back to the video span when the segment
+         *  has no audio. */
+        fun onDemuxedMediaSegments(
+            video: ByteArray,
+            audio: ByteArray?,
+            videoDurationTicks: Long,
+            audioDurationTicks: Long,
+        ) {}
+
         /** The mux's audio codec as soon as the PMT is parsed ("AAC",
          *  "AC-3", "E-AC-3", "none"), for the cast load log line. */
         fun onAudioCodec(name: String) {}
@@ -269,6 +308,13 @@ class TsToFmp4Remuxer(
     private var emittedTicks = 0L
 
     // ---- pending segment ----
+
+    /** Which tracks a built init or media segment carries. MUXED is the
+     *  legacy one-rendition shape kept for one release behind the old
+     *  master.m3u8 / live.m3u8 paths; VIDEO_ONLY and AUDIO_ONLY are the
+     *  demuxed renditions the sender loads (see
+     *  [Listener.onDemuxedInitSegments] for why). */
+    private enum class Rendition { MUXED, VIDEO_ONLY, AUDIO_ONLY }
 
     private class VideoSample(val data: ByteArray, val dts: Long, val pts: Long, val keyframe: Boolean)
     private class AudioSample(val data: ByteArray, val pts: Long, val durationTicks: Long)
@@ -904,7 +950,14 @@ class TsToFmp4Remuxer(
             else -> aacFreqIndex >= 0
         }
         if (!audioReady) return
-        listener.onInitSegment(buildInitSegment())
+        listener.onInitSegment(buildInitSegment(Rendition.MUXED))
+        // Demuxed renditions from the SAME configuration, so a receiver
+        // that refuses a muxed ac-3 codec string can still be handed the
+        // audio in its own SourceBuffer.
+        listener.onDemuxedInitSegments(
+            video = buildInitSegment(Rendition.VIDEO_ONLY),
+            audio = if (audioPid >= 0) buildInitSegment(Rendition.AUDIO_ONLY) else null,
+        )
         initSent = true
     }
 
@@ -991,8 +1044,25 @@ class TsToFmp4Remuxer(
         for (a in audioQueue) {
             if (a.pts < cutDts) segAudio.add(a) else keepAudio.add(a)
         }
-        val segment = buildMediaSegment(videoQueue, durations, segAudio)
+        // One sequence number per emitted CUT, shared by all three
+        // renditions of it: the demuxed playlists must number identically.
+        sequenceNumber++
+        val segment = buildMediaSegment(videoQueue, durations, segAudio, Rendition.MUXED)
+        val videoSegment = buildMediaSegment(videoQueue, durations, segAudio, Rendition.VIDEO_ONLY)
+        val audioSegment = if (audioPid >= 0) {
+            buildMediaSegment(videoQueue, durations, segAudio, Rendition.AUDIO_ONLY)
+        } else {
+            null
+        }
         val durationTicks = cutDts - segStart
+        // The audio rendition's EXTINF is what its frames actually cover;
+        // a segment with no audio frame borrows the video span so the two
+        // playlists stay aligned entry for entry.
+        val audioDurationTicks = if (segAudio.isEmpty()) {
+            durationTicks
+        } else {
+            segAudio.sumOf { it.durationTicks.coerceAtLeast(1L) }
+        }
         // Timeline census for the proxy log (2026-09-12): the tfdt values
         // this segment will carry, plus where the PLAYLIST says it starts.
         // Reported before onMediaSegment so the session can log one line
@@ -1028,25 +1098,35 @@ class TsToFmp4Remuxer(
         videoQueue.clear()
         audioQueue.clear()
         audioQueue.addAll(keepAudio)
+        // Demuxed pair first, so a store can stash it and publish all
+        // three renditions under the one sequence number onMediaSegment
+        // claims.
+        listener.onDemuxedMediaSegments(videoSegment, audioSegment, durationTicks, audioDurationTicks)
         listener.onMediaSegment(segment, durationTicks)
     }
 
     // ---- fMP4 writing ----
 
-    private fun buildInitSegment(): ByteArray {
-        val hasAudio = audioPid >= 0
-        val dims = runCatching { parseSpsDimensions(sps!!) }.getOrNull() ?: Pair(1280, 720)
+    private fun buildInitSegment(rendition: Rendition): ByteArray {
+        val hasVideo = rendition != Rendition.AUDIO_ONLY
+        val hasAudio = audioPid >= 0 && rendition != Rendition.VIDEO_ONLY
         val out = ByteArrayOutputStream(1024)
         out.write(box("ftyp", bytes("iso5"), u32(0), bytes("iso5"), bytes("iso6"), bytes("mp41")))
         val traks = ArrayList<ByteArray>()
-        traks.add(videoTrak(dims.first, dims.second))
+        if (hasVideo) {
+            val dims = runCatching { parseSpsDimensions(sps!!) }.getOrNull() ?: Pair(1280, 720)
+            traks.add(videoTrak(dims.first, dims.second))
+        }
         if (hasAudio) traks.add(audioTrak())
         val trexes = ArrayList<ByteArray>()
-        trexes.add(trex(VIDEO_TRACK_ID))
+        if (hasVideo) trexes.add(trex(VIDEO_TRACK_ID))
         // sample_depends_on = 2 (independent) with sample_is_non_sync
         // clear: every audio frame IS a sync sample, the same flag value
         // videoTrun writes for a keyframe.
         if (hasAudio) trexes.add(trex(AUDIO_TRACK_ID, defaultSampleFlags = 0x02000000))
+        // Track IDs never change between renditions, so an audio-only moov
+        // still declares track 2 and nextTrackId 3; the tfhd in every
+        // rendition's traf then names the same track it always did.
         val moov = box(
             "moov",
             mvhd(nextTrackId = if (hasAudio) 3 else 2),
@@ -1054,28 +1134,38 @@ class TsToFmp4Remuxer(
             box("mvex", mehd(), *trexes.toTypedArray()),
         )
         out.write(moov)
-        log("init: mehd 24h, liveness recorded")
+        log("${logPrefix(rendition)}init: mehd 24h, liveness recorded")
         return out.toByteArray()
+    }
+
+    /** Rendition prefix for the per-init and per-segment log lines, so a
+     *  demuxed cast can be read back from one log. */
+    private fun logPrefix(rendition: Rendition): String = when (rendition) {
+        Rendition.MUXED -> ""
+        Rendition.VIDEO_ONLY -> "video "
+        Rendition.AUDIO_ONLY -> "audio "
     }
 
     private fun buildMediaSegment(
         video: List<VideoSample>,
         videoDurations: LongArray,
         audio: List<AudioSample>,
+        rendition: Rendition,
     ): ByteArray {
-        val hasAudio = audio.isNotEmpty()
-        val videoBytes = video.sumOf { it.data.size }
-        val audioBytes = audio.sumOf { it.data.size }
+        val wantVideo = rendition != Rendition.AUDIO_ONLY
+        val wantAudio = rendition != Rendition.VIDEO_ONLY
+        val videoBytes = if (wantVideo) video.sumOf { it.data.size } else 0
+        val audioBytes = if (wantAudio) audio.sumOf { it.data.size } else 0
 
         // trun data_offset is from moof start; build the moof once with
         // placeholder offsets to learn its size, then rebuild with real
-        // ones (sizes are offset-independent). One sequence number per
-        // emitted segment, not per build pass.
-        sequenceNumber++
-        var moof = buildMoof(video, videoDurations, audio, videoDataOffset = 0, audioDataOffset = 0)
+        // ones (sizes are offset-independent). The sequence number is
+        // claimed once per cut by finalizeSegment, not per build pass and
+        // not per rendition, so all three renditions of one cut agree.
+        var moof = buildMoof(video, videoDurations, audio, rendition, videoDataOffset = 0, audioDataOffset = 0)
         val moofSize = moof.size
         moof = buildMoof(
-            video, videoDurations, audio,
+            video, videoDurations, audio, rendition,
             videoDataOffset = moofSize + 8,
             audioDataOffset = moofSize + 8 + videoBytes,
         )
@@ -1083,8 +1173,8 @@ class TsToFmp4Remuxer(
         out.write(moof)
         out.write(u32(8 + videoBytes + audioBytes))
         out.write(bytes("mdat"))
-        for (s in video) out.write(s.data)
-        if (hasAudio) for (a in audio) out.write(a.data)
+        if (wantVideo) for (s in video) out.write(s.data)
+        if (wantAudio) for (a in audio) out.write(a.data)
         return out.toByteArray()
     }
 
@@ -1094,20 +1184,29 @@ class TsToFmp4Remuxer(
         video: List<VideoSample>,
         videoDurations: LongArray,
         audio: List<AudioSample>,
+        rendition: Rendition,
         videoDataOffset: Int,
         audioDataOffset: Int,
     ): ByteArray {
         val mfhd = fullBox("mfhd", 0, 0, u32(sequenceNumber))
-        val videoTraf = box(
-            "traf",
-            // default-base-is-moof so data_offset is moof-relative (CMAF).
-            fullBox("tfhd", 0, 0x020000, u32(VIDEO_TRACK_ID)),
-            fullBox("tfdt", 1, 0, u64(video.first().dts - timelineBase)),
-            videoTrun(video, videoDurations, videoDataOffset),
-        )
         val trafs = ArrayList<ByteArray>()
-        trafs.add(videoTraf)
-        if (audio.isNotEmpty()) {
+        if (rendition != Rendition.AUDIO_ONLY) {
+            trafs.add(
+                box(
+                    "traf",
+                    // default-base-is-moof so data_offset is moof-relative (CMAF).
+                    fullBox("tfhd", 0, 0x020000, u32(VIDEO_TRACK_ID)),
+                    fullBox("tfdt", 1, 0, u64(video.first().dts - timelineBase)),
+                    videoTrun(video, videoDurations, videoDataOffset),
+                ),
+            )
+        }
+        // The audio traf is emitted for the audio-only rendition even when
+        // the cut span carried no frame (a zero-sample trun), so the audio
+        // playlist has an entry at every sequence number the video one has.
+        if (rendition != Rendition.VIDEO_ONLY &&
+            (audio.isNotEmpty() || rendition == Rendition.AUDIO_ONLY)
+        ) {
             trafs.add(
                 box(
                     "traf",
@@ -1137,7 +1236,13 @@ class TsToFmp4Remuxer(
                     // timelineBasePts >= timelineBase, so this is always
                     // >= 0 and always the truth. Clamping here is what
                     // overlapped consecutive segments' audio.
-                    fullBox("tfdt", 1, 0, u64(audio.first().pts - timelineBase)),
+                    // Falls back to the segment's video start when there
+                    // is no audio frame to take it from, which is the only
+                    // honest timestamp for an empty audio fragment.
+                    fullBox(
+                        "tfdt", 1, 0,
+                        u64((audio.firstOrNull()?.pts ?: video.first().dts) - timelineBase),
+                    ),
                     audioTrun(audio, audioDataOffset),
                 ),
             )

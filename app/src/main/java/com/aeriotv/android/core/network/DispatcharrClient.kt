@@ -371,114 +371,10 @@ class DispatcharrClient @Inject constructor() {
         )
     }.getOrNull()
 
-    /**
-     * One row of /api/core/outputprofiles/ (DRF router basename
-     * outputprofile). `parameters` is free-form on the server, so it is
-     * decoded as a JsonElement and matched as text.
-     */
-    @Serializable
-    data class OutputProfile(
-        val id: Int,
-        val name: String = "",
-        val command: String? = null,
-        val parameters: JsonElement? = null,
-        val locked: Boolean = false,
-        @SerialName("is_active")
-        val isActive: Boolean = true,
-    )
-
-    /** The AAC output profile this server offers for casting, plus why it
-     *  was picked ("stereo-aac" or "web-player-fallback"). */
-    data class AacOutputProfile(val id: Int, val name: String, val reason: String)
-
-    /** Exact name Dispatcharr >= 0.30 seeds in
-     *  core/migrations/0024_outputprofile.py (locked, active). Used ONLY
-     *  as a last resort when no active profile advertises stereo AAC; its
-     *  output is not stereo. */
-    private val AAC_PROFILE_NAME = "Web Player (AAC Audio)"
-
-    /**
-     * Every output profile the server exposes. Null on ANY failure
-     * (including a server older than 0.30, where the endpoint 404s) so a
-     * transient error never clobbers a persisted value; an EMPTY list is
-     * a real answer (server has no profiles).
-     *
-     * Tolerates both shapes DRF can return: a bare list, or a paginated
-     * `{"results": [...]}` envelope.
-     */
-    suspend fun fetchOutputProfiles(baseUrl: String, apiKey: String): List<OutputProfile>? = runCatching {
-        val url = "${baseUrl.trimEnd('/')}/api/core/outputprofiles/"
-        val response = client.get(url) { applyAuth(apiKey) }
-        if (!response.status.isSuccess()) return@runCatching null
-        val element = json.parseToJsonElement(response.bodyAsText())
-        val array = when {
-            element is JsonArray -> element
-            element is JsonObject -> element["results"] as? JsonArray ?: return@runCatching null
-            else -> return@runCatching null
-        }
-        array.mapNotNull { row ->
-            runCatching { json.decodeFromJsonElement(serializer<OutputProfile>(), row) }.getOrNull()
-        }
-    }.getOrNull()
-
-    /**
-     * The server's stereo-AAC output profile for the cast path, picked by
-     * what the profile DOES, never by its name (Logan 2026-09-12). Over
-     * the ACTIVE profiles: any whose command / parameters ask for an AAC
-     * audio encoder (`-c:a aac` or `-acodec aac`) AND a stereo downmix
-     * (`-ac 2`); when several match, the ones that also pass the video
-     * through (`-c:v copy`) win, then the lowest id. Only when nothing
-     * matches do we fall back to the built-in "[AAC_PROFILE_NAME]" by
-     * name, whose output is NOT stereo, so casting a 5.1 channel through
-     * it will be refused -- logged as a warning.
-     *
-     * Null when this server offers neither. The selection rule lives here
-     * so the capture points in PlaylistRepository cannot drift from it.
-     *
-     * Casting appends `?output_profile=<id>` to /proxy/ts/stream/<uuid>
-     * (see [withOutputProfile]), which makes Dispatcharr run ONE
-     * server-side transcode per (channel, profile) shared by every client
-     * that asks for it, so the phone receives stereo AAC and passes it
-     * through with no decoding of its own. Viewers without the parameter
-     * keep the original AC-3 feed.
-     */
-    fun pickAacOutputProfile(profiles: List<OutputProfile>): AacOutputProfile? {
-        val active = profiles.filter { it.isActive }
-        fun text(profile: OutputProfile) =
-            ((profile.parameters?.toString() ?: "") + " " + (profile.command ?: "")).lowercase()
-        val stereoAac = active.filter { profile ->
-            val t = text(profile)
-            (t.contains("-c:a aac") || t.contains("-acodec aac")) && t.contains("-ac 2")
-        }
-        val chosen = stereoAac
-            .sortedWith(compareByDescending<OutputProfile> { text(it).contains("-c:v copy") }
-                .thenBy { it.id })
-            .firstOrNull()
-        if (chosen != null) {
-            android.util.Log.i(
-                "DispatcharrClient",
-                "[Cast] output profile pick: id=${chosen.id} name=${chosen.name} reason=stereo-aac",
-            )
-            return AacOutputProfile(chosen.id, chosen.name, "stereo-aac")
-        }
-        val fallback = active.firstOrNull {
-            it.name.trim().equals(AAC_PROFILE_NAME, ignoreCase = true)
-        }
-        if (fallback != null) {
-            android.util.Log.w(
-                "DispatcharrClient",
-                "[Cast] output profile pick: id=${fallback.id} name=${fallback.name} " +
-                    "reason=web-player-fallback",
-            )
-            android.util.Log.w(
-                "DispatcharrClient",
-                "[Cast] \"$AAC_PROFILE_NAME\" output is not stereo; casting 5.1 channels will be refused",
-            )
-            return AacOutputProfile(fallback.id, fallback.name, "web-player-fallback")
-        }
-        android.util.Log.i("DispatcharrClient", "[Cast] output profile pick: id=none name=none reason=none")
-        return null
-    }
+    // Cast audio, 2026-09-13: the /api/core/outputprofiles/ fetch and the
+    // stereo-AAC pick that lived here are GONE. Cast sessions ingest the
+    // plain stream and AC-3 / E-AC-3 passes through to the receiver, so no
+    // server-side output profile is ever requested.
 
     /** Server version from /api/core/version/, or null when unreachable. */
     suspend fun fetchServerVersion(baseUrl: String, apiKey: String): String? =
@@ -1044,23 +940,6 @@ class DispatcharrClient @Inject constructor() {
      */
     fun streamUrl(baseUrl: String, channelUuid: String): String =
         "${baseUrl.trimEnd('/')}/proxy/ts/stream/$channelUuid"
-
-    /**
-     * Add `?output_profile=<id>` to a /proxy/ts/stream/ URL so Dispatcharr
-     * serves THIS client the named output profile (the cast path asks for
-     * the built-in AAC profile; see [fetchAacOutputProfileId]). Returns
-     * [url] unchanged when it is not a proxy stream URL or already names a
-     * profile, so a call site can apply it blindly. `output_format` is
-     * deliberately left alone: mpegts is the default and the remuxer wants
-     * raw TS, never fmp4.
-     */
-    fun withOutputProfile(url: String, profileId: Int): String {
-        if (profileId <= 0) return url
-        if (!url.contains("/proxy/ts/stream/")) return url
-        if (url.contains("output_profile=")) return url
-        val separator = if (url.contains('?')) '&' else '?'
-        return "$url${separator}output_profile=$profileId"
-    }
 
     /**
      * Catch-up playback credentials. Dispatcharr's /timeshift/ endpoint (dev,

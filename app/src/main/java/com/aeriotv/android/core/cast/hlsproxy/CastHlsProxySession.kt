@@ -131,35 +131,38 @@ class CastHlsProxySession @Inject constructor(
      * line and for telling the user what happened.
      */
     data class Started(
+        /** The legacy MUXED master playlist, kept reachable for one
+         *  release. */
         val playlistUrl: String,
+        /** The DEMUXED master playlist (2026-09-13): separate video and
+         *  audio renditions, one SourceBuffer each, so the audio can
+         *  declare ac-3 / ec-3 honestly on a receiver that answers
+         *  isTypeSupported false for any muxed video/mp4 carrying those
+         *  codecs but TRUE for audio/mp4 with them. This is what the
+         *  SENDER must load: AerioCastSender should point
+         *  MediaInfo.contentUrl at this instead of [playlistUrl]. */
+        val demuxedPlaylistUrl: String,
         /** "AAC", "AC-3", "E-AC-3", "none" or "" when the PMT never
          *  arrived before the first segments (never observed in the
          *  field, but the log line must not lie). */
         val audioCodec: String,
-        /** True when the output-profile URL failed and the plain feed
-         *  carried the session instead. */
-        val usedFallback: Boolean,
     )
 
     /**
      * Point the proxy at [rawTsUrl] (the SAME URL + headers the local
-     * player would use, plus `?output_profile=<id>` when the sender
-     * resolved Dispatcharr's AAC profile AND the receiver cannot decode
-     * AC-3 itself) and suspend until the playlist
-     * has [READY_MEDIA_TICKS] of media.
+     * player would use; as of 2026-09-13 there is no `?output_profile=`
+     * variant any more, the cast session always ingests the plain stream)
+     * and suspend until the playlist has [READY_MEDIA_TICKS] of media.
      *
-     * [fallbackUrl] is the same channel WITHOUT the output_profile
-     * parameter. When it is non-null the first connection fails fast on
-     * an HTTP error instead of burning the ready deadline on five
-     * backoff retries, and the session is restarted ONCE on the plain
-     * feed: a broken or mis-seeded server profile must not cost the user
-     * the channel. [onNotice] carries the user-facing explanation of
-     * that fallback.
+     * [allowAc3Passthrough] is the receiver's MEASURED AC-3 capability,
+     * passed down by the sender from the receiver's own
+     * MediaSource.isTypeSupported('audio/mp4; codecs="ac-3"'): false
+     * refuses an AC-3 mux by name rather than sending a stream the
+     * receiver cannot decode (the phone never transcodes cast audio, and
+     * the server is never asked to).
      *
-     * [allowAc3Passthrough] is the receiver's AC-3 capability, decided by
-     * the sender from the Cast device: false refuses an AC-3 mux by name
-     * rather than sending a stream the receiver cannot decode (the phone
-     * never transcodes cast audio).
+     * [onNotice] carries a user-facing explanation of a non-fatal ingest
+     * event; it is kept for the ingest paths that still report one.
      *
      * Throws [UnsupportedCodecException] for a mux the proxy cannot
      * serve (non-H.264 video, or audio that is neither AAC nor an AC-3
@@ -172,46 +175,17 @@ class CastHlsProxySession @Inject constructor(
     suspend fun startChannel(
         rawTsUrl: String,
         headers: Map<String, String>,
-        fallbackUrl: String? = null,
         allowAc3Passthrough: Boolean = false,
-        onNotice: ((String) -> Unit)? = null,
+        @Suppress("UNUSED_PARAMETER") onNotice: ((String) -> Unit)? = null,
     ): Started = kotlinx.coroutines.withContext(Dispatchers.IO) {
         // The sender calls from its Main scope; the socket bind and the
         // address walk below are not Main-thread work.
-        val retryUrl = fallbackUrl?.takeIf { it != rawTsUrl }
-        try {
-            Started(
-                playlistUrl = startChannelBlocking(rawTsUrl, headers, allowAc3Passthrough, retryUrl != null),
-                audioCodec = audioCodec,
-                usedFallback = false,
-            )
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // Supersession (a later channel flip) or a real timeout; the
-            // timeout arm below is the only one that retries.
-            if (retryUrl == null || e !is TimeoutCancellationException) throw e
-            onNotice?.invoke(
-                "Dispatcharr did not send any data for this channel within " +
-                    "${READY_TIMEOUT_MS / 1000} seconds. Trying the original audio.",
-            )
-            debugLogWarn(context, TAG, "output profile sent no data in time; retrying without it")
-            Started(
-                playlistUrl = startChannelBlocking(retryUrl, headers, allowAc3Passthrough, false),
-                audioCodec = audioCodec,
-                usedFallback = true,
-            )
-        } catch (e: IngestHttpException) {
-            if (retryUrl == null) throw e
-            onNotice?.invoke(
-                "Dispatcharr could not start the AAC output profile for this " +
-                    "channel (HTTP ${e.code}). Trying the original audio.",
-            )
-            debugLogWarn(context, TAG, "output profile failed http=${e.code}; retrying without it")
-            Started(
-                playlistUrl = startChannelBlocking(retryUrl, headers, allowAc3Passthrough, false),
-                audioCodec = audioCodec,
-                usedFallback = true,
-            )
-        }
+        Started(
+            playlistUrl = startChannelBlocking(rawTsUrl, headers, allowAc3Passthrough, false) +
+                "/master.m3u8",
+            demuxedPlaylistUrl = proxyBaseUrl + "/demuxed.m3u8",
+            audioCodec = audioCodec,
+        )
     }
 
     private suspend fun startChannelBlocking(
@@ -281,11 +255,19 @@ class CastHlsProxySession @Inject constructor(
                     READY_MEDIA_TICKS.toDouble() / TsToFmp4Remuxer.TICKS_PER_SECOND,
                 ),
         )
-        // Load the MASTER playlist: its CLOSED-CAPTIONS=NONE keeps Shaka's
-        // Mp4CeaParser away from our muxed segments (fatal Error 3000
-        // otherwise; see masterPlaylistText).
-        return "http://$lanIp:$port/master.m3u8"
+        // The proxy's base URL. Both masters hang off it: /master.m3u8
+        // (muxed, legacy) and /demuxed.m3u8 (the two-rendition shape the
+        // sender loads). Either way it is a MASTER playlist, never a media
+        // one: CLOSED-CAPTIONS=NONE keeps Shaka's Mp4CeaParser away from
+        // the video segments (fatal Error 3000 otherwise).
+        proxyBaseUrl = "http://$lanIp:$port"
+        return proxyBaseUrl
     }
+
+    /** Base URL of the running proxy ("http://ip:port"), set by
+     *  [startChannelBlocking] once the socket is bound and the ready gate
+     *  has passed. */
+    @Volatile private var proxyBaseUrl: String = ""
 
     /** Full teardown: ingest, ring, server socket, foreground service.
      *  Called when the cast session ends (or a start fails). */
@@ -352,6 +334,34 @@ class CastHlsProxySession @Inject constructor(
                         debugLog(context, TAG, "init segment ready gen=$currentGen (${data.size} B)")
                     }
 
+                    override fun onDemuxedInitSegments(video: ByteArray, audio: ByteArray?) {
+                        server.setDemuxedInitSegments(currentGen, video, audio)
+                        debugLog(
+                            context, TAG,
+                            "demuxed init ready gen=$currentGen " +
+                                "vinit=${video.size} B ainit=${audio?.size ?: 0} B",
+                        )
+                    }
+
+                    /** Stashed because the remuxer reports the demuxed pair
+                     *  immediately BEFORE the muxed segment, and the store
+                     *  claims the single sequence number all three
+                     *  renditions share at publish time. */
+                    private var pendingVideoSegment: ByteArray? = null
+                    private var pendingAudioSegment: ByteArray? = null
+                    private var pendingAudioDurationTicks = 0L
+
+                    override fun onDemuxedMediaSegments(
+                        video: ByteArray,
+                        audio: ByteArray?,
+                        videoDurationTicks: Long,
+                        audioDurationTicks: Long,
+                    ) {
+                        pendingVideoSegment = video
+                        pendingAudioSegment = audio
+                        pendingAudioDurationTicks = audioDurationTicks
+                    }
+
                     override fun onSegmentComposition(
                         videoSamples: Int,
                         audioSamples: Int,
@@ -369,7 +379,18 @@ class CastHlsProxySession @Inject constructor(
                     }
 
                     override fun onMediaSegment(data: ByteArray, durationTicks: Long) {
-                        server.addSegment(currentGen, data, durationTicks)
+                        server.addSegment(
+                            gen = currentGen,
+                            data = data,
+                            durationTicks = durationTicks,
+                            videoData = pendingVideoSegment,
+                            audioData = pendingAudioSegment,
+                            audioDurationTicks = if (pendingVideoSegment == null) {
+                                durationTicks
+                            } else {
+                                pendingAudioDurationTicks
+                            },
+                        )
                         segmentsLogged++
                         // EVERY segment's timeline, so the playhead-versus-
                         // buffer arithmetic can be done from the sender log
@@ -391,7 +412,9 @@ class CastHlsProxySession @Inject constructor(
                                 "vpts=${"%.3f".format(firstVideoPtsSeconds)} " +
                                 "apts=${"%.3f".format(firstAudioPtsSeconds)} " +
                                 "buffStart=${"%.3f".format(buffStart)} " +
-                                "video=$videoSamples audio=$audioSamples ${data.size} B",
+                                "video=$videoSamples audio=$audioSamples ${data.size} B " +
+                                "vseg=${pendingVideoSegment?.size ?: 0} B " +
+                                "aseg=${pendingAudioSegment?.size ?: 0} B",
                         )
                         localSeq++
                         if (segmentsLogged == 1) {
@@ -543,20 +566,16 @@ class CastHlsProxySession @Inject constructor(
      * 2026-09-12 log), which reads as a real misconfiguration; https without
      * an explicit port is 443, and either way the log must not invent one.
      *
-     * `output_profile` is kept (it is a server-side profile id, not a
-     * secret) because it is the one query parameter the cast audio path is
-     * diagnosed by; every other parameter is dropped.
+     * The whole query string is dropped: with the output-profile path gone
+     * (2026-09-13) no query parameter carries anything the cast audio path
+     * is diagnosed by.
      */
     private fun sanitize(url: String): String {
         val base = url.substringBefore('?')
-        val query = url.substringAfter('?', "")
-        val profile = query.split('&')
-            .firstOrNull { it.startsWith("output_profile=") }
-        val host = runCatching {
+        return runCatching {
             val u = java.net.URI(base)
             val port = if (u.port > 0) ":${u.port}" else ""
             "${u.scheme}://${u.host}$port${u.path}"
         }.getOrDefault(base)
-        return if (profile != null) "$host?$profile" else host
     }
 }

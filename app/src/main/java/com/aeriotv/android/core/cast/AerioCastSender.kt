@@ -12,9 +12,6 @@ import androidx.mediarouter.media.MediaRouter
 import com.aeriotv.android.BuildConfig
 import com.aeriotv.android.core.cast.hlsproxy.CastHlsProxySession
 import com.aeriotv.android.core.cast.hlsproxy.UnsupportedCodecException
-import com.aeriotv.android.core.data.db.dao.PlaylistDao
-import com.aeriotv.android.core.data.db.entity.castAacOutputProfileId
-import com.aeriotv.android.core.network.DispatcharrClient
 import com.google.android.gms.cast.Cast
 import com.google.android.gms.cast.HlsSegmentFormat
 import com.google.android.gms.cast.MediaInfo
@@ -57,10 +54,6 @@ import javax.inject.Singleton
 @Singleton
 class AerioCastSender @Inject constructor(
     private val hlsProxy: CastHlsProxySession,
-    /** Read straight from the DAO (not the repository) for one field: the
-     *  active playlist's cast AAC output profile id. */
-    private val playlistDao: PlaylistDao,
-    private val dispatcharrClient: DispatcharrClient,
 ) {
 
     /** Sender connection state, surfaced to the player chrome. */
@@ -108,6 +101,20 @@ class AerioCastSender @Inject constructor(
 
     private companion object {
         const val TAG = "AerioCast"
+
+        /** How long the sender waits for the receiver-type handshake answer
+         *  (CMD_RECEIVER_INFO) before it gives up and assumes a web receiver.
+         *
+         *  Both receivers now ANSWER (the web receiver.html answers
+         *  platform=web-receiver as of 2026-09-13), so this is a last resort for a
+         *  receiver too old to answer at all, not the normal web path. It is long
+         *  because the only thing it has to outlast is a Cast Connect cold start
+         *  of the Android TV app on a slow device; while it runs the card stays in
+         *  its connecting state, which is honest, and nothing is guessed. */
+        const val TARGET_PROBE_MS = 12_000L
+
+        /** Re-send interval for the hello probe inside that window. */
+        const val PROBE_RETRY_MS = 1_000L
     }
 
     /**
@@ -116,11 +123,18 @@ class AerioCastSender @Inject constructor(
      * Null until the first caps message arrives; cleared when the session ends.
      *
      * This replaced a model allow-list that said a Google TV Streamer decodes
-     * AC-3. Its platform players do; the web receiver's MSE does NOT, and the
-     * receiver's own Chromium proved it (gtvlogs/session16, 2026-09-12
-     * 15:52:40): isTypeSupported("video/mp4; codecs=\"avc1.64002A,ac-3\"")
-     * returned false and the plain AC-3 load died with Shaka error 3015 on
-     * both senders. The decision below now uses the measurement only.
+     * AC-3. The allow-list was right about the platform players and wrong
+     * about the web receiver's MSE in the MUXED shape: the receiver's own
+     * Chromium answered isTypeSupported("video/mp4;
+     * codecs=\"avc1.64002A,ac-3\") false (gtvlogs/session16, 2026-09-12
+     * 15:52:40) and that load died with Shaka 3015.
+     *
+     * As of 2026-09-13 the receiver probes the DEMUXED shape instead, which
+     * is what the sender now loads: isTypeSupported("audio/mp4;
+     * codecs=\"ac-3\") is TRUE on that same Streamer, so AC-3 / E-AC-3
+     * passes through in its own audio/mp4 SourceBuffer. The keys are
+     * unchanged ("ac-3", "ec-3", "mp4a.40.2", "avc1.64002A"); only the MIME
+     * the receiver measures them with changed.
      */
     private var receiverCaps: Map<String, Boolean>? = null
 
@@ -176,15 +190,150 @@ class AerioCastSender @Inject constructor(
     /** Whether the cast receiver is currently playing (vs paused). */
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
+    // ── Receiver type: native Android TV app vs web receiver ────────────────
+    // Cast Connect is ON again (2026-09-13) because the web receiver's Chromium
+    // renderer tops out near 46 fps on a Google TV Streamer while the native app
+    // renders 60. The framework decides which receiver actually launched, but it
+    // exposes that decision NOWHERE public (CastSession / ApplicationMetadata
+    // both hide it), so the sender asks the receiver directly: CMD_HELLO on
+    // connect, and only the AerioTV Android TV receiver answers CMD_RECEIVER_INFO
+    // with platform=android-tv-app. No answer inside [TARGET_PROBE_MS] means the
+    // web receiver, which needs the phone-local HLS proxy and a playable
+    // contentUrl. A live tune that arrives while the answer is still pending is
+    // HELD (deferredTune) rather than guessed: guessing web would start an
+    // unnecessary proxy plus a server transcode profile on a device that can play
+    // the raw TS natively, and guessing native would black-screen a dongle.
+    enum class ReceiverTarget { UNKNOWN, ANDROID_TV_APP, WEB_RECEIVER }
+
+    private val _receiverTarget = MutableStateFlow(ReceiverTarget.UNKNOWN)
+    /** Which receiver the live session is talking to. UNKNOWN while the handshake
+     *  is in flight and whenever no session is connected. */
+    val receiverTarget: StateFlow<ReceiverTarget> = _receiverTarget.asStateFlow()
+
+    /** A live tune held until the receiver type is known. */
+    private data class DeferredTune(
+        val base: Content,
+        val rawTsUrl: String,
+        val headers: Map<String, String>,
+    )
+
+    private var deferredTune: DeferredTune? = null
+    private var targetProbeJob: Job? = null
+
+    /** Start the receiver-type handshake for a freshly attached session. The probe
+     *  is re-sent every second until an answer lands or the window expires: the
+     *  Cast Connect receiver's message listener does not exist until its process
+     *  has started, so a single probe sent at connect can simply be dropped. */
+    private fun probeReceiverTarget() {
+        _receiverTarget.value = ReceiverTarget.UNKNOWN
+        targetProbeJob?.cancel()
+        targetProbeJob = senderScope.launch {
+            var waited = 0L
+            while (_receiverTarget.value == ReceiverTarget.UNKNOWN && waited < TARGET_PROBE_MS) {
+                sendControl(CastControl.command(CastControl.CMD_HELLO))
+                kotlinx.coroutines.delay(PROBE_RETRY_MS)
+                waited += PROBE_RETRY_MS
+            }
+            if (_receiverTarget.value == ReceiverTarget.UNKNOWN) {
+                Log.i(
+                    TAG,
+                    "[Cast] receiver type handshake timed out after " +
+                        "${TARGET_PROBE_MS / 1000}s with no answer",
+                )
+                resolveReceiverTarget(ReceiverTarget.WEB_RECEIVER, answered = false)
+            }
+        }
+    }
+
+    /** Latch the receiver type, log WHICH of the three outcomes happened, and
+     *  release any held tune. [answered] distinguishes an explicit receiver answer
+     *  from the timeout fallback. */
+    private fun resolveReceiverTarget(target: ReceiverTarget, answered: Boolean = true) {
+        if (_receiverTarget.value == target) return
+        _receiverTarget.value = target
+        if (target == ReceiverTarget.ANDROID_TV_APP) {
+            Log.i(TAG, "[Cast] target=android-tv-app, native playback (receiver answered)")
+        } else if (answered) {
+            Log.i(TAG, "[Cast] target=web-receiver (receiver answered)")
+        } else {
+            Log.i(TAG, "[Cast] target=web-receiver (no answer, handshake timed out)")
+        }
+        deferredTune?.let { held ->
+            deferredTune = null
+            dispatchLiveTune(held)
+        }
+    }
+
+    /** Apply a receiver's own answer to the hello probe. An unrecognised platform
+     *  is left UNKNOWN so the timeout decides rather than a bad guess. */
+    private fun noteReceiverInfo(json: JSONObject) {
+        when (json.optString(CastControl.KEY_PLATFORM)) {
+            CastControl.VALUE_PLATFORM_ANDROID_TV ->
+                resolveReceiverTarget(ReceiverTarget.ANDROID_TV_APP)
+            CastControl.VALUE_PLATFORM_WEB ->
+                resolveReceiverTarget(ReceiverTarget.WEB_RECEIVER)
+        }
+    }
+
+    /** Route a live tune to the path the resolved receiver type needs. */
+    private fun dispatchLiveTune(tune: DeferredTune) {
+        when (_receiverTarget.value) {
+            ReceiverTarget.UNKNOWN -> {
+                deferredTune = tune
+                // Show the channel on the card immediately so the UI is not dead
+                // during the handshake; the load itself waits for the answer.
+                pending = tune.base
+                _content.value = tune.base
+                Log.i(TAG, "[Cast] tune held: receiver type not yet known")
+            }
+            ReceiverTarget.ANDROID_TV_APP -> castLiveNative(tune.base)
+            ReceiverTarget.WEB_RECEIVER ->
+                if (tune.rawTsUrl.isNotBlank()) {
+                    castLiveViaProxy(tune.base, tune.rawTsUrl, tune.headers)
+                } else {
+                    // No playable URL (event-style channel): identity-only load.
+                    setContent(tune.base)
+                }
+        }
+    }
+
+    /**
+     * Cast Connect path: hand the native Android TV receiver the channel IDENTITY
+     * only and let it tune like a local tap (its own ExoPlayer, its own effective
+     * base, AC-3 passthrough). Deliberately does NOT start the phone HLS proxy and
+     * does NOT resolve a Dispatcharr output profile: nothing on the phone touches
+     * this stream. Any proxy left over from a previous web session is torn down.
+     */
+    private fun castLiveNative(base: Content) {
+        proxyLoadJob?.cancel()
+        proxyLoadJob = null
+        runCatching { hlsProxy.stop() }
+        Log.i(
+            TAG,
+            "[Cast] target=android-tv-app, native playback: channel=${base.title} " +
+                "id=${base.mediaId} proxy=none profile=none",
+        )
+        setContent(base)
+    }
+
     private var controlSession: CastSession? = null
 
     private val controlChannel = Cast.MessageReceivedCallback { _, ns, message ->
         if (ns != CastControl.NAMESPACE) return@MessageReceivedCallback
         runCatching {
             val json = JSONObject(message)
+            // The web receiver page spells the discriminator "type", the Android TV
+            // receiver spells it "cmd" like every other frame on this namespace.
+            if (json.optString(CastControl.KEY_TYPE) == CastControl.CMD_RECEIVER_INFO) {
+                noteReceiverInfo(json)
+                return@runCatching
+            }
             when (json.optString(CastControl.KEY_CMD)) {
                 CastControl.CMD_STATE -> _remoteState.value = CastControl.decodeState(json)
                 CastControl.CMD_POSITION -> _position.value = CastControl.decodePosition(json)
+                // Both receivers answer the hello probe and NAME themselves, so
+                // neither target is ever inferred from silence.
+                CastControl.CMD_RECEIVER_INFO -> noteReceiverInfo(json)
             }
         }
     }
@@ -668,16 +817,11 @@ class AerioCastSender @Inject constructor(
                 subtitle = subtitle,
                 artUri = artUri,
             )
-            if (localUrl.isNotBlank()) {
-                // Web/Styled-receiver path, casting rework P1: point the
-                // phone-local HLS proxy at the channel's raw TS and load the
-                // proxy playlist once it has segments (see castLiveViaProxy).
-                castLiveViaProxy(base, localUrl, headers)
-            } else {
-                // No playable URL (event-style channel): identity-only load;
-                // only a Cast Connect receiver could act on it.
-                setContent(base)
-            }
+            // Route by receiver type (2026-09-13): the native Android TV app gets
+            // the identity and tunes itself (no proxy, no output profile); a web
+            // receiver gets the phone-local HLS proxy playlist. While the
+            // handshake is still in flight the tune is HELD, never guessed.
+            dispatchLiveTune(DeferredTune(base, localUrl, headers))
             // The initial load launches the receiver via the entity deep link, but
             // Cast Connect won't re-deliver a second load() to an already-running
             // receiver -- so also push the channel over the reliable control
@@ -714,70 +858,54 @@ class AerioCastSender @Inject constructor(
         _content.value = base
         proxyLoadJob?.cancel()
         proxyLoadJob = senderScope.launch {
-            // Cast audio (Logan 2026-09-12): ask Dispatcharr for its
-            // built-in "Web Player (AAC Audio)" output profile for THIS
-            // request, so the proxy ingests stereo AAC and passes it
-            // through with no decoding on the phone. Local playback is
-            // untouched and keeps the AC-3 feed. Viewers without the
-            // parameter keep the original feed too: the server runs one
-            // transcode per (channel, profile), shared.
+            // Cast audio (Logan 2026-09-13): AC-3 / E-AC-3 PASSES THROUGH to
+            // the web receiver and the Dispatcharr output-profile path is
+            // gone. Nothing server-side is asked for, nothing is transcoded
+            // on the phone, and local playback was never involved.
             //
-            // 2026-09-12 (Google TV Streamer, gtv session10): the profile
-            // used to be applied to EVERY cast, including receivers that
-            // decode AC-3 themselves. Dispatcharr's ffmpeg AAC encoder
-            // emits channel_configuration 0 (layout in a PCE) whenever the
-            // AC-3 source layout is outside Table 1.19, and the receiver's
-            // AAC decoder then substitutes silence for every frame. So the
-            // profile is requested ONLY when the receiver can decode AC-3
-            // in MSE; that receiver ingests the PLAIN stream and the
-            // remuxer passes AC-3 / E-AC-3 through untouched.
+            // What changed: the proxy now serves a DEMUXED master (separate
+            // video and audio renditions, one SourceBuffer each), and a
+            // Google TV Streamer answers
+            //   isTypeSupported('audio/mp4; codecs="ac-3"') -> true
+            // for exactly that shape, while the old muxed video/mp4 form
+            // answered false (the measurement that used to force the AAC
+            // profile). Emby plays AC-3 through the same audio/mp4 path.
             //
-            // 2026-09-12 session16: "can decode" is now the receiver's own
-            // MediaSource.isTypeSupported measurement ([receiverCaps]), not
-            // a model allow-list. The list called the Streamer AC-3 capable
-            // and the plain stream died with Shaka 3015. With no caps yet
-            // (first load can race READY) the profile is the safe default:
-            // every receiver we measure supports AAC.
+            // So the ingest is ALWAYS the plain stream URL, and the only
+            // decision left is whether this receiver may have the AC-3
+            // bitstream: [receiverCaps] ac-3 / ec-3, measured by the
+            // receiver itself. False plus an AC-3 source is refused by name
+            // rather than transcoded. AAC sources pass through as before
+            // (a channel_configuration 0 layout is still refused).
             val caps = receiverCaps
             if (caps == null) {
-                Log.i(TAG, "[Cast] caps not received, defaulting to profile")
+                Log.i(TAG, "[Cast] caps not received, assuming no AC-3")
             }
             val ac3Ok = caps != null && (caps["ac-3"] == true || caps["ec-3"] == true)
             val receiverName = lastDeviceName ?: (state.value as? State.Connected)?.deviceName
-            val profileId = if (ac3Ok) {
-                null
-            } else {
-                runCatching {
-                    playlistDao.firstActive()?.castAacOutputProfileId()
-                }.getOrNull()
-            }
-            val profiledUrl = profileId
-                ?.let { dispatcharrClient.withOutputProfile(rawTsUrl, it) }
-                ?: rawTsUrl
             val receiverModel = runCatching {
                 currentSession()?.castDevice?.modelName
             }.getOrNull()?.takeIf { it.isNotBlank() } ?: receiverName ?: "unknown"
             Log.i(
                 TAG,
                 "[Cast] audio plan: receiver=$receiverModel " +
-                    "ac3=${if (ac3Ok) "yes" else "no"} (${if (caps == null) "no caps" else "measured"}) " +
-                    "-> ingest=${profileId?.let { "profile $it" } ?: "plain"}",
+                    "caps=${if (caps == null) "none" else "measured"} " +
+                    "ac-3=${if (caps?.get("ac-3") == true) "yes" else "no"} " +
+                    "ec-3=${if (caps?.get("ec-3") == true) "yes" else "no"} " +
+                    "aac=${if (caps?.get("mp4a.40.2") == true) "yes" else "no"} " +
+                    "-> ingest=plain audio=${if (ac3Ok) "passthrough" else "aac-only"}",
             )
             val started = try {
                 hlsProxy.startChannel(
-                    rawTsUrl = profiledUrl,
+                    rawTsUrl = rawTsUrl,
                     headers = headers,
-                    // One retry on the plain feed when the profile cannot
-                    // start: a broken server profile must not cost the
-                    // user the channel.
-                    fallbackUrl = rawTsUrl,
                     allowAc3Passthrough = ac3Ok,
                     onNotice = { message -> surfaceCastFailure(message) },
                 )
             } catch (e: UnsupportedCodecException) {
                 Log.w(
                     TAG,
-                    "[Cast] load channel=${base.title} profile=${profileId ?: "none"} " +
+                    "[Cast] load channel=${base.title} " +
                         "audio=${e.codecName} mode=refused",
                 )
                 surfaceCastFailure(describeRefusal(e))
@@ -805,10 +933,16 @@ class AerioCastSender @Inject constructor(
             Log.i(
                 TAG,
                 "[Cast] load channel=${base.title} " +
-                    "profile=${if (started.usedFallback) "none (fallback)" else profileId?.toString() ?: "none"} " +
                     "audio=${started.audioCodec.ifBlank { "unknown" }} mode=passthrough",
             )
-            val ready = base.copy(webCastUrl = started.playlistUrl, webCastMime = "application/x-mpegURL")
+            // The DEMUXED master is what the receiver loads: the audio
+            // rendition declares ac-3 / ec-3 honestly in its own
+            // audio/mp4 SourceBuffer. The muxed master stays served but
+            // nothing loads it.
+            val ready = base.copy(
+                webCastUrl = started.demuxedPlaylistUrl,
+                webCastMime = "application/x-mpegURL",
+            )
             pending = ready
             _content.value = ready
             currentSession()?.let { loadOnSession(it, ready) }
@@ -826,8 +960,10 @@ class AerioCastSender @Inject constructor(
         if (e.isVideo) {
             return "This channel's video is $codec, which Google Cast receivers cannot play."
         }
-        return "This channel's audio is a surround layout the receiver cannot decode. " +
-            "Add a stereo AAC output profile named AerioTV Cast in Dispatcharr (see the README)."
+        if (codec.startsWith("AC-3") || codec.startsWith("E-AC-3")) {
+            return "This receiver cannot decode this channel's surround audio (AC-3)."
+        }
+        return "This channel's audio is $codec, which the receiver cannot decode."
     }
 
     private fun surfaceCastFailure(message: String) {
@@ -944,6 +1080,8 @@ class AerioCastSender @Inject constructor(
         // broadcast on it simply never delivers a message.
         runCatching { session.setMessageReceivedCallbacks(CastControl.DEBUG_NAMESPACE, receiverDebugChannel) }
         runCatching { session.remoteMediaClient?.registerCallback(remoteClientCallback) }
+        // Ask the receiver what it is before any load decision is made.
+        probeReceiverTarget()
         val state = runCatching { session.remoteMediaClient?.mediaStatus?.playerState }.getOrNull()
         _isPlaying.value = state == MediaStatus.PLAYER_STATE_PLAYING ||
             state == MediaStatus.PLAYER_STATE_BUFFERING
@@ -959,6 +1097,10 @@ class AerioCastSender @Inject constructor(
         runCatching { s.removeMessageReceivedCallbacks(CastControl.DEBUG_NAMESPACE) }
         runCatching { s.remoteMediaClient?.unregisterCallback(remoteClientCallback) }
         controlSession = null
+        targetProbeJob?.cancel()
+        targetProbeJob = null
+        _receiverTarget.value = ReceiverTarget.UNKNOWN
+        deferredTune = null
         receiverCaps = null
         loggedCaps = null
         _remoteState.value = CastControl.RemoteState()
@@ -985,6 +1127,7 @@ class AerioCastSender @Inject constructor(
         idleReloadAttempts = 0
         proxyLoadJob?.cancel()
         proxyLoadJob = null
+        deferredTune = null
         hlsProxy.stop()
         refreshFromContext()
     }
@@ -1099,10 +1242,11 @@ class AerioCastSender @Inject constructor(
     }
 }
 
-// Cast audio, 2026-09-12: the per-request `?output_profile=<id>` that makes
-// Dispatcharr serve stereo AAC to the cast session is built by
-// DispatcharrClient.withOutputProfile, from the id PlaylistRepository
-// captured on /api/core/outputprofiles/. The phone transcodes nothing.
+// Cast audio, 2026-09-13: there is no Dispatcharr output profile any more.
+// The cast session ingests the PLAIN stream URL and the proxy's demuxed
+// audio rendition hands AC-3 / E-AC-3 straight to a receiver whose MSE
+// measured audio/mp4 support for it. The phone transcodes nothing and the
+// server is asked for nothing.
 //
 // Casting rework P1: the Dispatcharr progressive-fMP4 helper
 // (webReceiverCastUrl + CAST_WEB_OUTPUT_PROFILE_ID) that used to live here is

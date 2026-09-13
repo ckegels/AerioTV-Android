@@ -36,16 +36,23 @@ class AerioCastOptionsProvider : OptionsProvider {
         }
 
         val launchOptions = LaunchOptions.Builder()
-            // GH #33 web-receiver pivot (TEST, reversible): set to FALSE so EVERY
-            // cast target -- including Android TV -- uses the Cast WEB receiver and
-            // plays the Dispatcharr fMP4 (H.264 + AAC) contentUrl the sender now
-            // supplies, instead of launching the Cast Connect native app. This
-            // trades native raw-TS decode + on-receiver Live Rewind for UNIVERSAL
-            // device support (legacy dongles, Nest Hub, and sideloaded installs
-            // that Cast Connect can never reach) and a far simpler control model
-            // (channel change = a new sender-side loadMedia). Flip back to true to
-            // restore Cast Connect. Cast Connect receiver code is left intact.
-            .setAndroidReceiverCompatible(false)
+            // Cast Connect back ON (Logan 2026-09-13), measured basis: the Cast
+            // web receiver's Chromium renderer presents only about 46 fps with
+            // double-vsync intervals on a Google TV Streamer at 720p60 and
+            // 1080p60, a ceiling every web-receiver app shares, while the native
+            // Android TV app renders a full 60 fps. So a target that HAS AerioTV
+            // installed must run the native receiver: the framework launches the
+            // AerioTV Android TV app, which tunes the channel itself (no phone
+            // proxy, no output profile, AC-3 passthrough exactly as in normal
+            // playback). Targets without the app (legacy Chromecast dongles, Nest
+            // displays) are unaffected: the framework falls back to the web
+            // receiver on its own and the sender keeps its phone-local HLS proxy
+            // path (see AerioCastSender's receiver-type handshake).
+            .setAndroidReceiverCompatible(true)
+            // No CredentialsData: the AerioTV Android TV receiver authenticates
+            // nothing. It validates an incoming load against ITS OWN playlist and
+            // effective base (AerioCastReceiverController -> resolveForPlayback),
+            // so the sender never ships credentials or a resolved stream URL.
             .build()
 
         return CastOptions.Builder()

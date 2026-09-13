@@ -68,21 +68,11 @@ class DispatcharrWarmupCoordinator @Inject constructor(
         // app comes back from the background. Both cases benefit from a
         // token refresh — match iOS scene-phase .active behavior.
         scope.launch { warmupAll() }
-        // Cast audio: re-resolve the stereo AAC output profile at every launch
-        // and every foreground return, independent of the EPG load (the cached
-        // EPG path used to skip it, so a relaunch kept casting with a stale
-        // profile id). Rate limited to once per 15 minutes per playlist inside
-        // the repository, so a user flipping in and out of the app costs one
-        // lookup.
-        scope.launch {
-            val trigger = if (firstStart) "launch" else "foreground"
-            firstStart = false
-            runCatching { playlistRepository.get().refreshCastAacProfilesIfDue(trigger) }
-                .onFailure { Log.w(TAG, "cast profile re-resolve failed: ${it.message}") }
-        }
+        // Cast audio, 2026-09-13: the launch / foreground re-resolve of the
+        // Dispatcharr AAC output profile is GONE. Cast sessions ingest the
+        // plain stream and AC-3 / E-AC-3 passes through to the receiver, so
+        // there is no server-side profile to keep in sync.
     }
-
-    private var firstStart = true
 
     private suspend fun warmupAll() {
         val playlists = dao.allOnce()
