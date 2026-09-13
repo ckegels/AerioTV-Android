@@ -115,6 +115,19 @@ class AerioCastSender @Inject constructor(
 
         /** Re-send interval for the hello probe inside that window. */
         const val PROBE_RETRY_MS = 1_000L
+
+        /** Discriminator of the receiver's measured-capability message, and of
+         *  the sender's explicit request for a fresh one. Receiver-side name;
+         *  see receiver.html. */
+        const val CMD_CAPS = "caps"
+
+        /** How long the audio plan waits for caps that a web receiver has not
+         *  volunteered yet (an explicit request is sent first). Short: this runs
+         *  in front of the load, and the fallback is only a refusal of AC-3. */
+        const val CAPS_REQUEST_WAIT_MS = 3_000L
+
+        /** Poll interval while waiting for that answer. */
+        const val CAPS_POLL_MS = 100L
     }
 
     /**
@@ -267,6 +280,13 @@ class AerioCastSender @Inject constructor(
     /** Apply a receiver's own answer to the hello probe. An unrecognised platform
      *  is left UNKNOWN so the timeout decides rather than a bad guess. */
     private fun noteReceiverInfo(json: JSONObject) {
+        // 2026-09-13 (Chromecast Ultra, iPhone log 02:38:56-02:39:02): the web
+        // receiver sent its caps ONCE at READY on the debug namespace, and this
+        // sender attached that channel after READY, so the audio plan ran with
+        // "caps not received, assuming no AC-3" and refused the stream. The
+        // hello reply is the one message that is always read before the plan,
+        // so the measurement now rides along with it.
+        noteReceiverCaps(json)
         when (json.optString(CastControl.KEY_PLATFORM)) {
             CastControl.VALUE_PLATFORM_ANDROID_TV ->
                 resolveReceiverTarget(ReceiverTarget.ANDROID_TV_APP)
@@ -877,7 +897,7 @@ class AerioCastSender @Inject constructor(
             // receiver itself. False plus an AC-3 source is refused by name
             // rather than transcoded. AAC sources pass through as before
             // (a channel_configuration 0 layout is still refused).
-            val caps = receiverCaps
+            val caps = awaitReceiverCaps()
             if (caps == null) {
                 Log.i(TAG, "[Cast] caps not received, assuming no AC-3")
             }
@@ -1007,6 +1027,32 @@ class AerioCastSender @Inject constructor(
     private fun sendControl(message: String) {
         val session = currentSession() ?: return
         runCatching { session.sendMessage(CastControl.NAMESPACE, message) }
+    }
+
+    /** Ask the receiver for a FRESH capability measurement. Sent on both
+     *  namespaces because a page old enough to answer hello without `mse` may
+     *  only listen for this on the debug channel. */
+    private fun requestReceiverCaps() {
+        val session = currentSession() ?: return
+        val message = CastControl.command(CMD_CAPS)
+        runCatching { session.sendMessage(CastControl.NAMESPACE, message) }
+        runCatching { session.sendMessage(CastControl.DEBUG_NAMESPACE, message) }
+    }
+
+    /** Caps for the audio plan. Returns what the receiver already told us, and
+     *  otherwise ASKS and waits up to [CAPS_REQUEST_WAIT_MS] before giving up:
+     *  on a Chromecast Ultra the only caps message was the one at READY, which
+     *  this sender's channel was attached too late to see. */
+    private suspend fun awaitReceiverCaps(): Map<String, Boolean>? {
+        receiverCaps?.let { return it }
+        requestReceiverCaps()
+        var waited = 0L
+        while (waited < CAPS_REQUEST_WAIT_MS) {
+            kotlinx.coroutines.delay(CAPS_POLL_MS)
+            waited += CAPS_POLL_MS
+            receiverCaps?.let { return it }
+        }
+        return null
     }
 
     private fun onConnected(session: CastSession) {
