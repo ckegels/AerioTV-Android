@@ -108,6 +108,10 @@ fun CastRemoteSheet(
     transportIcon: ImageVector = Icons.Filled.Cast,
     /** "Casting to" (Cast) vs "Controlling" (LAN companion remote). */
     statusVerb: String = "Casting to",
+    /** Non-null while a web-receiver channel flip is in flight: the old media
+     *  has been unloaded and the new proxy session is warming up, so the header
+     *  reads "Switching to <channel>" until the receiver reports PLAYING. */
+    switchingTo: String? = null,
     /** Label for the stop action: "Stop casting" for Cast, "Disconnect" for the
      *  companion transport. */
     stopLabel: String = "Stop casting",
@@ -142,7 +146,8 @@ fun CastRemoteSheet(
             )
             Spacer(Modifier.height(10.dp))
             Text(
-                text = channelTitle.ifBlank { "Nothing playing" },
+                text = switchingTo?.let { "Switching to $it" }
+                    ?: channelTitle.ifBlank { "Nothing playing" },
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.SemiBold,

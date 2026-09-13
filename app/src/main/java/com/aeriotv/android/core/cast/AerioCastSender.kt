@@ -204,6 +204,26 @@ class AerioCastSender @Inject constructor(
     /** Whether the cast receiver is currently playing (vs paused). */
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
+    private val _switchingTo = MutableStateFlow<String?>(null)
+    /**
+     * Title of the channel a WEB-RECEIVER flip is currently switching to, from
+     * the moment the flip is requested until the receiver reports PLAYING.
+     * Null at every other time (and always null on the Cast Connect path, where
+     * the TV re-tunes itself in place).
+     *
+     * The cast card and the remote sheet render it as "Switching to <channel>"
+     * in the slot that otherwise carries the channel title, because a web
+     * flip now tears the old media down: the receiver is genuinely on nothing
+     * for the couple of seconds the new proxy session needs to warm up, and the
+     * card must not keep claiming the old channel is playing.
+     */
+    val switchingTo: StateFlow<String?> = _switchingTo.asStateFlow()
+
+    /** Monotonic flip counter. A newer web flip supersedes an in-flight one:
+     *  the older job is cancelled AND, if it somehow gets one more turn, its
+     *  epoch no longer matches and it refuses to load. */
+    private var flipEpoch = 0
+
     // ── Receiver type: native Android TV app vs web receiver ────────────────
     // Cast Connect is ON again (2026-09-13) because the web receiver's Chromium
     // renderer tops out near 46 fps on a Google TV Streamer while the native app
@@ -340,6 +360,7 @@ class AerioCastSender @Inject constructor(
     private fun castLiveNative(base: Content) {
         proxyLoadJob?.cancel()
         proxyLoadJob = null
+        _switchingTo.value = null
         runCatching { hlsProxy.stop() }
         Log.i(
             TAG,
@@ -347,6 +368,13 @@ class AerioCastSender @Inject constructor(
                 "id=${base.mediaId} proxy=none profile=none",
         )
         setContent(base)
+        // Cast Connect only, unchanged: the initial load launches the receiver
+        // via the entity deep link, but Cast Connect will not re-deliver a
+        // second load() to an already-running receiver, so the channel also
+        // goes over the reliable control channel, which re-tunes the TV in
+        // place on every flip. The web receiver never sees this message any
+        // more: it gets a real unload + re-load instead (see castLiveViaProxy).
+        setRemoteChannel(base.mediaId)
     }
 
     private var controlSession: CastSession? = null
@@ -503,6 +531,9 @@ class AerioCastSender @Inject constructor(
                 playerState == MediaStatus.PLAYER_STATE_LOADING
             _receiverIdle.value = playerState == MediaStatus.PLAYER_STATE_IDLE ||
                 playerState == MediaStatus.PLAYER_STATE_UNKNOWN
+            // "Switching to <channel>" ends the moment the receiver is actually
+            // playing the new channel, not when the load was merely accepted.
+            if (playerState == MediaStatus.PLAYER_STATE_PLAYING) _switchingTo.value = null
             // Resumed-session content recovery: mediaInfo is often null at
             // onConnected and only lands with the first status update. No-op once
             // content is known (GH #33).
@@ -541,6 +572,9 @@ class AerioCastSender @Inject constructor(
         }
         val content = _content.value ?: return
         if (content.webCastUrl == null) return // Cast Connect: the app owns playback
+        // A web flip STOPS the receiver on purpose; that IDLE is the flip, not a
+        // failed load, and re-loading here would race the new proxy session.
+        if (_switchingTo.value != null) return
         if (idleReloadAttempts >= 1) return
         if (System.currentTimeMillis() - lastLoadAtMs < 5_000L) return
         val session = currentSession() ?: return
@@ -854,13 +888,10 @@ class AerioCastSender @Inject constructor(
             // the identity and tunes itself (no proxy, no output profile); a web
             // receiver gets the phone-local HLS proxy playlist. While the
             // handshake is still in flight the tune is HELD, never guessed.
+            // The Cast Connect setChannel push now lives in castLiveNative, so
+            // it fires for the Android TV app on every flip exactly as before
+            // and never for a web receiver, whose flip is a full unload + load.
             dispatchLiveTune(DeferredTune(base, localUrl, headers))
-            // The initial load launches the receiver via the entity deep link, but
-            // Cast Connect won't re-deliver a second load() to an already-running
-            // receiver -- so also push the channel over the reliable control
-            // channel, which re-tunes the TV in place on every flip. A web
-            // receiver ignores this namespace; harmless there.
-            setRemoteChannel(channelId)
         }
         return true
     }
@@ -887,10 +918,40 @@ class AerioCastSender @Inject constructor(
      * torn down; the content stays visible so Stop Casting still works.
      */
     private fun castLiveViaProxy(base: Content, rawTsUrl: String, headers: Map<String, String>) {
+        // A channel change on the web receiver is a FRESH CAST, not a splice
+        // (2026-09-13). Re-pointing the proxy at a new ingest generation inside
+        // the same HLS stream made a Chromecast Ultra's decoder chew on the
+        // splice for ~5 s: BUFFERING/PLAYING toggling, the playhead creeping in
+        // 0.1 s stall-skip steps, then a gap jump, all while the OLD channel
+        // was still on screen. So the old media is stopped, the old proxy
+        // session is torn all the way down (ingest cancelled, port freed), and
+        // a brand-new proxy session feeds a brand-new load with the same
+        // contract as the initial cast. The receiver unloads and shows its own
+        // loading state for the new channel, which is honest.
+        val previous = _content.value
+        val isFlip = previous != null && previous.mediaId != base.mediaId
         pending = base
         _content.value = base
         proxyLoadJob?.cancel()
+        val epoch = ++flipEpoch
+        if (isFlip) {
+            _switchingTo.value = base.title
+            Log.i(
+                TAG,
+                "[Cast] web flip ${previous?.title} -> ${base.title}: " +
+                    "unload + new proxy session (epoch=$epoch)",
+            )
+        }
         proxyLoadJob = senderScope.launch {
+            if (isFlip) {
+                // Unload the receiver FIRST so it is not fetching from a proxy
+                // that is about to disappear, then free the socket and the
+                // provider connection before the new session binds.
+                runCatching { currentSession()?.remoteMediaClient?.stop() }
+                kotlinx.coroutines.withContext(Dispatchers.IO) { runCatching { hlsProxy.stop() } }
+                lastLoadedMediaId = null
+                idleReloadAttempts = 0
+            }
             // Cast audio (Logan 2026-09-13): AC-3 / E-AC-3 PASSES THROUGH to
             // the web receiver and the Dispatcharr output-profile path is
             // gone. Nothing server-side is asked for, nothing is transcoded
@@ -962,7 +1023,17 @@ class AerioCastSender @Inject constructor(
                 Log.w(TAG, "cast proxy start failed: $t")
                 surfaceCastFailure("Can't cast this channel right now")
                 null
-            } ?: return@launch
+            } ?: run {
+                // Nothing is going to start: stop claiming a switch is under way.
+                if (epoch == flipEpoch) _switchingTo.value = null
+                return@launch
+            }
+            // A newer flip already owns the receiver; this one must not load
+            // over it even if it got one more turn before its cancellation.
+            if (epoch != flipEpoch) {
+                Log.i(TAG, "[Cast] flip epoch=$epoch superseded by $flipEpoch; not loading")
+                return@launch
+            }
             Log.i(
                 TAG,
                 "[Cast] load channel=${base.title} " +
@@ -1156,6 +1227,7 @@ class AerioCastSender @Inject constructor(
         runCatching { s.removeMessageReceivedCallbacks(CastControl.DEBUG_NAMESPACE) }
         runCatching { s.remoteMediaClient?.unregisterCallback(remoteClientCallback) }
         controlSession = null
+        _switchingTo.value = null
         targetProbeJob?.cancel()
         targetProbeJob = null
         _receiverTarget.value = ReceiverTarget.UNKNOWN
@@ -1180,6 +1252,8 @@ class AerioCastSender @Inject constructor(
      *  receiver keeps fetching segments across the blip and resumes cleanly. */
     private fun endCleanup() {
         _content.value = null
+        _switchingTo.value = null
+        flipEpoch++
         _receiverIdle.value = true
         lastLoggedPlayerState = null
         lastLoadedMediaId = null

@@ -67,6 +67,10 @@ fun CastTransportCard(
     val castState by castSender.state.collectAsStateWithLifecycle()
     val castContent by castSender.content.collectAsStateWithLifecycle()
     val castIsPlaying by castSender.isPlaying.collectAsStateWithLifecycle()
+    // Web-receiver channel flip in flight: the old media has been unloaded and
+    // the new proxy session is warming up, so the card says so rather than
+    // keeping the old channel's name on screen (Logan 2026-09-13).
+    val castSwitchingTo by castSender.switchingTo.collectAsStateWithLifecycle()
     val companionConn by companionRemote.connection.collectAsStateWithLifecycle()
     val companionIsPlaying by companionRemote.isPlaying.collectAsStateWithLifecycle()
     val companionNowPlaying by companionRemote.nowPlaying.collectAsStateWithLifecycle()
@@ -140,6 +144,7 @@ fun CastTransportCard(
         else -> castContent?.title.orEmpty()
     }
     val hasContent = title.isNotBlank()
+    val switchingTo = if (isCompanion) null else castSwitchingTo
 
     fun flipChannel(delta: Int) {
         val idx = channels.indexOfFirst { it.id == currentChannel?.id }
@@ -185,12 +190,17 @@ fun CastTransportCard(
             ),
     ) {
         CastMiniController(
-            title = if (hasContent) title else "Casting to ${deviceName ?: "your TV"}",
+            title = when {
+                switchingTo != null -> "Switching to $switchingTo"
+                hasContent -> title
+                else -> "Casting to ${deviceName ?: "your TV"}"
+            },
             deviceName = deviceName,
             artUri = if (isCompanion) companionDetails?.logoUrl else castContent?.artUri,
             isPlaying = if (isCompanion) companionIsPlaying else castIsPlaying,
             // Nothing playing yet: the card says where the next tap lands.
             subtitle = when {
+                switchingTo != null -> "Casting to ${deviceName ?: "your TV"}"
                 !hasContent -> "Select a Channel"
                 isCompanion -> "Controlling ${deviceName ?: "TV"}"
                 else -> null
@@ -222,6 +232,7 @@ fun CastTransportCard(
         CastRemoteSheet(
             deviceName = deviceName,
             channelTitle = title,
+            switchingTo = switchingTo,
             programmeTitle = programmeTitle,
             remoteState = remoteState,
             isPlaying = remoteIsPlaying,
