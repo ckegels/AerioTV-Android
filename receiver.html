@@ -472,6 +472,20 @@
     // reads a reply, and both senders do nothing but print what arrives.
     const DEBUG_NAMESPACE = 'urn:x-cast:com.aeriotv.receiver.debug';
 
+    // ---- receiver-type handshake (urn:x-cast:com.aeriotv.control) ----
+    //
+    // Both senders now launch with androidReceiverCompatible, so a Cast target
+    // that has the AerioTV Android TV app installed runs the NATIVE receiver
+    // (60 fps, raw TS, AC-3 passthrough) and everything else runs this page.
+    // The Cast SDK tells the sender nothing about which of the two it got, so
+    // the sender asks: it sends {cmd:"hello"} on this namespace, the Android TV
+    // receiver answers platform=android-tv-app, and THIS page answers
+    // platform=web-receiver. Before this reply existed the sender could only
+    // infer "web receiver" from silence, which is wrong during a slow cold
+    // start of the native app; an explicit answer from either side removes the
+    // guess, so the sender's timeout is now only a last resort.
+    const CONTROL_NAMESPACE = 'urn:x-cast:com.aeriotv.control';
+
     // Last error or warning Shaka / CAF surfaced, reported with every
     // snapshot so a stall can be read together with whatever preceded it.
     let lastReceiverError = null;
@@ -507,10 +521,19 @@
     // which is the only decoder that matters here. So the receiver MEASURES
     // its own MSE support and tells the senders, and the senders decide the
     // audio ingest from the measurement instead of the device name.
+    //
+    // 2026-09-13: the probes now ask about the shape the senders actually
+    // load, which is the DEMUXED one. A Google TV Streamer answers
+    //   isTypeSupported('audio/mp4; codecs="ac-3"')           -> true
+    //   isTypeSupported('video/mp4; codecs="avc1.64002A,ac-3"') -> false
+    // so the MUXED probes understated the device (Emby plays AC-3 through
+    // exactly the audio/mp4 form). Video stays a video/mp4 probe because
+    // video rides its own video/mp4 SourceBuffer. The FIELD NAMES are the
+    // contract both senders parse and must not change.
     const CAPS_TYPES = {
-      'ac-3': 'video/mp4; codecs="ac-3"',
-      'ec-3': 'video/mp4; codecs="ec-3"',
-      'mp4a.40.2': 'video/mp4; codecs="mp4a.40.2"',
+      'ac-3': 'audio/mp4; codecs="ac-3"',
+      'ec-3': 'audio/mp4; codecs="ec-3"',
+      'mp4a.40.2': 'audio/mp4; codecs="mp4a.40.2"',
       'avc1.64002A': 'video/mp4; codecs="avc1.64002A"',
     };
 
@@ -1391,13 +1414,38 @@
       // urn:x-cast:com.aeriotv.control probe, which this page does not
       // implement and which is handled by the Android TV receiver instead).
       customNamespaces: Object.assign(
-        {}, { [DEBUG_NAMESPACE]: cast.framework.system.MessageType.JSON }),
+        {},
+        { [DEBUG_NAMESPACE]: cast.framework.system.MessageType.JSON },
+        // Declared so CAF carries the handshake reply below; without the
+        // declaration the platform drops the message and logs "Not supported
+        // namespace" (which is exactly what the senders' earlier control
+        // probe hit on this page).
+        { [CONTROL_NAMESPACE]: cast.framework.system.MessageType.JSON }),
     };
     // Shaka tuning above. CastReceiverOptions.playbackConfig is the
     // documented place to supply it; the player manager has no config to read
     // from until the context is started, so it is set here and not via
     // setPlaybackConfig/getPlaybackConfig.
     if (playbackConfig) receiverOptions.playbackConfig = playbackConfig;
+
+    // Answer the sender's receiver-type probe immediately, so a sender never
+    // has to infer this page from silence. Registered before start() so a
+    // probe that arrives with the first connection is not missed. Wrapped:
+    // this page must still run on a platform whose API lacks the listener.
+    try {
+      context.addCustomMessageListener(CONTROL_NAMESPACE, function (event) {
+        const data = event && event.data;
+        const cmd = data && (data.cmd || data.type);
+        if (cmd !== 'hello') return;
+        context.sendCustomMessage(CONTROL_NAMESPACE, event.senderId, {
+          type: 'receiverInfo',
+          cmd: 'receiverInfo',
+          platform: 'web-receiver',
+        });
+      });
+    } catch (e) {
+      console.warn('AerioTV: control namespace listener not registered', e);
+    }
 
     context.start(receiverOptions);
 
