@@ -381,8 +381,16 @@
 
       const since = renderingSince ? bufferingSince : loadingSince;
       if (nowMs - since >= STATUS_DELAY_MS) {
-        loadingStatus.textContent = loadingText(nowMs);
-        loadingStatus.classList.add('visible');
+        // In light mode the status line is rewritten at most every
+        // LIGHT_STATUS_INTERVAL_MS: loadingText() reads Shaka's stats and the
+        // write itself invalidates layout on a device whose frame clock is
+        // already down to single digits. The spinner keeps turning either way,
+        // on its CSS animation, with no JS behind it.
+        if (!lightMode || nowMs - lastStatusWriteAt >= LIGHT_STATUS_INTERVAL_MS) {
+          lastStatusWriteAt = nowMs;
+          loadingStatus.textContent = loadingText(nowMs);
+          loadingStatus.classList.add('visible');
+        }
       }
     }, LOADING_TICK_MS);
 
@@ -433,11 +441,32 @@
 
     // How far inside the buffered range a resync target must sit. The seek is
     // only useful if the element has decodable media AT the target, so we aim
-    // a second short of the buffered end (the next append has usually not
-    // landed there yet) and half a second past its start (an append can trim
-    // the front out from under us between the clamp and the seek).
-    const RESYNC_END_MARGIN_SECONDS = 1.0;
+    // short of the buffered end (the next append has usually not landed
+    // there yet) and past its start (an append can trim the front out from
+    // under us between the clamp and the seek).
+    //
+    // The end margin was 1.0 s. On the Chromecast Ultra with a weak link the
+    // page was still seeking PAST the end of the element's buffered range and
+    // the player stayed in BUFFERING forever, so the margin is now sized
+    // against the media instead of against nothing: the proxy's cuts land on
+    // keyframes and measure 3 to 6 s, so a target inside the LAST 1.5 s of
+    // the buffer is a target whose segment may be the one still arriving.
+    // 1.5 s is a little over a third of a nominal 4 s segment: far enough
+    // from the edge that the decoder has frames at the target, near enough
+    // that the resync still lands close to live.
+    const RESYNC_END_MARGIN_SECONDS = 1.5;
     const RESYNC_START_MARGIN_SECONDS = 0.5;
+    // Hard floor above the buffered start. The element can have the first
+    // instants of a range trimmed between the clamp and the seek, and a
+    // target exactly AT bufferedStart is the one the element relocates.
+    const RESYNC_START_FLOOR_SECONDS = 0.1;
+    // A seek is only worth issuing when there is media ahead of the playhead
+    // to land on: the end margin plus half a second of slack. Below that the
+    // next append, not a decoder flush, is what fixes the stall.
+    const RESYNC_MIN_AHEAD_SECONDS = RESYNC_END_MARGIN_SECONDS + 0.5;
+    // HTMLMediaElement.HAVE_METADATA. Below this the element has no timeline
+    // to seek on and the seek is discarded.
+    const HAVE_METADATA = 1;
 
     // manifest.availabilityWindowOverride, below. Shaka derives a live HLS
     // stream's segmentAvailabilityDuration from the playlist window itself
@@ -489,6 +518,12 @@
     // Last error or warning Shaka / CAF surfaced, reported with every
     // snapshot so a stall can be read together with whatever preceded it.
     let lastReceiverError = null;
+
+    // Why the last programmatic seek was issued, clamped or skipped. Carried
+    // on every snapshot as seekWhy= so a session that never moves the playhead
+    // says WHICH rule held it (the Ultra case: the only honest answer is that
+    // there was not enough buffered media ahead to seek into).
+    let lastSeekNote = null;
 
     // ---- pause / seek / load bookkeeping ----
     //
@@ -618,8 +653,107 @@
     // receiver is the only place that can see the output's cadence.
     let rafHz = null;
 
-    function measureRefreshRate() {
+    // ---- light mode ----
+    //
+    // 2026-09-13, Chromecast Ultra on a weak link: this page's own frame clock
+    // ran at 1.2 to 1.6 Hz while loading. Shaka schedules its fetches on that
+    // same main thread, so every per-second snapshot and every DOM write this
+    // page performs is taken out of the budget the player needs to get the
+    // next segment in. Light mode is the page getting out of the way: the
+    // telemetry cadence drops to 5 s, the status line is rewritten at most
+    // every 2 s, and the spinner is left to its CSS animation (it always was:
+    // #loading .spinner is a keyframe animation with no JS behind it, and the
+    // rule is that it stays that way). The watchdog is NOT slowed down; it is
+    // the one thing on the 1 s tick that can rescue the stall.
+    //
+    // The measured frame clock is the trigger, not the model name. A device
+    // hint only widens when the measurement is believed (see weakDeviceHint).
+    const LIGHT_ENTER_RAF_HZ = 10;
+    const LIGHT_EXIT_RAF_HZ = 30;
+    const LIGHT_EXIT_STABLE_MS = 10000;
+    const LIGHT_TELEMETRY_INTERVAL_MS = 5000;
+    const LIGHT_STATUS_INTERVAL_MS = 2000;
+    // One 1 s measurement window every this often, so light mode can be
+    // entered and left on a live reading instead of one taken at load time.
+    const RAF_SAMPLE_INTERVAL_MS = 2000;
+
+    let lightMode = false;
+    let lightGoodSince = 0;
+    let rafSampling = false;
+    let lastTelemetryAt = 0;
+    let lastStatusWriteAt = 0;
+
+    // Known weak receivers, by the only two things this page can ask. Used
+    // ONLY to let a borderline measurement tip into light mode (the device is
+    // known to have no headroom to spare), never on its own: a 1st-gen or
+    // Ultra with a healthy frame clock is left alone.
+    function weakDeviceHint() {
+      let ua = '';
+      try {
+        ua = typeof navigator !== 'undefined' && navigator.userAgent ?
+          String(navigator.userAgent) : '';
+      } catch (e) {
+        ua = '';
+      }
+      // CrKey/Chromecast with no "Google TV" or "Android TV" in the string is
+      // one of the small pucks (1st gen, 2nd gen, Ultra); the newer Streamer
+      // and the TV-integrated receivers name their platform.
+      const puck = /CrKey|Chromecast/i.test(ua) && !/Google TV|Android TV|Fuchsia/i.test(ua);
+      let touch = false;
+      try {
+        const caps = context.getDeviceCapabilities ? context.getDeviceCapabilities() : null;
+        const K = cast.framework.system.DeviceCapabilities;
+        touch = !!(caps && K && caps[K.TOUCH_INPUT_SUPPORTED]);
+      } catch (e) {
+        touch = false;
+      }
+      // A touch-input receiver is a phone or a display, never one of the
+      // pucks, so it cancels the hint.
+      return puck && !touch;
+    }
+
+    function loadingOrBufferingNow() {
+      try {
+        const S = cast.framework.messages.PlayerState;
+        const state = playerManager.getPlayerState();
+        return state === S.BUFFERING || state === S.LOADING;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // Called after every completed rAF window.
+    function updateLightMode() {
+      if (typeof rafHz !== 'number') return;
+      const nowMs = Date.now();
+      if (rafHz > LIGHT_EXIT_RAF_HZ) {
+        if (!lightGoodSince) lightGoodSince = nowMs;
+      } else {
+        lightGoodSince = 0;
+      }
+      if (!lightMode) {
+        if (rafHz < LIGHT_ENTER_RAF_HZ && (loadingOrBufferingNow() || weakDeviceHint())) {
+          lightMode = true;
+          lightGoodSince = 0;
+          lastReceiverError = 'light on rafHz=' + rafHz;
+          sendReceiverSnapshot('light');
+        }
+        return;
+      }
+      if (lightGoodSince && nowMs - lightGoodSince >= LIGHT_EXIT_STABLE_MS) {
+        lightMode = false;
+        lightGoodSince = 0;
+        lastReceiverError = 'light off rafHz=' + rafHz;
+        sendReceiverSnapshot('light');
+      }
+    }
+
+    // reason 'load' is the one measurement that reports itself as ev=raf; the
+    // repeating samples only update rafHz and the light-mode decision.
+    function measureRefreshRate(reason) {
       if (typeof requestAnimationFrame !== 'function') return;
+      if (rafSampling) return;
+      rafSampling = true;
       let frames = 0;
       let start = null;
       const step = (ts) => {
@@ -629,7 +763,9 @@
           frames++;
           if (ts - start >= 1000) {
             rafHz = roundTo(frames * 1000 / (ts - start), 1);
-            sendReceiverSnapshot('raf');
+            rafSampling = false;
+            if (reason !== 'sample') sendReceiverSnapshot('raf');
+            updateLightMode();
             return;
           }
         }
@@ -637,6 +773,12 @@
       };
       requestAnimationFrame(step);
     }
+
+    // The repeating sampler. setInterval rather than a self-rescheduling
+    // timer so there is exactly one window in flight at a time.
+    setInterval(() => {
+      measureRefreshRate('sample');
+    }, RAF_SAMPLE_INTERVAL_MS);
 
     // video.getVideoPlaybackQuality() plus deltas over the interval since the
     // previous snapshot. Deltas are computed here rather than on the sender so
@@ -810,6 +952,12 @@
         stalls: stats.stalls === undefined ? null : stats.stalls,
         gaps: stats.gaps === undefined ? null : stats.gaps,
         rafHz: rafHz,
+        // Light mode, so the sender's debug channel can see that this page
+        // deliberately slowed its own reporting down.
+        light: lightMode,
+        // Why the last programmatic seek was issued, clamped or skipped.
+        seekWhy: typeof lastSeekNote === 'string' ?
+          lastSeekNote.slice(0, 120) : null,
         // Overlays whose computed display is not 'none'. While the picture is
         // rendering this must be empty: anything listed here is composited
         // over or around the video and caps its presentation at rafHz.
@@ -842,12 +990,28 @@
       } catch (e) {
         // Never let the budget check stop the snapshot.
       }
+      lastTelemetryAt = Date.now();
       try {
         // Broadcast: no sender id, so whichever phone is connected gets it.
         context.sendCustomMessage(DEBUG_NAMESPACE, undefined, payload);
       } catch (e) {
         // Diagnostics must never be able to break playback.
       }
+    }
+
+    // The periodic snapshot, rate limited in light mode. Event driven
+    // snapshots (state changes, errors, a resync) are never held back: they
+    // are rare and they are the rows that explain a session. Only the
+    // every-second heartbeat drops to LIGHT_TELEMETRY_INTERVAL_MS, because on
+    // the Ultra that heartbeat (getVideoPlaybackQuality, the Shaka stats, the
+    // buffered ranges, the computed styles behind vis=) was competing with
+    // Shaka's own fetches for the same starved main thread.
+    function tickSnapshot(ev) {
+      if (lightMode && lastTelemetryAt &&
+          Date.now() - lastTelemetryAt < LIGHT_TELEMETRY_INTERVAL_MS) {
+        return;
+      }
+      sendReceiverSnapshot(ev);
     }
 
     // Once per second while the playhead is not making progress, which is
@@ -881,11 +1045,11 @@
         // snapshot limited to stalls could never measure it; ev=tick is the
         // per-second row that carries fps / drop / res for a PLAYING stream.
         stuckTicks = 0;
-        sendReceiverSnapshot('tick');
+        tickSnapshot('tick');
         return;
       }
       if (!advanced) stuckTicks++;
-      sendReceiverSnapshot(loadingOrBuffering ? 'buffering' : 'stuck');
+      tickSnapshot(loadingOrBuffering ? 'buffering' : 'stuck');
 
       // Self-rescue, reported before it acts so the sender log shows both
       // the state that triggered it and the seek it performed. Three
@@ -964,11 +1128,23 @@
     // proxy log goes quiet after seg2 with playlist polls continuing
     // forever. This function closes that gap with a seek issued when media
     // does exist, which is the one kind the element honours.
+    // Record a seek this page decided NOT to issue. Returns undefined so the
+    // callers can `return skipSeek(...)` in one line.
+    function skipSeek(ev, why) {
+      lastSeekNote = ev + ' skipped:' + why;
+    }
+
     function resyncPlayhead(ev) {
       const video = mediaElement();
-      if (!video) return;
+      if (!video) return skipSeek(ev, 'noElement');
+      // Never seek an element that has no timeline yet, and never stack a
+      // seek on an outstanding one.
+      if (typeof video.readyState === 'number' && video.readyState < HAVE_METADATA) {
+        return skipSeek(ev, 'readyState' + video.readyState);
+      }
+      if (seekPending) return skipSeek(ev, 'seekPending');
       const ranges = bufferedRanges();
-      if (!ranges.length) return;
+      if (!ranges.length) return skipSeek(ev, 'noBuffer');
       const range = seekRange();
 
       // Seek INTO media that exists. The 17:13 session failed because the
@@ -990,23 +1166,53 @@
             buf = r;
           }
         }
-        if (!buf) return;
+        if (!buf) return skipSeek(ev, 'noBufferInSeekRange');
       } else {
         buf = ranges[ranges.length - 1];
       }
+      // The range that contains the playhead, or the nearest one ahead of it,
+      // is the only range a seek can land in. Prefer it over the latest one
+      // when they differ: a target in a later range is a target across a gap.
+      for (const r of ranges) {
+        if (r[1] === null || r[0] === null) continue;
+        if (r[1] > video.currentTime && (range === null || range[1] === null ||
+            r[0] < range[1])) {
+          buf = r;
+          break;
+        }
+      }
       const bufStart = buf[0];
       const bufEnd = buf[1];
-      if (bufEnd - bufStart <= RESYNC_START_MARGIN_SECONDS + RESYNC_END_MARGIN_SECONDS) {
+      if (bufStart === null || bufEnd === null) return skipSeek(ev, 'badRange');
+      // Enough media AHEAD of the playhead to land on, and a range wide
+      // enough that the two clamps below do not cross.
+      if (bufEnd - video.currentTime < RESYNC_MIN_AHEAD_SECONDS) {
+        return skipSeek(ev, 'ahead' + roundTo(bufEnd - video.currentTime, 3) +
+          '<' + RESYNC_MIN_AHEAD_SECONDS);
+      }
+      const lo = bufStart + RESYNC_START_FLOOR_SECONDS;
+      const hi = bufEnd - RESYNC_END_MARGIN_SECONDS;
+      if (hi <= lo) {
         // Too little media to aim inside; wait for the next append.
-        return;
+        return skipSeek(ev, 'narrow' + roundTo(bufEnd - bufStart, 3));
       }
 
       // Aim LIVE_START_BEHIND_SECONDS behind the live edge, but never past
-      // the media we have, and never at the very front of it.
+      // the media we have, and never at the very front of it. Both bounds are
+      // hard: the target must sit STRICTLY inside [bufStart + 0.1,
+      // bufEnd - 1.5], which is what the Ultra's runaway seeks violated.
       let target = range && range[1] !== null ?
-        range[1] - LIVE_START_BEHIND_SECONDS : bufEnd - RESYNC_END_MARGIN_SECONDS;
-      target = Math.min(target, bufEnd - RESYNC_END_MARGIN_SECONDS);
-      target = Math.max(target, bufStart + RESYNC_START_MARGIN_SECONDS);
+        range[1] - LIVE_START_BEHIND_SECONDS : hi;
+      const wanted = target;
+      target = Math.min(target, hi);
+      target = Math.max(target, lo);
+      const clampedBy = target > wanted ? 'start' : (target < wanted ? 'end' : null);
+      if (!(target > bufStart && target < bufEnd)) {
+        // Unreachable with the clamps above; keep the invariant anyway rather
+        // than trust the arithmetic on a device we cannot inspect.
+        return skipSeek(ev, 'outsideBuffer');
+      }
+      if (clampedBy) lastSeekNote = ev + ' clamped@' + clampedBy;
 
       const now = roundTo(video.currentTime, 3);
       // Nothing to do if we are already there. This replaces the old
@@ -1015,9 +1221,13 @@
       // element ends up outside its own media) has to move back to reach it,
       // so direction is no longer the test. Distance is.
       if (Math.abs(target - video.currentTime) < RESYNC_START_MARGIN_SECONDS) {
+        lastSeekNote = ev + ' atTarget';
         maybeResumePlayback(ev + '-atTarget');
         return;
       }
+      lastSeekNote = (clampedBy ? 'clamped@' + clampedBy + ' ' : '') +
+        ev + ' ' + now + ' -> ' + roundTo(target, 3) +
+        ' in [' + roundTo(lo, 3) + ',' + roundTo(hi, 3) + ']';
       lastReceiverError = ev + ' ' + now + ' -> ' + roundTo(target, 3);
       sendReceiverSnapshot(ev);
       // Through the CAF API, not video.currentTime. Writing currentTime
