@@ -234,9 +234,24 @@ fun WhatsNewGate() {
     }
 }
 
+/**
+ * On-demand entry point: the About > App Version row in Settings opens the
+ * same sheet the launch gate shows, with the notes for the installed build.
+ * Deliberately does NOT touch lastSeenWhatsNewVersion, so re-reading the
+ * notes here never changes whether the launch gate fires.
+ */
+@Composable
+fun WhatsNewSheetOnDemand(onDismiss: () -> Unit) {
+    WhatsNewSheet(
+        version = BuildConfig.VERSION_NAME,
+        items = WhatsNewContent.CURRENT,
+        onDismiss = onDismiss,
+    )
+}
+
 data class WhatsNewItem(val title: String, val body: String)
 
-private object WhatsNewContent {
+object WhatsNewContent {
     /** Headline changes for the current build. Edit this list and bump
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(

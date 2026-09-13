@@ -66,6 +66,7 @@ import com.aeriotv.android.core.tv.TvQrLinkDialog
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 import com.aeriotv.android.ui.settings.SettingsNavRow
+import com.aeriotv.android.feature.whatsnew.WhatsNewSheetOnDemand
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.settings.settingsPaneWidth
 import com.aeriotv.android.ui.settings.settingsEyebrowStyle
@@ -156,6 +157,7 @@ fun SettingsScreen(
     // phones keep the ACTION_VIEW intent in openUrl.
     val isTv = rememberIsTvDevice()
     var qrLink by remember { mutableStateOf<TvQrLink?>(null) }
+    var showWhatsNew by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         CenterAlignedTopAppBar(
@@ -249,6 +251,7 @@ fun SettingsScreen(
             if (content != SettingsRootContent.PlaylistsOnly) item("about") {
                 AboutSection(
                     showHeader = fullRoot,
+                    onShowWhatsNew = { showWhatsNew = true },
                     versionName = versionName,
                     versionCode = packageInfo?.longVersionCode ?: 0L,
                     installedAt = installedAt,
@@ -297,6 +300,10 @@ fun SettingsScreen(
             }
         }
         }
+    }
+
+    if (showWhatsNew) {
+        WhatsNewSheetOnDemand(onDismiss = { showWhatsNew = false })
     }
 
     qrLink?.let { link ->
@@ -599,6 +606,7 @@ private fun LegacySectionNavRow(section: SettingsSection, onClick: () -> Unit) {
 @Composable
 private fun AboutSection(
     showHeader: Boolean = true,
+    onShowWhatsNew: () -> Unit,
     versionName: String,
     versionCode: Long,
     installedAt: Long,
@@ -623,7 +631,10 @@ private fun AboutSection(
             RowDivider()
             AboutInfoRow("System", "Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
             RowDivider()
-            AboutInfoRow("App Version", "$versionName ($versionCode)")
+            AboutVersionRow(
+                value = "$versionName ($versionCode)",
+                onClick = onShowWhatsNew,
+            )
             RowDivider()
             AboutInfoRow("First Installed", formatInstallTime(installedAt))
             RowDivider()
@@ -686,6 +697,52 @@ private fun AboutInfoRow(label: String, value: String) {
             text = value,
             style = settingsRowValueStyle(),
             color = MaterialTheme.colorScheme.onBackground,
+        )
+    }
+}
+
+/**
+ * App Version row. Reads as an info row (label + value) but is clickable and,
+ * on TV, focusable with the same card highlight as the action rows below it,
+ * so the D-pad can reach it and DPAD_CENTER opens the What's New notes for
+ * the installed build. The trailing "What's New" hint is the only affordance;
+ * nothing about the launch-time gate changes.
+ */
+@Composable
+private fun AboutVersionRow(value: String, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .groupRowFocus(focused)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "App Version",
+            style = settingsRowValueStyle(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = settingsRowValueStyle(),
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        Spacer(Modifier.size(10.dp))
+        Text(
+            text = "What's New",
+            style = settingsFootnoteStyle(),
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Medium,
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(16.dp),
         )
     }
 }
