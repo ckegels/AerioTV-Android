@@ -1047,12 +1047,8 @@ class MainActivity : ComponentActivity() {
                                     title = "Would you like to close AerioTV?",
                                     guard = exitGuard,
                                     onDismiss = { showExitConfirm.value = false },
+                                    // TvActionMenuDialog appends its own Cancel row.
                                     actions = listOf(
-                                        TvMenuAction(
-                                            label = "Cancel",
-                                            icon = Icons.AutoMirrored.Outlined.ArrowBack,
-                                            onClick = {},
-                                        ),
                                         TvMenuAction(
                                             label = "Close AerioTV",
                                             icon = Icons.Outlined.Close,
