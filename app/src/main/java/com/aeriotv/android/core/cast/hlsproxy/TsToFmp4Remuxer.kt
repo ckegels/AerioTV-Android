@@ -132,6 +132,19 @@ class TsToFmp4Remuxer(
 
         /** ISO 13818-1 stream_type values this remux understands. */
         private const val STREAM_TYPE_H264 = 0x1B
+        /** How long a segment cut may wait for the audio that belongs in
+         *  it, in 90 kHz ticks. Provider audio trailed its video by about
+         *  170 ms in the measured casts; half a second of video is a
+         *  generous bound that still keeps the playlist growing when the
+         *  audio PID dies mid-stream. */
+        private const val MAX_CUT_HOLD_TICKS = TICKS_PER_SECOND / 2
+
+        /** How far the running audio clock may sit from a PES PTS before
+         *  the PES PTS wins. One PES worth of frames: the measured packing
+         *  jitter on the live capture was up to four frames, and a real
+         *  splice moves the clock far more than eight. */
+        private const val MAX_AUDIO_ANCHOR_DRIFT_FRAMES = 8L
+
         private const val STREAM_TYPE_AAC_ADTS = 0x0F
 
         /** Names for the refusal message; anything not listed reports the
@@ -258,11 +271,71 @@ class TsToFmp4Remuxer(
     private class AudioSample(val data: ByteArray, val pts: Long, val durationTicks: Long)
 
     private val videoQueue = ArrayList<VideoSample>()
+
+    /** Video samples of the NEXT segment, held while the cut waits for
+     *  audio, plus the cut they are waiting behind (-1 = no cut pending).
+     *
+     *  Provider audio trails its video in the mux, so when the keyframe
+     *  that cuts a segment is demuxed the last ~170 ms of that segment's
+     *  audio has not been parsed yet. Cutting there shipped the segment
+     *  short, and the late frames then opened the NEXT segment with an
+     *  audio tfdt BELOW that segment's own start: a backwards audio
+     *  append, which Chromium's splicer trims or drops outright. That is
+     *  the per-segment shortfall measured on the Google TV Streamer
+     *  (4.00 s segments carrying 179 frames where 187.5 belong) and the
+     *  audio DEMUXER_UNDERFLOW that came with it.
+     *
+     *  So the cut waits until the audio queue has reached it, holding the
+     *  new segment's video aside in the meantime. The wait is bounded by
+     *  [MAX_CUT_HOLD_TICKS] so a video-only or audio-starved stream still
+     *  emits segments on time. */
+    private val heldVideo = ArrayList<VideoSample>()
+    private var pendingCutDts = -1L
     private val audioQueue = ArrayList<AudioSample>()
     /** Raw AAC frame ticks: 1024 samples at the ADTS sample rate. */
     private var audioFrameTicks = 0L
-    /** ADTS frames can straddle PES packet boundaries; carry the tail. */
+    /** ADTS frames can straddle PES packet boundaries; carry the tail.
+     *  The carry is NEVER cleared at a PES, segment or generation
+     *  boundary: it is the front bytes of a real frame, and dropping them
+     *  is one lost frame (21.33 ms) of audio. */
     private var adtsCarry = ByteArray(0)
+
+    /** Presentation time the NEXT audio frame is expected at, 90 kHz,
+     *  i.e. the running audio clock. The PES PTS alone cannot stamp the
+     *  frames of a PES whose payload begins with a CARRIED partial frame:
+     *  a PES PTS describes the first access unit that COMMENCES in that
+     *  payload, so the carried frame (which commenced in the previous
+     *  PES) would be stamped one frame LATE and every follower with it,
+     *  which is a 21.33 ms hole in the audio timeline at every straddling
+     *  PES. Measured on the Google TV Streamer 2026-09-13: audio
+     *  DEMUXER_UNDERFLOW and the video renderer holding frames (60 fps
+     *  decoded, about 47 fps presented) while the media clock ratio read
+     *  1.0000. So the running clock stamps the frames and the PES PTS is
+     *  only an anchor, re-taken when the two disagree by more than one
+     *  frame (a splice, a provider discontinuity, or the first frame). */
+    private var audioRunPts = -1L
+
+    /** Stamp one audio frame: continue [audioRunPts], and re-anchor to
+     *  the PES PTS only when the two have drifted further apart than
+     *  [MAX_AUDIO_ANCHOR_DRIFT_FRAMES] frames, which no packing jitter
+     *  explains and a splice or a provider discontinuity does.
+     *
+     *  The running clock is the authority because a frame's duration is
+     *  definitional (1024 samples at the declared rate) while a live
+     *  provider's PES PTS cadence is not. Measured on the real ESPNU
+     *  capture (Dispatcharr AAC output profile, 2026-09-13): every audio
+     *  PES is stamped exactly 9600 ticks after the one before it, five
+     *  frames' worth, yet about one PES in six carries SIX frames. Trusting
+     *  each PES PTS therefore re-stamped a frame that had already been
+     *  emitted, once per such PES, and the segment census wandered 2 to 3
+     *  frames either side of what the segment's own duration calls for. */
+    private fun stampAudioFrame(pesAnchor: Long, frameTicks: Long): Long {
+        val tolerance = if (frameTicks > 0) frameTicks * MAX_AUDIO_ANCHOR_DRIFT_FRAMES else 0L
+        if (audioRunPts < 0 || kotlin.math.abs(pesAnchor - audioRunPts) > tolerance) {
+            audioRunPts = pesAnchor
+        }
+        return audioRunPts
+    }
     private var lastVideoDuration = 3_000L // ~30 fps fallback for the very first delta
 
     /** Feed raw TS bytes off the wire. Throws [UnsupportedCodecException]
@@ -495,8 +568,11 @@ class TsToFmp4Remuxer(
             timelineBasePts = pts
         }
 
-        if (keyframe && videoQueue.isNotEmpty() && dts - videoQueue.first().dts >= targetSegmentTicks) {
-            finalizeSegment(cutDts = dts)
+        if (pendingCutDts < 0 &&
+            keyframe && videoQueue.isNotEmpty() &&
+            dts - videoQueue.first().dts >= targetSegmentTicks
+        ) {
+            pendingCutDts = dts
         }
         // AVCC conversion: length-prefixed NALs, parameter sets kept
         // in-band (a mid-stream resolution change then stays decodable).
@@ -507,7 +583,28 @@ class TsToFmp4Remuxer(
             writeU32(sample, w, nal.size); w += 4
             System.arraycopy(nal, 0, sample, w, nal.size); w += nal.size
         }
-        videoQueue.add(VideoSample(sample, dts, pts, keyframe))
+        val queued = VideoSample(sample, dts, pts, keyframe)
+        if (pendingCutDts >= 0) {
+            heldVideo.add(queued)
+            maybeCut(dts)
+            return
+        }
+        videoQueue.add(queued)
+    }
+
+    /** Take the pending cut once the audio queue has caught up past it,
+     *  or once the hold has run longer than [MAX_CUT_HOLD_TICKS] of video.
+     *  See [heldVideo] for why the cut waits at all. */
+    private fun maybeCut(latestDts: Long) {
+        val cut = pendingCutDts
+        if (cut < 0) return
+        val audioEnd = audioQueue.lastOrNull()?.let { it.pts + it.durationTicks } ?: Long.MAX_VALUE
+        val audioReady = audioPid < 0 || audioEnd >= cut
+        if (!audioReady && latestDts - cut < MAX_CUT_HOLD_TICKS) return
+        pendingCutDts = -1L
+        finalizeSegment(cutDts = cut)
+        videoQueue.addAll(heldVideo)
+        heldVideo.clear()
     }
 
     /** PTS shares DTS's wrap epoch; unwrap it relative to the unwrapped
@@ -566,8 +663,8 @@ class TsToFmp4Remuxer(
     ) {
         val data = if (adtsCarry.isEmpty()) payload else adtsCarry + payload
         adtsCarry = ByteArray(0)
+        val pesAnchor = audioClock.unwrap(pts33)
         var p = 0
-        var framePts = -1L
         while (p < data.size) {
             val info = CastAudioFramer.parseFrameHeader(source, data, p)
             if (info == null || info.frameLength <= 0) {
@@ -595,11 +692,11 @@ class TsToFmp4Remuxer(
                 )
                 ac3Logged = true
             }
+            val durationTicks = info.samplesPerFrame.toLong() * TICKS_PER_SECOND / info.sampleRate
+            val framePts = stampAudioFrame(pesAnchor, durationTicks)
+            audioRunPts = framePts + durationTicks
             if (initSent) {
-                if (framePts < 0) framePts = audioClock.unwrap(pts33)
-                val durationTicks = info.samplesPerFrame.toLong() * TICKS_PER_SECOND / info.sampleRate
                 queueAudio(data.copyOfRange(p, next), framePts, durationTicks)
-                framePts += durationTicks
             }
             p = next
         }
@@ -609,8 +706,8 @@ class TsToFmp4Remuxer(
     private fun onAdtsAudioPes(payload: ByteArray, pts33: Long) {
         val data = if (adtsCarry.isEmpty()) payload else adtsCarry + payload
         adtsCarry = ByteArray(0)
+        val pesAnchor = audioClock.unwrap(pts33)
         var p = 0
-        var framePts = -1L
         while (p + 7 <= data.size) {
             if (data[p].toInt() and 0xFF != 0xFF || data[p + 1].toInt() and 0xF0 != 0xF0) {
                 p++ // scan to syncword (junk between frames happens on splices)
@@ -744,11 +841,14 @@ class TsToFmp4Remuxer(
                 audioFrameTicks = 1024L * TICKS_PER_SECOND / ADTS_SAMPLE_RATES[safe.freqIndex]
                 maybeEmitInit()
             }
-            if (initSent && frameLen > headerLen) {
-                // First frame of the PES rides the PES PTS; followers step
-                // by the fixed 1024-sample frame duration. Re-anchoring on
-                // every PES keeps drift bounded to one PES worth of frames.
-                if (framePts < 0) framePts = audioClock.unwrap(pts33)
+            if (frameLen > headerLen) {
+                // The running audio clock stamps every frame, carried
+                // frames included; the PES PTS only re-anchors it when
+                // the two disagree by more than one frame. See
+                // [audioRunPts] for what stamping the carried frame with
+                // the new PES PTS cost on the device.
+                val framePts = stampAudioFrame(pesAnchor, audioFrameTicks)
+                audioRunPts = framePts + audioFrameTicks
                 // Frames BEFORE the first video PRESENTATION time are
                 // dropped, not clamped (2026-09-12 ffprobe run): audio
                 // commonly leads the first kept video keyframe by tens of
@@ -763,8 +863,9 @@ class TsToFmp4Remuxer(
                 // the next segment's audio tfdt was 348000). Chromium
                 // gets a backwards audio append one segment in, which is
                 // the IDLE/ERROR a second after the first playlist fetch.
-                queueAudio(data.copyOfRange(payloadStart, p + frameLen), framePts, audioFrameTicks)
-                framePts += audioFrameTicks
+                if (initSent) {
+                    queueAudio(data.copyOfRange(payloadStart, p + frameLen), framePts, audioFrameTicks)
+                }
             }
             p += frameLen
         }
@@ -836,6 +937,15 @@ class TsToFmp4Remuxer(
      *  the segment's EXTINF be that common end. The next generation then
      *  starts where this one really stopped. */
     private fun flushGenerationTail() {
+        // A pending cut takes effect first: the held samples belong to a
+        // segment of their own, and the audio that the cut was waiting
+        // for has either arrived by now or never will.
+        if (pendingCutDts >= 0) {
+            pendingCutDts = -1L
+            finalizeSegment(cutDts = heldVideo.firstOrNull()?.dts ?: (videoQueue.lastOrNull()?.dts ?: 0L) + lastVideoDuration)
+            videoQueue.addAll(heldVideo)
+            heldVideo.clear()
+        }
         if (!initSent || videoQueue.isEmpty()) return
         val videoEnd = videoQueue.last().dts + lastVideoDuration
         val audioEnd = audioQueue.lastOrNull()?.let { it.pts + it.durationTicks } ?: -1L
@@ -895,6 +1005,22 @@ class TsToFmp4Remuxer(
                 ?.let { (it.pts - timelineBase) / ticks } ?: -1.0,
             segmentStartSeconds = emittedTicks / ticks,
         )
+        // Audio census for the device log (2026-09-13): aexp is how many
+        // frames this segment's own duration calls for, so a shortfall is
+        // visible in the log without arithmetic. Logged only when the
+        // segment misses by more than two frames: one is the unavoidable
+        // boundary quantization and the generation's first segment also
+        // drops the audio below the first video presentation time.
+        // Anything larger is audio the receiver will underflow on.
+        if (audioFrameTicks > 0 && audioPid >= 0) {
+            val expected = durationTicks.toDouble() / audioFrameTicks
+            if (kotlin.math.abs(expected - segAudio.size) > 2.0) {
+                log(
+                    "audio census: audio=${segAudio.size} aexp=${"%.1f".format(expected)} " +
+                        "shortfall=${"%.1f".format(expected - segAudio.size)} frames",
+                )
+            }
+        }
         emittedTicks += durationTicks
         videoQueue.clear()
         audioQueue.clear()
