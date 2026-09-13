@@ -502,6 +502,12 @@ class TsToFmp4RemuxerTest {
         return emptyList()
     }
 
+    private fun be64(b: ByteArray, off: Int): Long {
+        var v = 0L
+        for (k in 0 until 8) v = (v shl 8) or (b[off + k].toLong() and 0xFF)
+        return v
+    }
+
     private fun be32(b: ByteArray, off: Int): Int =
         ((b[off].toInt() and 0xFF) shl 24) or ((b[off + 1].toInt() and 0xFF) shl 16) or
             ((b[off + 2].toInt() and 0xFF) shl 8) or (b[off + 3].toInt() and 0xFF)
@@ -572,13 +578,36 @@ class TsToFmp4RemuxerTest {
         // Movie::Parse: mvhd and mvex are both REQUIRED, and mvex absent
         // is reported as "Detected unfragmented MP4".
         val mvhd = child(moovKids, "mvhd", "moov")
-        assertEquals("mvhd must be version 0 here", 0, init[mvhd.bodyStart].toInt())
-        assertTrue("MovieHeader timescale must not be 0", be32(init, mvhd.bodyStart + 12) > 0)
+        // Version 1 so the declared 24 h duration fits: 86400 * 90000 ticks
+        // overflows a 32-bit field. Layout: version+flags(4) creation(8)
+        // modification(8) timescale(4) duration(8).
+        assertEquals("mvhd must be version 1 here", 1, init[mvhd.bodyStart].toInt())
+        assertTrue("MovieHeader timescale must not be 0", be32(init, mvhd.bodyStart + 20) > 0)
+        // mp4_stream_parser.cc reads liveness as kLive unless a duration is
+        // declared, and kLive pins the video renderer to one buffered frame
+        // (the measured ~46 of 60 fps on the Google TV Streamer).
+        val declared = TsToFmp4Remuxer.DECLARED_DURATION_TICKS
+        assertEquals(
+            "mvhd duration is the declared 24 h, not the unknown sentinel",
+            declared,
+            be64(init, mvhd.bodyStart + 24),
+        )
         val traks = moovKids.filter { it.type == "trak" }
         assertEquals("one video track plus audio when present", if (expectAudio) 2 else 1, traks.size)
 
         val mvex = child(moovKids, "mvex", "moov")
-        val trexes = childBoxes(init, mvex.bodyStart, mvex.end, "mvex").filter { it.type == "trex" }
+        val mvexKids = childBoxes(init, mvex.bodyStart, mvex.end, "mvex")
+        // mehd is the first branch mp4_stream_parser.cc takes for liveness,
+        // and the spec puts it ahead of the trex boxes.
+        assertEquals("mehd comes first inside mvex", "mehd", mvexKids.first().type)
+        val mehd = mvexKids.first()
+        assertEquals("mehd must be version 1", 1, init[mehd.bodyStart].toInt())
+        assertEquals(
+            "mehd fragment_duration is the declared 24 h",
+            declared,
+            be64(init, mehd.bodyStart + 4),
+        )
+        val trexes = mvexKids.filter { it.type == "trex" }
         assertEquals("one trex per trak", traks.size, trexes.size)
         val trexTracks = HashSet<Int>()
         for (trex in trexes) {
@@ -867,6 +896,11 @@ class TsToFmp4RemuxerTest {
         feedWithAdtsConfig(TsToFmp4Remuxer(cap, log = { logs.add(it) }), freqIndex = 3, chanConfig = 0)
         val init = cap.init!!
         assertChromiumParsableInit(init, expectAudio = true)
+        assertEquals(
+            "the declared duration is logged once per generation",
+            1,
+            logs.count { it == "init: mehd 24h, liveness recorded" },
+        )
         val (objectType, freqIndex, chanConfig) = ascOf(init)
         assertEquals("AAC-LC preserved", 2, objectType)
         assertEquals("48 kHz preserved", 3, freqIndex)

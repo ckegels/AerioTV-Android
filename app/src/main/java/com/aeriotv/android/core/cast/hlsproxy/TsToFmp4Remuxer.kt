@@ -124,6 +124,9 @@ class TsToFmp4Remuxer(
 
     companion object {
         const val TICKS_PER_SECOND = 90_000L
+
+        /** Declared movie/fragment duration: 24 hours in [TICKS_PER_SECOND]. */
+        const val DECLARED_DURATION_TICKS = 86_400L * TICKS_PER_SECOND
         private const val TS_PACKET = 188
         private const val PTS_WRAP = 1L shl 33
 
@@ -1048,9 +1051,10 @@ class TsToFmp4Remuxer(
             "moov",
             mvhd(nextTrackId = if (hasAudio) 3 else 2),
             *traks.toTypedArray(),
-            box("mvex", *trexes.toTypedArray()),
+            box("mvex", mehd(), *trexes.toTypedArray()),
         )
         out.write(moov)
+        log("init: mehd 24h, liveness recorded")
         return out.toByteArray()
     }
 
@@ -1174,10 +1178,19 @@ class TsToFmp4Remuxer(
 
     // ---- moov internals ----
 
+    /** A declared duration (here and in mehd) is what keeps Chromium out of
+     *  low-delay rendering: media/formats/mp4/mp4_stream_parser.cc reads
+     *  liveness as kRecorded when mvex/mehd fragment_duration > 0, or when
+     *  mvhd duration is neither 0 nor the all-ones "unknown" sentinel, and
+     *  kLive otherwise. kLive makes video_renderer_impl.cc pin
+     *  min_buffered_frames_ to 1 with no underflow growth, which presented
+     *  only ~46 of 60 frames on the Google TV Streamer. Version 1 so the
+     *  24 hour duration fits: 86400 * 90000 ticks overflows 32 bits.
+     */
     private fun mvhd(nextTrackId: Int): ByteArray = fullBox(
-        "mvhd", 0, 0,
-        u32(0), u32(0), // creation, modification
-        u32(TICKS_PER_SECOND.toInt()), u32(0), // timescale, duration (live: 0)
+        "mvhd", 1, 0,
+        u64(0), u64(0), // creation, modification
+        u32(TICKS_PER_SECOND.toInt()), u64(DECLARED_DURATION_TICKS), // timescale, duration
         u32(0x00010000), u16(0x0100), u16(0), u32(0), u32(0), // rate, volume, reserved
         matrix(),
         ByteArray(24), // pre_defined
@@ -1507,6 +1520,8 @@ class TsToFmp4Remuxer(
      * 2026-09-12). Video keeps that default because [videoTrun] overrides
      * the flags per sample anyway.
      */
+    private fun mehd(): ByteArray = fullBox("mehd", 1, 0, u64(DECLARED_DURATION_TICKS))
+
     private fun trex(trackId: Int, defaultSampleFlags: Int = 0x00010000): ByteArray = fullBox(
         "trex", 0, 0,
         u32(trackId), u32(1), u32(0), u32(0), u32(defaultSampleFlags),
