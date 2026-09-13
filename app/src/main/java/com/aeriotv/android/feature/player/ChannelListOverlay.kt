@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Text
 import com.aeriotv.android.core.data.M3UChannel
+import com.aeriotv.android.feature.livetv.GroupFocusPreview
 import com.aeriotv.android.feature.livetv.GroupSidebarPanel
 import com.aeriotv.android.feature.livetv.groupSidebarLabel
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
@@ -72,6 +73,15 @@ internal fun ChannelListOverlay(
     val listFocus = remember { FocusRequester() }
     val sidebarFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
+    // Live group preview (Logan 2026-09-13): the channel list sits beside the
+    // sidebar here too, so D-pad focus on a group row switches the list after
+    // a short debounce, through the same onGroupChange Select uses. Focus
+    // stays on the sidebar row; only Select closes the sidebar. Reseeded each
+    // time the sidebar opens so a preview never fires from a stale row.
+    var focusedGroup by remember(sidebarOpen) { mutableStateOf(activeGroup) }
+    if (sidebarOpen) {
+        GroupFocusPreview(focusedToken = focusedGroup, activeToken = activeGroup, onPreview = onGroupChange)
+    }
 
     // Focus follows the stage: list on open + whenever the sidebar closes
     // (group pick or Right/Back), sidebar row when it slides in.
@@ -120,6 +130,7 @@ internal fun ChannelListOverlay(
                         onSidebarOpenChange(false)
                     },
                     initialFocus = sidebarFocus,
+                    onRowFocused = { focusedGroup = it },
                     modifier = Modifier
                         // Right from the sidebar returns to the channel list
                         // without changing the group (Back does the same via

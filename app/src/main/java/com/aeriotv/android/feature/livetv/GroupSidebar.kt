@@ -405,7 +405,35 @@ private fun GroupSidebarRow(
  * felt slow" was the REBUILD latency, not the debounce - E-1/E-3 attack the
  * rebuild itself, and this value can come back down once a switch is cheap.
  */
-private const val SidebarPreviewDebounceMs = 300L
+private const val SidebarPreviewDebounceMs = 250L
+
+private const val GroupSidebarLogTag = "GroupSidebar"
+
+/**
+ * Debounced focus preview shared by BOTH sidebar hosts (the guide drawer and
+ * the player's channel-list overlay): moving D-pad focus onto a row applies
+ * that group [SidebarPreviewDebounceMs] later, through the SAME callback
+ * Select uses, so persistence, the guide window, the channel-list rebuild and
+ * the focus model all follow one code path. Focus stays in the sidebar.
+ *
+ * Keyed on both tokens: the next focus change cancels the pending apply, and
+ * once a preview lands (active == focused) the effect restarts and no-ops, so
+ * the already active group is never re-applied. A Select commits immediately
+ * and tears this down with the sidebar.
+ */
+@Composable
+internal fun GroupFocusPreview(
+    focusedToken: String,
+    activeToken: String,
+    onPreview: (String) -> Unit,
+) {
+    LaunchedEffect(focusedToken, activeToken) {
+        if (focusedToken == activeToken) return@LaunchedEffect
+        kotlinx.coroutines.delay(SidebarPreviewDebounceMs)
+        android.util.Log.d(GroupSidebarLogTag, "focus preview -> ${groupSidebarLabel(focusedToken)}")
+        onPreview(focusedToken)
+    }
+}
 
 /**
  * DOCKED pane for the GUIDE surface (Logan 2026-07-20): a hard side menu -
@@ -443,12 +471,7 @@ internal fun GuideGroupSidebarPane(
     // that lands inside the debounce window still keeps what the user sees
     // highlighted, not the last previewed group.
     var focusedToken by remember { mutableStateOf(selectedToken) }
-    LaunchedEffect(focusedToken) {
-        if (focusedToken != selectedToken) {
-            kotlinx.coroutines.delay(SidebarPreviewDebounceMs)
-            onPreview(focusedToken)
-        }
-    }
+    GroupFocusPreview(focusedToken = focusedToken, activeToken = selectedToken, onPreview = onPreview)
     val tv = rememberIsTvDevice()
     // Fit the drawer to the longest group name instead of the fixed tvOS 180dp
     // (Logan 2026-09-13: names like "Auto | Football | N..." were truncated).
