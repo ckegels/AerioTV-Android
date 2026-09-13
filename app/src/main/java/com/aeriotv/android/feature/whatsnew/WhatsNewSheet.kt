@@ -293,15 +293,9 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Mini player clears the timeline",
-            body = "In Live TV with the hero banner off, the mini player now " +
-                "sits above the guide timeline instead of over the channel " +
-                "rows.",
-        ),
-        WhatsNewItem(
-            title = "Group sidebar fits your names",
-            body = "The Live TV group sidebar widens to fit your longest " +
-                "group name.",
+            title = "Browse groups without pressing Select",
+            body = "Live TV on Android TV: moving through the group sidebar " +
+                "shows each group's channels as you go, no Select needed.",
         ),
     )
 }
