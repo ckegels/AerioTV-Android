@@ -293,9 +293,19 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Browse groups without pressing Select",
-            body = "Live TV on Android TV: moving through the group sidebar " +
-                "shows each group's channels as you go, no Select needed.",
+            title = "Program images in Program Info",
+            body = "Program Info now shows the program's own image when no " +
+                "other artwork is found for it.",
+        ),
+        WhatsNewItem(
+            title = "One Cancel on the close prompt",
+            body = "Android TV: the confirm dialog for closing the app now " +
+                "shows a single Cancel row.",
+        ),
+        WhatsNewItem(
+            title = "Closer to the live edge",
+            body = "Live channels from a server that sends a large burst at " +
+                "tune start now start closer to the live edge.",
         ),
     )
 }
