@@ -288,22 +288,10 @@ class AerioExoPlayerHolder @Inject constructor(
             cachedLiveStartBuffers =
                 appPreferences.setLiveStartBufferMs(channelId, next, learnedAtMs)
         }
-        // A raised hold-back used to apply only on the NEXT tune, so the
-        // session that taught us the gap kept stalling on it. Media3 cannot
-        // retarget a live offset mid-stream, so the running session honors it
-        // the only way it can: hold playback until that much media is buffered
-        // ahead. Posted to the watchdog scope because this callback arrives on
-        // the analytics thread.
-        watchdogScope.launch { armResumeGate("learned hold-back $next ms") }
-    }
-
-    /** Learned per-channel hold-back for the channel currently primed, with the
-     *  same 30 minute expiry [playUrl] applies. 0 when nothing is learned. */
-    private fun learnedHoldbackMs(): Long {
-        val id = currentChannelIdForRebuild ?: return 0L
-        val entry = cachedLiveStartBuffers[id] ?: return 0L
-        if (System.currentTimeMillis() - entry.learnedAtMs > HOLDBACK_LEARNED_TTL_MS) return 0L
-        return entry.ms.toLong()
+        // The learned hold-back applies on the NEXT tune (it is a start gate,
+        // rebuilt into the LoadControl), never mid-stream: a live feed only
+        // delivers at about real time, so holding for an 18 s learned value
+        // just buys an 18 s pause (Apple device result 2026-09-13).
     }
 
     /**
@@ -311,18 +299,19 @@ class AerioExoPlayerHolder @Inject constructor(
      * gate lets playback run again:
      *
      *   target = min(
-     *       max(worst observed delivery gap + 2 s, learned hold-back),
-     *       20 s cap,
+     *       worst observed delivery gap + 2 s,
+     *       8 s cap,
      *       maxBufferMs - 1 s          // what the LoadControl will actually hold
      *   )
      *
      * The worst gap comes from the tracer's rolling 30 s feed ring, so it is the
-     * measured shape of THIS feed, not a guess.
+     * measured shape of THIS feed, not a guess. The learned hold-back is
+     * deliberately NOT part of this: a live feed delivers at about real time, so
+     * waiting for a large learned value is simply a pause of that length.
      */
     private fun resumeGateTargetMs(): Long {
         val worstGapMs = tracer.worstGapMs().coerceAtLeast(0L)
-        val want = maxOf(worstGapMs + RESUME_GATE_HEADROOM_MS, learnedHoldbackMs())
-            .coerceAtMost(RESUME_GATE_CAP_MS)
+        val want = (worstGapMs + RESUME_GATE_HEADROOM_MS).coerceAtMost(RESUME_GATE_CAP_MS)
         val holdable = (builtMaxBufferMs - 1_000L).coerceAtLeast(0L)
         return if (holdable > 0L) minOf(want, holdable) else want
     }
@@ -346,6 +335,14 @@ class AerioExoPlayerHolder @Inject constructor(
         if (resumeGateActive) return
         if (!resumeGateEligible()) return
         val p = player ?: return
+        // A feed gaining media time slower than the wall clock is starved
+        // upstream, not bursty: there is no burst coming to refill the cushion,
+        // so a gate would just sit there until the fuse blows.
+        val ratio = tracer.feedMediaRatio()
+        if (ratio != null && ratio < HOLDBACK_MEDIA_RATIO_MIN) {
+            Log.i(TAG, "[HOLDBACK] resume gate skipped: upstream rate ${"%.2f".format(ratio)}")
+            return
+        }
         val target = resumeGateTargetMs()
         val ahead = bufferedAheadMs(p)
         if (target <= 0L || ahead >= target) return
@@ -356,7 +353,8 @@ class AerioExoPlayerHolder @Inject constructor(
             TAG,
             "[HOLDBACK] resume gate armed ch=$currentChannelId reason=$reason: " +
                 "hold until ${target}ms buffered ahead (have ${ahead}ms, " +
-                "worst gap ${tracer.worstGapMs()}ms, learned ${learnedHoldbackMs()}ms, " +
+                "worst gap ${tracer.worstGapMs()}ms, upstream rate " +
+                "${ratio?.let { "%.2f".format(it) } ?: "n/a"}, " +
                 "timeout ${RESUME_GATE_TIMEOUT_MS}ms)",
         )
         p.playWhenReady = false
@@ -394,7 +392,7 @@ class AerioExoPlayerHolder @Inject constructor(
             Log.i(
                 TAG,
                 "[HOLDBACK] resume gate target raised ${resumeGateLoggedTargetMs}ms -> ${target}ms " +
-                    "ch=$currentChannelId (learned ${learnedHoldbackMs()}ms)",
+                    "ch=$currentChannelId (worst gap ${tracer.worstGapMs()}ms)",
             )
             resumeGateLoggedTargetMs = target
         }
@@ -2591,9 +2589,12 @@ class AerioExoPlayerHolder @Inject constructor(
         /** Cushion added on top of the worst observed delivery gap so the feed
          *  has room to land the next burst before the buffer runs dry. */
         private const val RESUME_GATE_HEADROOM_MS = 2_000L
-        /** Ceiling on the resume gate: past 20 s of rebuilt cushion the wait
-         *  costs more than the stall it prevents. */
-        private const val RESUME_GATE_CAP_MS = 20_000L
+        /** Ceiling on the resume gate. A live feed delivers at about real time,
+         *  so every millisecond of cushion is a millisecond of wait: past 8 s
+         *  the hold costs more than the stall it prevents (Apple device result
+         *  2026-09-13, where holding for an 18 s learned value made an 18 s
+         *  pause). */
+        private const val RESUME_GATE_CAP_MS = 8_000L
         /** Hard timeout: a feed that cannot rebuild the cushion in 25 s is not
          *  going to, so resume with whatever is buffered and log why. */
         private const val RESUME_GATE_TIMEOUT_MS = 25_000L

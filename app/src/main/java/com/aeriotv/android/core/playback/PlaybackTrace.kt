@@ -394,7 +394,7 @@ class PlaybackTracer {
      * [MEDIA_WINDOW_MS]. Null until the ring spans [MEDIA_WINDOW_MIN_MS], so an
      * early stall is never judged on a half-filled window.
      */
-    private fun feedMediaRatio(): Double? = synchronized(mediaLock) {
+    fun feedMediaRatio(): Double? = synchronized(mediaLock) {
         val oldest = mediaSamples.firstOrNull() ?: return null
         val newest = mediaSamples.last()
         val wallDelta = newest.first - oldest.first
