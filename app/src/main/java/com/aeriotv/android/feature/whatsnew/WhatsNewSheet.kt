@@ -293,51 +293,21 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "A new media center",
-            body = "Movies, TV Shows and DVR are now full tabs with hero " +
-                "art, Continue Watching decks, shelves, search and filters, " +
-                "on the phone and on the TV.",
-        ),
-        WhatsNewItem(
-            title = "Google Cast",
-            body = "Send live TV and recordings to a Chromecast or an " +
-                "Android TV, with surround sound passed straight through " +
-                "when the device can decode it.",
-        ),
-        WhatsNewItem(
-            title = "One card for casting and the remote",
-            body = "Casting and the AerioTV Remote share a single card above " +
-                "the tab bar. Tap it for the controls, with 30 second skips " +
-                "on the cast transport.",
-        ),
-        WhatsNewItem(
-            title = "Faster launches and a faster guide",
-            body = "The guide paints from cache first and refreshes quietly " +
-                "in the background, so the app is usable sooner after a cold " +
-                "start.",
-        ),
-        WhatsNewItem(
             title = "Steadier live playback",
-            body = "AerioTV learns how much buffer a bursty channel needs, " +
-                "reads the server's reason when a stream is busy, and moves " +
-                "to another stream when one goes silent.",
+            body = "Channels that arrive in bursts now rebuild a bigger " +
+                "buffer after a stall, sized to the gap that caused it, so " +
+                "playback settles instead of stalling again.",
         ),
         WhatsNewItem(
-            title = "A deeper buffer after a stall",
-            body = "Live channels that arrive in bursts now rebuild a bigger " +
-                "buffer after a stall, and rejoin from the local buffer when a " +
-                "feed keeps stalling.",
+            title = "A rejoin instead of repeat stalls",
+            body = "If a feed stalls again soon after, AerioTV rejoins from " +
+                "the local buffer with the hold-back it has learned for that " +
+                "channel.",
         ),
         WhatsNewItem(
-            title = "Better looking artwork",
-            body = "Posters, backdrops and related titles come from TMDB " +
-                "when you add a key, and are cached so they load instantly " +
-                "next time.",
-        ),
-        WhatsNewItem(
-            title = "Jump to any day in the guide",
-            body = "Tap the clock to snap back to now, or hold it to jump to " +
-                "another day and time.",
+            title = "What's New sheet",
+            body = "The sheet no longer bounces when you scroll to the end " +
+                "of the notes.",
         ),
     )
 }
