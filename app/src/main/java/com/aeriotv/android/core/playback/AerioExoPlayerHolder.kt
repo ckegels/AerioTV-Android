@@ -299,10 +299,16 @@ class AerioExoPlayerHolder @Inject constructor(
      * gate lets playback run again:
      *
      *   target = min(
-     *       worst observed delivery gap + 2 s,
-     *       8 s cap,
+     *       worst observed delivery gap * 1.5 + 2 s,
+     *       12 s cap,
      *       maxBufferMs - 1 s          // what the LoadControl will actually hold
      *   )
+     *
+     * The 1.5x multiplier and the 12 s cap come from the Apple measurement of
+     * the same design (2026-09-13): a feed with 7-8 s silent gaps pinned the old
+     * gap+2 s / 8 s cap gate, so every hold bought exactly one burst and the
+     * next gap drained it again (9 stalls in 90 s). Clearing the gap with real
+     * margin is what stops the loop.
      *
      * The worst gap comes from the tracer's rolling 30 s feed ring, so it is the
      * measured shape of THIS feed, not a guess. The learned hold-back is
@@ -311,7 +317,8 @@ class AerioExoPlayerHolder @Inject constructor(
      */
     private fun resumeGateTargetMs(): Long {
         val worstGapMs = tracer.worstGapMs().coerceAtLeast(0L)
-        val want = (worstGapMs + RESUME_GATE_HEADROOM_MS).coerceAtMost(RESUME_GATE_CAP_MS)
+        val want = (worstGapMs * 3L / 2L + RESUME_GATE_HEADROOM_MS)
+            .coerceAtMost(RESUME_GATE_CAP_MS)
         val holdable = (builtMaxBufferMs - 1_000L).coerceAtLeast(0L)
         return if (holdable > 0L) minOf(want, holdable) else want
     }
@@ -326,6 +333,99 @@ class AerioExoPlayerHolder @Inject constructor(
         if (PlaybackTracer.urlKind(url) != "live") return false
         if (!hasReachedPlaybackRestart || !videoFrameRendered) return false
         return p.playWhenReady || resumeGateActive
+    }
+
+    // ---- repeat-stall rejoin ----
+    // Elapsed-realtime of the last live underrun that reached the gate, and of
+    // the last rejoin. Both are reset by a fresh tune.
+    private var lastLiveUnderrunAtMs = 0L
+    private var lastRejoinAtMs = 0L
+
+    /** This channel's learned hold-back, honouring the same 30 minute TTL the
+     *  tune path applies, or 0 when there is none. */
+    private fun learnedHoldBackMs(): Int {
+        val id = currentChannelIdForRebuild ?: currentChannelId ?: return 0
+        val entry = cachedLiveStartBuffers[id] ?: return 0
+        val age = System.currentTimeMillis() - entry.learnedAtMs
+        return if (age > HOLDBACK_LEARNED_TTL_MS) 0 else entry.ms
+    }
+
+    /**
+     * Every live buffer underrun lands here. The FIRST one in a minute is the
+     * resume gate's job: hold until the cushion covers the measured gap. A
+     * SECOND one inside [REPEAT_STALL_WINDOW_MS] means the gate is not winning
+     * on this feed (Apple measured this exact shape: 7-8 s gaps, gate pinned at
+     * its cap, one burst bought per hold, 9 stalls in 90 s), so instead of
+     * holding again we rejoin BEHIND the live edge by the learned hold-back and
+     * resume immediately, which puts a real cushion between the playhead and
+     * the feed's arrival point rather than waiting for one to accumulate.
+     */
+    private fun onLiveUnderrun(reason: String) {
+        if (!resumeGateEligible()) return
+        val now = SystemClock.elapsedRealtime()
+        val sinceLast = now - lastLiveUnderrunAtMs
+        val repeat = lastLiveUnderrunAtMs != 0L && sinceLast <= REPEAT_STALL_WINDOW_MS
+        val cooled = lastRejoinAtMs == 0L || now - lastRejoinAtMs >= REJOIN_COOLDOWN_MS
+        lastLiveUnderrunAtMs = now
+        if (repeat && cooled && tryRejoin(now)) return
+        armResumeGate(reason)
+    }
+
+    /**
+     * Rejoin the feed behind the live edge.
+     *
+     * Dispatcharr live is a PROGRESSIVE MPEG-TS source: ExoPlayer keeps no back
+     * buffer on it (DefaultLoadControl's backBufferDurationMs is 0 and nothing
+     * here raises it), so there is NOTHING behind the playhead in the player
+     * itself and a plain seek back is impossible. The only real local window is
+     * the Live Rewind timeshift buffer, which the live tee mirrors whenever a
+     * rewind session is rolling on a raw-TS channel. When that window exists we
+     * enter it [seekBack] behind its head; when it does not (no rewind session,
+     * or an HLS/DASH live channel the tee cannot mirror) the rejoin degrades to
+     * a re-tune through the normal tune path, which applies the learned
+     * hold-back as the start gate immediately.
+     *
+     * Returns true when a rejoin was performed.
+     */
+    private fun tryRejoin(now: Long): Boolean {
+        val url = lastPlayUrl ?: return false
+        // A gate armed by an earlier underrun must not keep holding through the
+        // rejoin; the point of the rejoin is to resume immediately.
+        releaseResumeGate("rejoin")
+        val learned = learnedHoldBackMs().toLong()
+        val want = maxOf(learned, REJOIN_MIN_BACK_MS)
+        val window = rewindWindow()
+        val headWallMs = window?.get(1) ?: 0L
+        val windowMs = if (window == null) 0L else (window[1] - window[0]).coerceAtLeast(0L)
+        val usable = (windowMs - REJOIN_WINDOW_MARGIN_MS).coerceAtLeast(0L)
+        val back = minOf(want, usable, REJOIN_MAX_BACK_MS)
+        if (back >= REJOIN_MIN_BACK_MS && headWallMs > 0L) {
+            // Never outside the window: back is already capped at the window
+            // minus its 1 s margin, so the target is at or after the tail.
+            val target = headWallMs - back
+            Log.i(
+                TAG,
+                "[HOLDBACK] rejoin: seeking back $back ms into the local window " +
+                    "(learned $learned ms, window $windowMs ms)",
+            )
+            if (playTimeshift(target)) {
+                lastRejoinAtMs = now
+                lastLiveUnderrunAtMs = 0L
+                return true
+            }
+            Log.i(TAG, "[HOLDBACK] rejoin: local window entry failed, re-tuning instead")
+        }
+        // No window behind the playhead: re-tune, which rebuilds the LoadControl
+        // with the learned hold-back as the start gate before the first frame.
+        Log.i(
+            TAG,
+            "[HOLDBACK] rejoin: no local window behind the playhead " +
+                "(window $windowMs ms), re-tuning with hold-back $learned ms",
+        )
+        lastRejoinAtMs = now
+        lastLiveUnderrunAtMs = 0L
+        playUrl(url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri)
+        return true
     }
 
     /** Arm (or re-arm) the gate. Safe to call repeatedly: an already-held gate
@@ -699,7 +799,7 @@ class AerioExoPlayerHolder @Inject constructor(
             // Buffer-underrun rebuffer on a live stream that was already
             // playing: hold the resume until the cushion is deep enough to
             // survive the worst delivery gap this feed has shown.
-            if (playbackState == Player.STATE_BUFFERING) armResumeGate("rebuffer")
+            if (playbackState == Player.STATE_BUFFERING) onLiveUnderrun("rebuffer")
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -1105,6 +1205,13 @@ class AerioExoPlayerHolder @Inject constructor(
         // the load control nothing to work with. min = gate + 4s keeps the same
         // 4 s of real cushion the tuning above describes.
         val minBufferMs = maxOf(4_000, bufferFloorMs, startGateMs + 4_000)
+        // The post-stall resume gate can only hold for what the LoadControl will
+        // actually keep buffered ahead (target is clamped to maxBufferMs - 1 s),
+        // and minBufferMs * 2 is only ~10.4 s at the base start gate. A live
+        // player therefore gets at least 14 s of max buffer so a 12 s gate is
+        // reachable; the MIN bound is untouched, so steady-state behaviour and
+        // the Buffer Size ladder are unchanged.
+        val liveMaxBufferMs = maxOf(minBufferMs * 2, LIVE_MAX_BUFFER_FLOOR_MS)
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 /* minBufferMs = */ minBufferMs,
@@ -1112,7 +1219,7 @@ class AerioExoPlayerHolder @Inject constructor(
                 // maxOf(8_000, minBufferMs) degenerated to min == max once the
                 // floor reached 8s, leaving the load control nothing to work
                 // with on precisely the setting chosen for poor networks.
-                /* maxBufferMs = */ minBufferMs * 2,
+                /* maxBufferMs = */ liveMaxBufferMs,
                 /* bufferForPlaybackMs = */ startGateMs,
                 /* bufferForPlaybackAfterRebufferMs = */ 2_000,
             )
@@ -1189,7 +1296,7 @@ class AerioExoPlayerHolder @Inject constructor(
         builtWithPassthrough = audioPassthrough
         builtWithBufferFloorMs = bufferFloorMs
         builtWithStartGateMs = startGateMs
-        builtMaxBufferMs = minBufferMs * 2
+        builtMaxBufferMs = liveMaxBufferMs
         startWatchdog()
         return fresh
     }
@@ -1697,6 +1804,9 @@ class AerioExoPlayerHolder @Inject constructor(
         lastGapKey = null
         gapHops = 0
         lastPlayUrl = url
+        // A fresh prime restarts the repeat-stall window; the rejoin cooldown
+        // deliberately survives it, since a rejoin IS a re-prime.
+        lastLiveUnderrunAtMs = 0L
         lastPlayTitle = title
         lastPlaySubtitle = subtitle
         lastPlayArtworkUri = artworkUri
@@ -2590,11 +2700,32 @@ class AerioExoPlayerHolder @Inject constructor(
          *  has room to land the next burst before the buffer runs dry. */
         private const val RESUME_GATE_HEADROOM_MS = 2_000L
         /** Ceiling on the resume gate. A live feed delivers at about real time,
-         *  so every millisecond of cushion is a millisecond of wait: past 8 s
-         *  the hold costs more than the stall it prevents (Apple device result
-         *  2026-09-13, where holding for an 18 s learned value made an 18 s
-         *  pause). */
-        private const val RESUME_GATE_CAP_MS = 8_000L
+         *  so every millisecond of cushion is a millisecond of wait, but an 8 s
+         *  ceiling was BELOW the gaps it had to ride out (Apple device result
+         *  2026-09-13: 7-8 s gaps, gate pinned at 8 s, 9 stalls in 90 s). 12 s
+         *  clears a gap of that size with margin; past it the hold costs more
+         *  than the stall it prevents, and the repeat-stall rejoin takes over. */
+        private const val RESUME_GATE_CAP_MS = 12_000L
+        /** The gate can only hold what the LoadControl will keep, so a live
+         *  player is built with at least this much max buffer (the default
+         *  minBufferMs * 2 tops out around 10.4 s at the base start gate, which
+         *  would silently clamp a 12 s gate to 9.4 s). */
+        private const val LIVE_MAX_BUFFER_FLOOR_MS = 14_000
+        /** Two underruns inside this window mean the gate is not winning on this
+         *  feed, so the next recovery rejoins behind the live edge instead. */
+        private const val REPEAT_STALL_WINDOW_MS = 60_000L
+        /** Minimum spacing between rejoins: a rejoin costs a re-prime or a jump
+         *  behind live, so at most one per 3 minutes. */
+        private const val REJOIN_COOLDOWN_MS = 180_000L
+        /** Floor on the rejoin seek-back: less than this lands back inside the
+         *  same delivery gap. */
+        private const val REJOIN_MIN_BACK_MS = 8_000L
+        /** Ceiling on the rejoin seek-back: past this the user is watching
+         *  meaningfully old live. */
+        private const val REJOIN_MAX_BACK_MS = 18_000L
+        /** Safety margin kept off the tail of the local window so a rejoin never
+         *  seeks to or past the oldest byte retained. */
+        private const val REJOIN_WINDOW_MARGIN_MS = 1_000L
         /** Hard timeout: a feed that cannot rebuild the cushion in 25 s is not
          *  going to, so resume with whatever is buffered and log why. */
         private const val RESUME_GATE_TIMEOUT_MS = 25_000L

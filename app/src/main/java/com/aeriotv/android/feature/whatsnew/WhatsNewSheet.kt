@@ -325,7 +325,8 @@ object WhatsNewContent {
         WhatsNewItem(
             title = "A deeper buffer after a stall",
             body = "Live channels that arrive in bursts now rebuild a bigger " +
-                "buffer after a stall instead of stalling again.",
+                "buffer after a stall, and rejoin from the local buffer when a " +
+                "feed keeps stalling.",
         ),
         WhatsNewItem(
             title = "Better looking artwork",
