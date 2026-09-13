@@ -41,16 +41,22 @@ class UnsupportedCodecException(
  * live edge to steer by, which is the pattern VLC / Web Video Cast /
  * IPTV Extreme all ship.
  *
- * Output contract:
- *  - [Listener.onInitSegment] fires once, as soon as SPS/PPS (and the
- *    audio config when the PMT declares audio) have been seen: ftyp +
- *    moov with one video and (optionally) one audio track, timescale
- *    90000 on both so PES 90 kHz timestamps ride through untouched.
- *  - [Listener.onMediaSegment] fires per segment: one moof + mdat pair,
- *    cut ONLY on video keyframe boundaries, targeting
- *    [targetSegmentTicks] (about 3 s). baseMediaDecodeTime is the
- *    segment's first DTS rebased to the session start, carried through
- *    the 33-bit PTS wraparound by a per-track unwrapper.
+ * Output contract (DEMUXED only since 2026-09-13; the single muxed
+ * rendition and the /master.m3u8 + /live.m3u8 endpoints that served it
+ * are gone, because no receiver can declare ac-3 inside a muxed
+ * video/mp4 sample entry):
+ *  - [Listener.onInitSegments] fires once, as soon as SPS/PPS (and the
+ *    audio config when the PMT declares audio) have been seen: a
+ *    video-only ftyp + moov and, when the mux carries audio, an
+ *    audio-only one, timescale 90000 on both so PES 90 kHz timestamps
+ *    ride through untouched.
+ *  - [Listener.onMediaSegment] fires per segment with BOTH renditions of
+ *    the same cut: one moof + mdat pair each, cut ONLY on video keyframe
+ *    boundaries at the same boundary and under the same moof sequence
+ *    number, targeting [targetSegmentTicks] (about 3 s).
+ *    baseMediaDecodeTime is the segment's first DTS rebased to the
+ *    generation start, carried through the 33-bit PTS wraparound by a
+ *    per-track unwrapper.
  *
  * Threading: single-caller. [feed] is invoked from the ingest thread
  * only; no internal locking.
@@ -71,10 +77,43 @@ class TsToFmp4Remuxer(
     private val allowAc3Passthrough: Boolean = false,
 ) {
     interface Listener {
-        fun onInitSegment(data: ByteArray)
+        /** The init segments of a generation: [video] is a video-only moov,
+         *  [audio] an audio-only moov carrying the ac-3 / ec-3 / mp4a
+         *  sample entry, null for a video-only mux. Both keep the
+         *  mehd/mvhd 24 h declared duration.
+         *
+         *  Why two renditions and no muxed one: measured on the Google TV
+         *  Streamer's Cast runtime,
+         *  isTypeSupported("video/mp4; codecs=\"avc1.64002A,ac-3\"") and
+         *  isTypeSupported("video/mp4; codecs=\"ac-3\"") are both false,
+         *  but isTypeSupported("audio/mp4; codecs=\"ac-3\"") is TRUE, and
+         *  Emby's web receiver plays AC-3 through
+         *  MediaCodecAudioDecoder from a SEPARATE audio SourceBuffer. One
+         *  muxed rendition could only ever declare an AAC codec string,
+         *  which is what used to force a server-side AAC output profile;
+         *  two renditions let the audio declare what it really is. */
+        fun onInitSegments(video: ByteArray, audio: ByteArray?)
 
-        /** [durationTicks] is the segment's video span in 90 kHz ticks. */
-        fun onMediaSegment(data: ByteArray, durationTicks: Long)
+        /** One emitted cut, in both renditions: [video] holds the video
+         *  traf only, [audio] the audio traf only, cut at exactly the same
+         *  boundary and carrying the same moof sequence number. When the
+         *  cut span carried no audio frame at all [audio] is still emitted,
+         *  as a zero-sample traf, so the two media playlists keep identical
+         *  sequence numbering; it is null only for a video-only mux.
+         *
+         *  [videoDurationTicks] is the segment's video span in 90 kHz
+         *  ticks, i.e. the video rendition's EXTINF.
+         *  [audioDurationTicks] is the sum of the segment's audio frame
+         *  durations, i.e. the audio rendition's own EXTINF. It may differ
+         *  from [videoDurationTicks] by less than one audio frame, which
+         *  HLS allows, and falls back to the video span when the segment
+         *  has no audio. */
+        fun onMediaSegment(
+            video: ByteArray,
+            audio: ByteArray?,
+            videoDurationTicks: Long,
+            audioDurationTicks: Long,
+        )
 
         /** Sample census of the segment about to be handed to
          *  [onMediaSegment], fired immediately before it. Exists purely
@@ -115,45 +154,6 @@ class TsToFmp4Remuxer(
             firstVideoPtsSeconds: Double,
             firstAudioPtsSeconds: Double,
             segmentStartSeconds: Double,
-        ) {}
-
-        /** DEMUXED renditions of the init segment (2026-09-13), fired
-         *  immediately after [onInitSegment] from the same configuration:
-         *  [video] is a video-only moov, [audio] an audio-only moov
-         *  carrying the ac-3 / ec-3 / mp4a sample entry, and [audio] is
-         *  null for a video-only mux. Both keep the mehd/mvhd 24 h
-         *  declared duration. Default no-op so existing tests need not
-         *  care.
-         *
-         *  Why demuxed: measured on the Google TV Streamer's Cast runtime,
-         *  isTypeSupported("video/mp4; codecs=\"avc1.64002A,ac-3\"") and
-         *  isTypeSupported("video/mp4; codecs=\"ac-3\"") are both false,
-         *  but isTypeSupported("audio/mp4; codecs=\"ac-3\"") is TRUE, and
-         *  Emby's web receiver plays AC-3 through MediaCodecAudioDecoder
-         *  from a SEPARATE audio SourceBuffer. One muxed rendition can
-         *  therefore only ever declare an AAC codec string, which is what
-         *  forces the server-side AAC output profile; two renditions let
-         *  the audio declare what it really is. */
-        fun onDemuxedInitSegments(video: ByteArray, audio: ByteArray?) {}
-
-        /** DEMUXED renditions of the segment [onMediaSegment] is about to
-         *  receive, fired immediately before it, cut at exactly the same
-         *  boundary and carrying the same moof sequence number: [video]
-         *  holds the video traf only, [audio] the audio traf only. When the
-         *  cut span carried no audio frame at all [audio] is still emitted,
-         *  as a zero-sample traf, so the two media playlists keep identical
-         *  sequence numbering; it is null only for a video-only mux.
-         *
-         *  [audioDurationTicks] is the sum of the segment's audio frame
-         *  durations, i.e. the audio rendition's own EXTINF. It may differ
-         *  from [videoDurationTicks] by less than one audio frame, which
-         *  HLS allows, and falls back to the video span when the segment
-         *  has no audio. */
-        fun onDemuxedMediaSegments(
-            video: ByteArray,
-            audio: ByteArray?,
-            videoDurationTicks: Long,
-            audioDurationTicks: Long,
         ) {}
 
         /** The mux's audio codec as soon as the PMT is parsed ("AAC",
@@ -276,7 +276,7 @@ class TsToFmp4Remuxer(
     /** First queued video PRESENTATION time (dts + composition offset).
      *
      *  Audio is gated on this, not on [timelineBase]. The Cast receiver
-     *  appends our muxed segments in MSE 'sequence' AppendMode (Shaka's
+     *  appends our segments in MSE 'sequence' AppendMode (Shaka's
      *  HLS default; Chromium logs the warning on every load), and in that
      *  mode Chromium ignores tfdt and anchors the whole append on the
      *  PRESENTATION timestamp of the first coded frame it sees, which is
@@ -309,12 +309,10 @@ class TsToFmp4Remuxer(
 
     // ---- pending segment ----
 
-    /** Which tracks a built init or media segment carries. MUXED is the
-     *  legacy one-rendition shape kept for one release behind the old
-     *  master.m3u8 / live.m3u8 paths; VIDEO_ONLY and AUDIO_ONLY are the
-     *  demuxed renditions the sender loads (see
-     *  [Listener.onDemuxedInitSegments] for why). */
-    private enum class Rendition { MUXED, VIDEO_ONLY, AUDIO_ONLY }
+    /** Which track a built init or media segment carries. The two
+     *  demuxed renditions are the only shape served (see
+     *  [Listener.onInitSegments] for why). */
+    private enum class Rendition { VIDEO_ONLY, AUDIO_ONLY }
 
     private class VideoSample(val data: ByteArray, val dts: Long, val pts: Long, val keyframe: Boolean)
     private class AudioSample(val data: ByteArray, val pts: Long, val durationTicks: Long)
@@ -950,11 +948,7 @@ class TsToFmp4Remuxer(
             else -> aacFreqIndex >= 0
         }
         if (!audioReady) return
-        listener.onInitSegment(buildInitSegment(Rendition.MUXED))
-        // Demuxed renditions from the SAME configuration, so a receiver
-        // that refuses a muxed ac-3 codec string can still be handed the
-        // audio in its own SourceBuffer.
-        listener.onDemuxedInitSegments(
+        listener.onInitSegments(
             video = buildInitSegment(Rendition.VIDEO_ONLY),
             audio = if (audioPid >= 0) buildInitSegment(Rendition.AUDIO_ONLY) else null,
         )
@@ -1044,10 +1038,9 @@ class TsToFmp4Remuxer(
         for (a in audioQueue) {
             if (a.pts < cutDts) segAudio.add(a) else keepAudio.add(a)
         }
-        // One sequence number per emitted CUT, shared by all three
-        // renditions of it: the demuxed playlists must number identically.
+        // One sequence number per emitted CUT, shared by both renditions
+        // of it: the demuxed playlists must number identically.
         sequenceNumber++
-        val segment = buildMediaSegment(videoQueue, durations, segAudio, Rendition.MUXED)
         val videoSegment = buildMediaSegment(videoQueue, durations, segAudio, Rendition.VIDEO_ONLY)
         val audioSegment = if (audioPid >= 0) {
             buildMediaSegment(videoQueue, durations, segAudio, Rendition.AUDIO_ONLY)
@@ -1098,18 +1091,14 @@ class TsToFmp4Remuxer(
         videoQueue.clear()
         audioQueue.clear()
         audioQueue.addAll(keepAudio)
-        // Demuxed pair first, so a store can stash it and publish all
-        // three renditions under the one sequence number onMediaSegment
-        // claims.
-        listener.onDemuxedMediaSegments(videoSegment, audioSegment, durationTicks, audioDurationTicks)
-        listener.onMediaSegment(segment, durationTicks)
+        listener.onMediaSegment(videoSegment, audioSegment, durationTicks, audioDurationTicks)
     }
 
     // ---- fMP4 writing ----
 
     private fun buildInitSegment(rendition: Rendition): ByteArray {
-        val hasVideo = rendition != Rendition.AUDIO_ONLY
-        val hasAudio = audioPid >= 0 && rendition != Rendition.VIDEO_ONLY
+        val hasVideo = rendition == Rendition.VIDEO_ONLY
+        val hasAudio = audioPid >= 0 && rendition == Rendition.AUDIO_ONLY
         val out = ByteArrayOutputStream(1024)
         out.write(box("ftyp", bytes("iso5"), u32(0), bytes("iso5"), bytes("iso6"), bytes("mp41")))
         val traks = ArrayList<ByteArray>()
@@ -1141,7 +1130,6 @@ class TsToFmp4Remuxer(
     /** Rendition prefix for the per-init and per-segment log lines, so a
      *  demuxed cast can be read back from one log. */
     private fun logPrefix(rendition: Rendition): String = when (rendition) {
-        Rendition.MUXED -> ""
         Rendition.VIDEO_ONLY -> "video "
         Rendition.AUDIO_ONLY -> "audio "
     }
@@ -1152,8 +1140,8 @@ class TsToFmp4Remuxer(
         audio: List<AudioSample>,
         rendition: Rendition,
     ): ByteArray {
-        val wantVideo = rendition != Rendition.AUDIO_ONLY
-        val wantAudio = rendition != Rendition.VIDEO_ONLY
+        val wantVideo = rendition == Rendition.VIDEO_ONLY
+        val wantAudio = rendition == Rendition.AUDIO_ONLY
         val videoBytes = if (wantVideo) video.sumOf { it.data.size } else 0
         val audioBytes = if (wantAudio) audio.sumOf { it.data.size } else 0
 
@@ -1161,7 +1149,7 @@ class TsToFmp4Remuxer(
         // placeholder offsets to learn its size, then rebuild with real
         // ones (sizes are offset-independent). The sequence number is
         // claimed once per cut by finalizeSegment, not per build pass and
-        // not per rendition, so all three renditions of one cut agree.
+        // not per rendition, so both renditions of one cut agree.
         var moof = buildMoof(video, videoDurations, audio, rendition, videoDataOffset = 0, audioDataOffset = 0)
         val moofSize = moof.size
         moof = buildMoof(
@@ -1190,7 +1178,7 @@ class TsToFmp4Remuxer(
     ): ByteArray {
         val mfhd = fullBox("mfhd", 0, 0, u32(sequenceNumber))
         val trafs = ArrayList<ByteArray>()
-        if (rendition != Rendition.AUDIO_ONLY) {
+        if (rendition == Rendition.VIDEO_ONLY) {
             trafs.add(
                 box(
                     "traf",
@@ -1201,12 +1189,10 @@ class TsToFmp4Remuxer(
                 ),
             )
         }
-        // The audio traf is emitted for the audio-only rendition even when
-        // the cut span carried no frame (a zero-sample trun), so the audio
-        // playlist has an entry at every sequence number the video one has.
-        if (rendition != Rendition.VIDEO_ONLY &&
-            (audio.isNotEmpty() || rendition == Rendition.AUDIO_ONLY)
-        ) {
+        // The audio traf is emitted even when the cut span carried no
+        // frame (a zero-sample trun), so the audio playlist has an entry at
+        // every sequence number the video one has.
+        if (rendition == Rendition.AUDIO_ONLY) {
             trafs.add(
                 box(
                     "traf",

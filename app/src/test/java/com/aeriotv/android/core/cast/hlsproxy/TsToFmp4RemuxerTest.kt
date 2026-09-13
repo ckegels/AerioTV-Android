@@ -22,16 +22,28 @@ class TsToFmp4RemuxerTest {
 
     private class Capture : TsToFmp4Remuxer.Listener {
         var init: ByteArray? = null
+        var audioInit: ByteArray? = null
         var initCount = 0
+        /** The two renditions of each cut concatenated, so one box walk
+         *  sees both trafs; [audioSegments] keeps the audio rendition on
+         *  its own for the audio-sample assertions. */
         val segments = ArrayList<ByteArray>()
+        val audioSegments = ArrayList<ByteArray>()
         val durations = ArrayList<Long>()
-        override fun onInitSegment(data: ByteArray) {
-            init = data
+        override fun onInitSegments(video: ByteArray, audio: ByteArray?) {
+            init = video
+            audioInit = audio
             initCount++
         }
-        override fun onMediaSegment(data: ByteArray, durationTicks: Long) {
-            segments.add(data)
-            durations.add(durationTicks)
+        override fun onMediaSegment(
+            video: ByteArray,
+            audio: ByteArray?,
+            videoDurationTicks: Long,
+            audioDurationTicks: Long,
+        ) {
+            segments.add(if (audio == null) video else video + audio)
+            audio?.let { audioSegments.add(it) }
+            durations.add(videoDurationTicks)
         }
         var audioCodec: String? = null
         override fun onAudioCodec(name: String) {
@@ -254,8 +266,9 @@ class TsToFmp4RemuxerTest {
         assertEquals("ftyp", boxType(init, 0))
         assertTrue(containsBox(init, "moov"))
         assertTrue(containsBox(init, "avcC"))
-        assertTrue("audio track present", containsBox(init, "mp4a"))
-        assertTrue("esds present", containsBox(init, "esds"))
+        val audioInit = cap.audioInit!!
+        assertTrue("audio track present", containsBox(audioInit, "mp4a"))
+        assertTrue("esds present", containsBox(audioInit, "esds"))
 
         assertTrue("at least one segment", cap.segments.isNotEmpty())
         val seg = cap.segments[0]
@@ -368,7 +381,7 @@ class TsToFmp4RemuxerTest {
 
         assertEquals("audio codec reported from the PMT", "AC-3", cap.audioCodec)
         assertEquals("init emitted exactly once", 1, cap.initCount)
-        val init = cap.init!!
+        val init = cap.audioInit!!
         assertTrue("ac-3 sample entry", containsBox(init, "ac-3"))
         assertTrue("dac3 config box", containsBox(init, "dac3"))
         assertTrue("no AAC sample entry", !containsBox(init, "mp4a"))
@@ -458,7 +471,7 @@ class TsToFmp4RemuxerTest {
         // Every audio sample must be exactly the payload: a 7-byte
         // assumption would leave the 2-byte CRC word prefixed to each
         // frame and the decoder would reject the whole track.
-        val sizes = audioSampleSizes(cap.segments[0])
+        val sizes = audioSampleSizes(cap.audioSegments[0])
         assertTrue("audio samples present", sizes.isNotEmpty())
         assertTrue(
             "every audio sample is the raw payload, got $sizes",
@@ -466,7 +479,7 @@ class TsToFmp4RemuxerTest {
         )
     }
 
-    /** Sample sizes from the SECOND traf's trun (the audio track). */
+    /** Sample sizes from the audio rendition's traf trun. */
     private fun audioSampleSizes(seg: ByteArray): List<Int> {
         var i = 0
         while (i + 8 <= seg.size) {
@@ -481,8 +494,9 @@ class TsToFmp4RemuxerTest {
                     if (String(seg, j + 4, 4, Charsets.US_ASCII) == "traf") trafs.add(Pair(j, s))
                     j += s
                 }
-                if (trafs.size < 2) return emptyList()
-                val (off, sz) = trafs[1]
+                // Demuxed audio segments carry a single traf; the audio traf is the last one.
+                if (trafs.isEmpty()) return emptyList()
+                val (off, sz) = trafs.last()
                 var k = off + 8
                 while (k + 8 <= off + sz) {
                     val s = be32(seg, k)
@@ -569,7 +583,11 @@ class TsToFmp4RemuxerTest {
      * broken, turns into the receiver's "Append: stream parsing failed" on
      * the init segment while ffprobe still reads the file happily.
      */
-    private fun assertChromiumParsableInit(init: ByteArray, expectAudio: Boolean) {
+    private fun assertChromiumParsableInit(
+        init: ByteArray,
+        expectVideo: Boolean,
+        expectAudio: Boolean,
+    ) {
         val top = childBoxes(init, 0, init.size, "init")
         assertEquals("init must be ftyp then moov", listOf("ftyp", "moov"), top.map { it.type })
 
@@ -593,7 +611,11 @@ class TsToFmp4RemuxerTest {
             be64(init, mvhd.bodyStart + 24),
         )
         val traks = moovKids.filter { it.type == "trak" }
-        assertEquals("one video track plus audio when present", if (expectAudio) 2 else 1, traks.size)
+        assertEquals(
+            "one trak per expected track",
+            (if (expectVideo) 1 else 0) + (if (expectAudio) 1 else 0),
+            traks.size,
+        )
 
         val mvex = child(moovKids, "mvex", "moov")
         val mvexKids = childBoxes(init, mvex.bodyStart, mvex.end, "mvex")
@@ -810,7 +832,8 @@ class TsToFmp4RemuxerTest {
         remuxer.feed(pat, 0, pat.size)
         remuxer.feed(pmt, 0, pmt.size)
         feedGops(remuxer, startPts = 900_000L, frames = 61, withAudio = true)
-        assertChromiumParsableInit(cap.init!!, expectAudio = true)
+        assertChromiumParsableInit(cap.init!!, expectVideo = true, expectAudio = false)
+        assertChromiumParsableInit(cap.audioInit!!, expectVideo = false, expectAudio = true)
     }
 
     /** The same rules over the AC-3 passthrough entry, which must keep its
@@ -835,7 +858,8 @@ class TsToFmp4RemuxerTest {
                 remuxer.feed(ap, 0, ap.size)
             }
         }
-        assertChromiumParsableInit(cap.init!!, expectAudio = true)
+        assertChromiumParsableInit(cap.init!!, expectVideo = true, expectAudio = false)
+        assertChromiumParsableInit(cap.audioInit!!, expectVideo = false, expectAudio = true)
     }
 
     /** The ASC fields the emitted init actually carries. */
@@ -895,13 +919,14 @@ class TsToFmp4RemuxerTest {
         val cap = Capture()
         feedWithAdtsConfig(TsToFmp4Remuxer(cap, log = { logs.add(it) }), freqIndex = 3, chanConfig = 0)
         val init = cap.init!!
-        assertChromiumParsableInit(init, expectAudio = true)
+        assertChromiumParsableInit(cap.init!!, expectVideo = true, expectAudio = false)
+        assertChromiumParsableInit(cap.audioInit!!, expectVideo = false, expectAudio = true)
         assertEquals(
             "the declared duration is logged once per generation",
             1,
-            logs.count { it == "init: mehd 24h, liveness recorded" },
+            logs.count { it == "audio init: mehd 24h, liveness recorded" },
         )
-        val (objectType, freqIndex, chanConfig) = ascOf(init)
+        val (objectType, freqIndex, chanConfig) = ascOf(cap.audioInit!!)
         assertEquals("AAC-LC preserved", 2, objectType)
         assertEquals("48 kHz preserved", 3, freqIndex)
         assertEquals("channel config 0 becomes stereo", 2, chanConfig)
@@ -919,8 +944,9 @@ class TsToFmp4RemuxerTest {
         val cap = Capture()
         feedWithAdtsConfig(TsToFmp4Remuxer(cap, log = { logs.add(it) }), freqIndex = 13, chanConfig = 2)
         val init = cap.init!!
-        assertChromiumParsableInit(init, expectAudio = true)
-        val (_, freqIndex, chanConfig) = ascOf(init)
+        assertChromiumParsableInit(cap.init!!, expectVideo = true, expectAudio = false)
+        assertChromiumParsableInit(cap.audioInit!!, expectVideo = false, expectAudio = true)
+        val (_, freqIndex, chanConfig) = ascOf(cap.audioInit!!)
         assertEquals("reserved index 13 becomes 48 kHz", 3, freqIndex)
         assertEquals("stereo preserved", 2, chanConfig)
         assertTrue(
@@ -935,8 +961,9 @@ class TsToFmp4RemuxerTest {
     fun `explicit rate sampling frequency index is sanitized in the asc`() {
         val cap = Capture()
         feedWithAdtsConfig(TsToFmp4Remuxer(cap), freqIndex = 15, chanConfig = 2)
-        assertChromiumParsableInit(cap.init!!, expectAudio = true)
-        assertEquals("index 15 becomes 48 kHz", 3, ascOf(cap.init!!).second)
+        assertChromiumParsableInit(cap.init!!, expectVideo = true, expectAudio = false)
+        assertChromiumParsableInit(cap.audioInit!!, expectVideo = false, expectAudio = true)
+        assertEquals("index 15 becomes 48 kHz", 3, ascOf(cap.audioInit!!).second)
     }
 
     /**
@@ -949,9 +976,10 @@ class TsToFmp4RemuxerTest {
     fun `96 kHz audio does not wrap the 16 16 sample rate`() {
         val cap = Capture()
         feedWithAdtsConfig(TsToFmp4Remuxer(cap), freqIndex = 0, chanConfig = 2)
-        val init = cap.init!!
-        assertChromiumParsableInit(init, expectAudio = true)
-        assertEquals("96 kHz survives into the ASC", 0, ascOf(init).second)
+        val init = cap.audioInit!!
+        assertChromiumParsableInit(cap.init!!, expectVideo = true, expectAudio = false)
+        assertChromiumParsableInit(cap.audioInit!!, expectVideo = false, expectAudio = true)
+        assertEquals("96 kHz survives into the ASC", 0, ascOf(cap.audioInit!!).second)
         val mp4a = init.indices.first { i ->
             i + 4 <= init.size && String(init, i, 4, Charsets.US_ASCII) == "mp4a"
         }
@@ -969,8 +997,9 @@ class TsToFmp4RemuxerTest {
         val cap = Capture()
         feedWithAdtsConfig(TsToFmp4Remuxer(cap), freqIndex = 3, chanConfig = 7)
         val init = cap.init!!
-        assertChromiumParsableInit(init, expectAudio = true)
-        assertEquals("config 7 survives into the ASC", 7, ascOf(init).third)
+        assertChromiumParsableInit(cap.init!!, expectVideo = true, expectAudio = false)
+        assertChromiumParsableInit(cap.audioInit!!, expectVideo = false, expectAudio = true)
+        assertEquals("config 7 survives into the ASC", 7, ascOf(cap.audioInit!!).third)
     }
 
     /**
@@ -1011,8 +1040,9 @@ class TsToFmp4RemuxerTest {
                 remuxer.feed(ap, 0, ap.size)
             }
         }
-        val init = cap.init!!
-        assertChromiumParsableInit(init, expectAudio = true)
+        val init = cap.audioInit!!
+        assertChromiumParsableInit(cap.init!!, expectVideo = true, expectAudio = false)
+        assertChromiumParsableInit(cap.audioInit!!, expectVideo = false, expectAudio = true)
         // The real frames are 48 kHz stereo; the false header claimed a
         // reserved index, which would have refused the audio entirely.
         val mp4a = init.indices.first { i ->

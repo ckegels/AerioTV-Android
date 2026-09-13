@@ -69,9 +69,18 @@ class CastAudioFrameCensusTest {
         val durations = ArrayList<Long>()
         val audioCounts = ArrayList<Int>()
         val logs = ArrayList<String>()
-        override fun onInitSegment(data: ByteArray) { init = data }
-        override fun onMediaSegment(data: ByteArray, durationTicks: Long) {
-            segments.add(data); durations.add(durationTicks)
+        override fun onInitSegments(video: ByteArray, audio: ByteArray?) { init = video }
+
+        /** Only the AUDIO rendition is kept: every assertion in this file
+         *  reads the audio traf, and since 2026-09-13 that traf ships in
+         *  its own rendition instead of beside the video one. */
+        override fun onMediaSegment(
+            video: ByteArray,
+            audio: ByteArray?,
+            videoDurationTicks: Long,
+            audioDurationTicks: Long,
+        ) {
+            segments.add(audio ?: video); durations.add(videoDurationTicks)
         }
         override fun onSegmentComposition(
             videoSamples: Int,

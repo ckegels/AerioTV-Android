@@ -131,16 +131,13 @@ class CastHlsProxySession @Inject constructor(
      * line and for telling the user what happened.
      */
     data class Started(
-        /** The legacy MUXED master playlist, kept reachable for one
-         *  release. */
-        val playlistUrl: String,
         /** The DEMUXED master playlist (2026-09-13): separate video and
          *  audio renditions, one SourceBuffer each, so the audio can
          *  declare ac-3 / ec-3 honestly on a receiver that answers
          *  isTypeSupported false for any muxed video/mp4 carrying those
-         *  codecs but TRUE for audio/mp4 with them. This is what the
-         *  SENDER must load: AerioCastSender should point
-         *  MediaInfo.contentUrl at this instead of [playlistUrl]. */
+         *  codecs but TRUE for audio/mp4 with them. This is the only
+         *  playlist the proxy serves and what MediaInfo.contentUrl
+         *  carries. */
         val demuxedPlaylistUrl: String,
         /** "AAC", "AC-3", "E-AC-3", "none" or "" when the PMT never
          *  arrived before the first segments (never observed in the
@@ -181,9 +178,8 @@ class CastHlsProxySession @Inject constructor(
         // The sender calls from its Main scope; the socket bind and the
         // address walk below are not Main-thread work.
         Started(
-            playlistUrl = startChannelBlocking(rawTsUrl, headers, allowAc3Passthrough, false) +
-                "/master.m3u8",
-            demuxedPlaylistUrl = proxyBaseUrl + "/demuxed.m3u8",
+            demuxedPlaylistUrl = startChannelBlocking(rawTsUrl, headers, allowAc3Passthrough, false) +
+                "/demuxed.m3u8",
             audioCodec = audioCodec,
         )
     }
@@ -255,11 +251,10 @@ class CastHlsProxySession @Inject constructor(
                     READY_MEDIA_TICKS.toDouble() / TsToFmp4Remuxer.TICKS_PER_SECOND,
                 ),
         )
-        // The proxy's base URL. Both masters hang off it: /master.m3u8
-        // (muxed, legacy) and /demuxed.m3u8 (the two-rendition shape the
-        // sender loads). Either way it is a MASTER playlist, never a media
-        // one: CLOSED-CAPTIONS=NONE keeps Shaka's Mp4CeaParser away from
-        // the video segments (fatal Error 3000 otherwise).
+        // The proxy's base URL; /demuxed.m3u8 (the two-rendition shape the
+        // sender loads) hangs off it. It is a MASTER playlist, never a
+        // media one: CLOSED-CAPTIONS=NONE keeps Shaka's Mp4CeaParser away
+        // from the video segments (fatal Error 3000 otherwise).
         proxyBaseUrl = "http://$lanIp:$port"
         return proxyBaseUrl
     }
@@ -329,37 +324,13 @@ class CastHlsProxySession @Inject constructor(
                      *  ingest connection, i.e. per generation. */
                     private var localSeq = 0
 
-                    override fun onInitSegment(data: ByteArray) {
-                        server.setInitSegment(currentGen, data)
-                        debugLog(context, TAG, "init segment ready gen=$currentGen (${data.size} B)")
-                    }
-
-                    override fun onDemuxedInitSegments(video: ByteArray, audio: ByteArray?) {
-                        server.setDemuxedInitSegments(currentGen, video, audio)
+                    override fun onInitSegments(video: ByteArray, audio: ByteArray?) {
+                        server.setInitSegments(currentGen, video, audio)
                         debugLog(
                             context, TAG,
-                            "demuxed init ready gen=$currentGen " +
+                            "init ready gen=$currentGen " +
                                 "vinit=${video.size} B ainit=${audio?.size ?: 0} B",
                         )
-                    }
-
-                    /** Stashed because the remuxer reports the demuxed pair
-                     *  immediately BEFORE the muxed segment, and the store
-                     *  claims the single sequence number all three
-                     *  renditions share at publish time. */
-                    private var pendingVideoSegment: ByteArray? = null
-                    private var pendingAudioSegment: ByteArray? = null
-                    private var pendingAudioDurationTicks = 0L
-
-                    override fun onDemuxedMediaSegments(
-                        video: ByteArray,
-                        audio: ByteArray?,
-                        videoDurationTicks: Long,
-                        audioDurationTicks: Long,
-                    ) {
-                        pendingVideoSegment = video
-                        pendingAudioSegment = audio
-                        pendingAudioDurationTicks = audioDurationTicks
                     }
 
                     override fun onSegmentComposition(
@@ -378,18 +349,18 @@ class CastHlsProxySession @Inject constructor(
                         this.segmentStartSeconds = segmentStartSeconds
                     }
 
-                    override fun onMediaSegment(data: ByteArray, durationTicks: Long) {
+                    override fun onMediaSegment(
+                        video: ByteArray,
+                        audio: ByteArray?,
+                        videoDurationTicks: Long,
+                        audioDurationTicks: Long,
+                    ) {
                         server.addSegment(
                             gen = currentGen,
-                            data = data,
-                            durationTicks = durationTicks,
-                            videoData = pendingVideoSegment,
-                            audioData = pendingAudioSegment,
-                            audioDurationTicks = if (pendingVideoSegment == null) {
-                                durationTicks
-                            } else {
-                                pendingAudioDurationTicks
-                            },
+                            videoData = video,
+                            audioData = audio,
+                            durationTicks = videoDurationTicks,
+                            audioDurationTicks = audioDurationTicks,
                         )
                         segmentsLogged++
                         // EVERY segment's timeline, so the playhead-versus-
@@ -402,7 +373,7 @@ class CastHlsProxySession @Inject constructor(
                         // a two-track SourceBuffer's buffered range as the
                         // INTERSECTION of the tracks, so the range starts at
                         // max(vpts, apts), not at t=.
-                        val segSeconds = durationTicks / TsToFmp4Remuxer.TICKS_PER_SECOND.toDouble()
+                        val segSeconds = videoDurationTicks / TsToFmp4Remuxer.TICKS_PER_SECOND.toDouble()
                         val buffStart = maxOf(firstVideoPtsSeconds, firstAudioPtsSeconds)
                         debugLog(
                             context, TAG,
@@ -412,25 +383,24 @@ class CastHlsProxySession @Inject constructor(
                                 "vpts=${"%.3f".format(firstVideoPtsSeconds)} " +
                                 "apts=${"%.3f".format(firstAudioPtsSeconds)} " +
                                 "buffStart=${"%.3f".format(buffStart)} " +
-                                "video=$videoSamples audio=$audioSamples ${data.size} B " +
-                                "vseg=${pendingVideoSegment?.size ?: 0} B " +
-                                "aseg=${pendingAudioSegment?.size ?: 0} B",
+                                "video=$videoSamples audio=$audioSamples " +
+                                "vseg=${video.size} B aseg=${audio?.size ?: 0} B",
                         )
                         localSeq++
                         if (segmentsLogged == 1) {
                             // The FIRST segment of a generation is the one
                             // the receiver starts on, so its shape is what
                             // a one-second IDLE/ERROR has to be read from.
-                            val seconds = durationTicks / TsToFmp4Remuxer.TICKS_PER_SECOND.toDouble()
                             debugLog(
                                 context, TAG,
                                 "first segment gen=$currentGen seq=0 " +
-                                    "dur=${"%.2f".format(seconds)}s ${data.size} B " +
+                                    "dur=${"%.2f".format(segSeconds)}s " +
+                                    "vseg=${video.size} B aseg=${audio?.size ?: 0} B " +
                                     "video=$videoSamples audio=$audioSamples samples",
                             )
                         }
-                        rollupBytes += data.size
-                        rollupTicks += durationTicks
+                        rollupBytes += video.size + (audio?.size ?: 0)
+                        rollupTicks += videoDurationTicks
                         if (segmentsLogged % LOG_EVERY_SEGMENTS == 0) {
                             val seconds = rollupTicks / TsToFmp4Remuxer.TICKS_PER_SECOND.toDouble()
                             val kbps = if (seconds > 0) (rollupBytes * 8 / seconds / 1000).toInt() else 0

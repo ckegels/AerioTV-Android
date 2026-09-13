@@ -51,10 +51,21 @@ class CastSegmentContinuityTest {
          *  will carry. Shaka anchors the generation AFTER a discontinuity
          *  on their accumulated sum, so the splice arithmetic needs them. */
         val durations = ArrayList<Long>()
-        override fun onInitSegment(data: ByteArray) { init = data }
-        override fun onMediaSegment(data: ByteArray, durationTicks: Long) {
-            segments.add(data)
-            durations.add(durationTicks)
+        override fun onInitSegments(video: ByteArray, audio: ByteArray?) { init = video }
+
+        /** The two renditions of one cut, concatenated: exactly the bytes
+         *  shipped, laid end to end so one box walk sees the video traf
+         *  (track 1) and the audio traf (track 2) of the same cut. The
+         *  renditions have shipped separately since 2026-09-13 and share
+         *  their moof sequence number, which nothing here reads. */
+        override fun onMediaSegment(
+            video: ByteArray,
+            audio: ByteArray?,
+            videoDurationTicks: Long,
+            audioDurationTicks: Long,
+        ) {
+            segments.add(if (audio == null) video else video + audio)
+            durations.add(videoDurationTicks)
         }
     }
 

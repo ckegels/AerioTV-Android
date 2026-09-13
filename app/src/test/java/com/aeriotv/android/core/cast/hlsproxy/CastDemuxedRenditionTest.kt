@@ -58,10 +58,8 @@ class CastDemuxedRenditionTest {
     // ---- capture ----
 
     private class Capture : TsToFmp4Remuxer.Listener {
-        var muxedInit: ByteArray? = null
         var videoInit: ByteArray? = null
         var audioInit: ByteArray? = null
-        val muxed = ArrayList<ByteArray>()
         val videoSegments = ArrayList<ByteArray>()
         val audioSegments = ArrayList<ByteArray>()
         val videoDurations = ArrayList<Long>()
@@ -69,14 +67,12 @@ class CastDemuxedRenditionTest {
         var audioCodec: String? = null
         val logs = ArrayList<String>()
 
-        override fun onInitSegment(data: ByteArray) { muxedInit = data }
-
-        override fun onDemuxedInitSegments(video: ByteArray, audio: ByteArray?) {
+        override fun onInitSegments(video: ByteArray, audio: ByteArray?) {
             videoInit = video
             audioInit = audio
         }
 
-        override fun onDemuxedMediaSegments(
+        override fun onMediaSegment(
             video: ByteArray,
             audio: ByteArray?,
             videoDurationTicks: Long,
@@ -87,8 +83,6 @@ class CastDemuxedRenditionTest {
             videoDurations.add(videoDurationTicks)
             audioDurations.add(audioDurationTicks)
         }
-
-        override fun onMediaSegment(data: ByteArray, durationTicks: Long) { muxed.add(data) }
 
         override fun onAudioCodec(name: String) { audioCodec = name }
     }
@@ -356,9 +350,10 @@ class CastDemuxedRenditionTest {
             )
         }
 
-        // The muxed endpoints stay for one release.
-        assertTrue("muxed master still built", server.masterPlaylistText().contains("live.m3u8"))
-        assertTrue("muxed media playlist still built", server.playlistText().contains(".m4s"))
+        // The DEMUXED master is the only one served: /master.m3u8 and
+        // /live.m3u8 were removed 2026-09-13 and nothing loaded them.
+        assertTrue("master points at video.m3u8\n$master", master.contains("video.m3u8"))
+        assertTrue("master carries the audio rendition\n$master", master.contains("URI=\"audio.m3u8\""))
     }
 
     /** Publish a capture into a real [CastHlsProxyServer] store (no socket
@@ -366,14 +361,13 @@ class CastDemuxedRenditionTest {
     private fun publish(cap: Capture): CastHlsProxyServer {
         val server = CastHlsProxyServer(log = {})
         val gen = server.beginGeneration()
-        server.setDemuxedInitSegments(gen, cap.videoInit!!, cap.audioInit)
-        for (i in cap.muxed.indices) {
+        server.setInitSegments(gen, cap.videoInit!!, cap.audioInit)
+        for (i in cap.videoSegments.indices) {
             server.addSegment(
                 gen = gen,
-                data = cap.muxed[i],
-                durationTicks = cap.videoDurations[i],
                 videoData = cap.videoSegments[i],
                 audioData = cap.audioSegments.getOrNull(i),
+                durationTicks = cap.videoDurations[i],
                 audioDurationTicks = cap.audioDurations[i],
             )
         }

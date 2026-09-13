@@ -37,14 +37,26 @@ class TsToFmp4RemuxerFfprobeTest {
     }
 
     private class Capture : TsToFmp4Remuxer.Listener {
-        var init: ByteArray? = null
-        val segments = ArrayList<ByteArray>()
+        var videoInit: ByteArray? = null
+        var audioInit: ByteArray? = null
+        val videoSegments = ArrayList<ByteArray>()
+        val audioSegments = ArrayList<ByteArray>()
         val durations = ArrayList<Long>()
         var audioCodec: String? = null
         val logs = ArrayList<String>()
-        override fun onInitSegment(data: ByteArray) { init = data }
-        override fun onMediaSegment(data: ByteArray, durationTicks: Long) {
-            segments.add(data); durations.add(durationTicks)
+        override fun onInitSegments(video: ByteArray, audio: ByteArray?) {
+            videoInit = video
+            audioInit = audio
+        }
+        override fun onMediaSegment(
+            video: ByteArray,
+            audio: ByteArray?,
+            videoDurationTicks: Long,
+            audioDurationTicks: Long,
+        ) {
+            videoSegments.add(video)
+            audio?.let { audioSegments.add(it) }
+            durations.add(videoDurationTicks)
         }
         override fun onAudioCodec(name: String) { audioCodec = name }
     }
@@ -109,15 +121,29 @@ class TsToFmp4RemuxerFfprobeTest {
         return cap
     }
 
-    /** init + segment concatenated: a standalone fMP4 any demuxer reads. */
-    private fun writePlayable(name: String, cap: Capture, segmentCount: Int): File {
+    /** init + segments concatenated: a standalone fMP4 any demuxer reads.
+     *  One per RENDITION since 2026-09-13, because the proxy serves the
+     *  video and audio tracks as separate renditions and each is a
+     *  single-track file of its own. */
+    private fun writePlayable(
+        name: String,
+        init: ByteArray,
+        segments: List<ByteArray>,
+        segmentCount: Int,
+    ): File {
         val out = File(workDir, name)
         out.outputStream().use { os ->
-            os.write(cap.init!!)
-            for (i in 0 until minOf(segmentCount, cap.segments.size)) os.write(cap.segments[i])
+            os.write(init)
+            for (i in 0 until minOf(segmentCount, segments.size)) os.write(segments[i])
         }
         return out
     }
+
+    private fun writeVideo(name: String, cap: Capture, segmentCount: Int): File =
+        writePlayable(name, cap.videoInit!!, cap.videoSegments, segmentCount)
+
+    private fun writeAudio(name: String, cap: Capture, segmentCount: Int): File =
+        writePlayable(name, cap.audioInit!!, cap.audioSegments, segmentCount)
 
     private fun probeStreams(file: File): String {
         val (code, text) = run(
@@ -149,12 +175,14 @@ class TsToFmp4RemuxerFfprobeTest {
         assumeTrue("ffmpeg/ffprobe present", ffmpeg.canExecute() && ffprobe.canExecute())
         val cap = remux(buildAacTs(), allowAc3Passthrough = false)
         assertEquals("PMT reports AAC", "AAC", cap.audioCodec)
-        assertTrue("init segment emitted", cap.init != null)
-        assertTrue("segments produced, got ${cap.segments.size}", cap.segments.size >= 2)
+        assertTrue("init segments emitted", cap.videoInit != null && cap.audioInit != null)
+        assertTrue("segments produced, got ${cap.videoSegments.size}", cap.videoSegments.size >= 2)
 
-        val file = writePlayable("aac.mp4", cap, segmentCount = 2)
+        val videoFile = writeVideo("aac-video.mp4", cap, segmentCount = 2)
+        val videoStreams = probeStreams(videoFile)
+        assertTrue("h264 video stream\n$videoStreams", videoStreams.contains("codec_name=\"h264\""))
+        val file = writeAudio("aac-audio.mp4", cap, segmentCount = 2)
         val streams = probeStreams(file)
-        assertTrue("h264 video stream\n$streams", streams.contains("codec_name=\"h264\""))
         assertTrue("aac audio stream\n$streams", streams.contains("codec_name=\"aac\""))
         assertTrue("48 kHz audio\n$streams", streams.contains("sample_rate=\"48000\""))
         assertTrue("stereo audio\n$streams", streams.contains("channels=2"))
@@ -172,12 +200,14 @@ class TsToFmp4RemuxerFfprobeTest {
         assumeTrue("ffmpeg/ffprobe present", ffmpeg.canExecute() && ffprobe.canExecute())
         val cap = remux(buildAc3Ts(), allowAc3Passthrough = true)
         assertEquals("PMT reports AC-3", "AC-3", cap.audioCodec)
-        assertTrue("init segment emitted", cap.init != null)
-        assertTrue("segments produced, got ${cap.segments.size}", cap.segments.size >= 2)
+        assertTrue("init segments emitted", cap.videoInit != null && cap.audioInit != null)
+        assertTrue("segments produced, got ${cap.videoSegments.size}", cap.videoSegments.size >= 2)
 
-        val file = writePlayable("ac3.mp4", cap, segmentCount = 2)
+        val videoFile = writeVideo("ac3-video.mp4", cap, segmentCount = 2)
+        val videoStreams = probeStreams(videoFile)
+        assertTrue("h264 video stream\n$videoStreams", videoStreams.contains("codec_name=\"h264\""))
+        val file = writeAudio("ac3-audio.mp4", cap, segmentCount = 2)
         val streams = probeStreams(file)
-        assertTrue("h264 video stream\n$streams", streams.contains("codec_name=\"h264\""))
         assertTrue("ac3 audio stream\n$streams", streams.contains("codec_name=\"ac3\""))
         assertTrue("48 kHz audio\n$streams", streams.contains("sample_rate=\"48000\""))
 
@@ -363,10 +393,10 @@ class TsToFmp4RemuxerFfprobeTest {
     fun `aac frames carrying a program config element are stripped and still decode`() {
         assumeTrue("ffmpeg/ffprobe present", ffmpeg.canExecute() && ffprobe.canExecute())
         val cap = remux(buildPceTs(), allowAc3Passthrough = false)
-        assertTrue("init segment emitted", cap.init != null)
-        assertTrue("segments produced, got ${cap.segments.size}", cap.segments.size >= 2)
+        assertTrue("init segments emitted", cap.videoInit != null && cap.audioInit != null)
+        assertTrue("segments produced, got ${cap.videoSegments.size}", cap.videoSegments.size >= 2)
 
-        val file = writePlayable("aac-pce.mp4", cap, segmentCount = 2)
+        val file = writeAudio("aac-pce-audio.mp4", cap, segmentCount = 2)
         val streams = probeStreams(file)
         assertTrue("aac audio stream\n$streams", streams.contains("codec_name=\"aac\""))
         assertTrue("48 kHz audio\n$streams", streams.contains("sample_rate=\"48000\""))
@@ -396,7 +426,7 @@ class TsToFmp4RemuxerFfprobeTest {
         // The AudioSpecificConfig in the esds: AAC-LC, 48 kHz, channel
         // configuration 2. 0x05 is the DecoderSpecificInfo tag, followed
         // by its 2-byte length and the ASC itself.
-        val init = cap.init!!
+        val init = cap.audioInit!!
         var ascFound = false
         for (i in 0 until init.size - 3) {
             if (init[i].toInt() == 0x05 && init[i + 1].toInt() == 0x02 &&
@@ -425,8 +455,8 @@ class TsToFmp4RemuxerFfprobeTest {
         // repacks the PES and shifts where a segment boundary falls by up
         // to one frame. The SAMPLES either side of that cut are still the
         // same frames in the same order.
-        val plainSamples = plain.segments.flatMap { audioSampleBytes(it) }
-        val pceSamples = pce.segments.flatMap { audioSampleBytes(it) }
+        val plainSamples = plain.audioSegments.flatMap { audioSampleBytes(it) }
+        val pceSamples = pce.audioSegments.flatMap { audioSampleBytes(it) }
         assertTrue("samples extracted, got ${plainSamples.size}", plainSamples.size >= 200)
         // The runs are aligned by CONTENT, not by index: every source
         // frame grew by the 7-byte PCE, which repacks the PES and shifts
@@ -449,13 +479,13 @@ class TsToFmp4RemuxerFfprobeTest {
         }
         // And the init segments agree, so the declared track is the same
         // one the untouched stereo stream produces.
-        assertEquals("identical init segment", plain.init!!.toHex(), pce.init!!.toHex())
+        assertEquals("identical audio init segment", plain.audioInit!!.toHex(), pce.audioInit!!.toHex())
     }
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
-    /** The audio track's samples, cut out of a segment's mdat using the
-     *  second traf's trun sample sizes and data_offset. */
+    /** The audio track's samples, cut out of an audio rendition segment's
+     *  mdat using its traf's trun sample sizes and data_offset. */
     private fun audioSampleBytes(seg: ByteArray): List<ByteArray> {
         var moofStart = -1
         var i = 0
@@ -475,8 +505,9 @@ class TsToFmp4RemuxerFfprobeTest {
             if (String(seg, j + 4, 4, Charsets.US_ASCII) == "traf") trafs.add(Pair(j, s))
             j += s
         }
-        if (trafs.size < 2) return emptyList()
-        val (off, sz) = trafs[1]
+        // The AUDIO rendition carries exactly one traf (track 2); the
+        // renditions have been separate since 2026-09-13.
+        val (off, sz) = trafs.lastOrNull() ?: return emptyList()
         var k = off + 8
         while (k + 8 <= off + sz) {
             val s = be32(seg, k)
@@ -503,9 +534,11 @@ class TsToFmp4RemuxerFfprobeTest {
     @Test
     fun `audio trex default sample flags mark sync samples`() {
         assumeTrue("ffmpeg/ffprobe present", ffmpeg.canExecute() && ffprobe.canExecute())
-        val init = remux(buildAacTs(), allowAc3Passthrough = false).init!!
-        val flags = trexDefaultSampleFlags(init)
-        assertEquals("one trex per track", 2, flags.size)
+        val cap = remux(buildAacTs(), allowAc3Passthrough = false)
+        val videoFlags = trexDefaultSampleFlags(cap.videoInit!!)
+        assertEquals("the video rendition declares track 1 alone", setOf(1), videoFlags.keys)
+        val flags = trexDefaultSampleFlags(cap.audioInit!!)
+        assertEquals("the audio rendition declares track 2 alone", setOf(2), flags.keys)
         val audioFlags = flags.getValue(2)
         assertEquals(
             "audio default_sample_flags declares a sync sample (non_sync bit clear)",
@@ -528,9 +561,9 @@ class TsToFmp4RemuxerFfprobeTest {
     fun `audio timeline is continuous across segment boundaries`() {
         assumeTrue("ffmpeg/ffprobe present", ffmpeg.canExecute() && ffprobe.canExecute())
         val cap = remux(buildAacTs(), allowAc3Passthrough = false)
-        assertTrue("several segments to chain, got ${cap.segments.size}", cap.segments.size >= 3)
+        assertTrue("several segments to chain, got ${cap.audioSegments.size}", cap.audioSegments.size >= 3)
         var expected = -1L
-        for ((index, seg) in cap.segments.withIndex()) {
+        for ((index, seg) in cap.audioSegments.withIndex()) {
             val (tfdt, count, span) = audioTrafInfo(seg)
                 ?: error("segment $index has no audio traf")
             assertTrue("segment $index carries audio samples", count > 0)
@@ -541,8 +574,8 @@ class TsToFmp4RemuxerFfprobeTest {
         }
     }
 
-    /** tfdt, sample count and summed sample durations of a segment's
-     *  audio traf (the second traf; video is written first). */
+    /** tfdt, sample count and summed sample durations of an audio
+     *  rendition segment's traf. */
     private fun audioTrafInfo(seg: ByteArray): Triple<Long, Int, Long>? {
         var i = 0
         while (i + 8 <= seg.size) {
@@ -557,8 +590,8 @@ class TsToFmp4RemuxerFfprobeTest {
                     if (String(seg, j + 4, 4, Charsets.US_ASCII) == "traf") trafs.add(Pair(j, s))
                     j += s
                 }
-                if (trafs.size < 2) return null
-                val (off, sz) = trafs[1]
+                // Audio-only rendition: its single traf is track 2.
+                val (off, sz) = trafs.lastOrNull() ?: return null
                 var tfdt = -1L
                 var count = 0
                 var span = 0L

@@ -62,9 +62,9 @@ class CastHlsProxyTimelineTest {
     fun `media playlist carries no program date time`() {
         val server = CastHlsProxyServer(log = {})
         val gen = server.beginGeneration()
-        server.setInitSegment(gen, byteArrayOf(1))
-        repeat(4) { i -> server.addSegment(gen, byteArrayOf(i.toByte()), ticks) }
-        val playlist = server.playlistText()
+        server.setInitSegments(gen, byteArrayOf(1), byteArrayOf(11))
+        repeat(4) { i -> server.addSegment(gen, byteArrayOf(i.toByte()), byteArrayOf(i.toByte()), ticks) }
+        val playlist = server.videoPlaylistText()
         assertEquals("no PROGRAM-DATE-TIME on a live playlist", emptyList<String>(), programDateTimes(playlist))
     }
 
@@ -72,12 +72,12 @@ class CastHlsProxyTimelineTest {
     fun `the narrowest window the receiver can see still leaves a seek range`() {
         val server = CastHlsProxyServer(log = {})
         val gen = server.beginGeneration()
-        server.setInitSegment(gen, byteArrayOf(1))
+        server.setInitSegments(gen, byteArrayOf(1), byteArrayOf(11))
         // The load gate is four segments (CastHlsProxySession.READY_MIN_SEGMENTS).
         repeat(CastHlsProxySession.READY_MIN_SEGMENTS) { i ->
-            server.addSegment(gen, byteArrayOf(i.toByte()), ticks)
+            server.addSegment(gen, byteArrayOf(i.toByte()), byteArrayOf(i.toByte()), ticks)
         }
-        val span = windowSpanSeconds(server.playlistText())
+        val span = windowSpanSeconds(server.videoPlaylistText())
         assertEquals("four 3 s segments span 12 s", 12.0, span, 0.001)
         assertTrue(
             "seek range would be ${span - receiverPresentationDelay}s wide",
@@ -89,9 +89,9 @@ class CastHlsProxyTimelineTest {
     fun `a full window spans five segments and still carries no program date time`() {
         val server = CastHlsProxyServer(log = {})
         val gen = server.beginGeneration()
-        server.setInitSegment(gen, byteArrayOf(1))
-        repeat(9) { i -> server.addSegment(gen, byteArrayOf(i.toByte()), ticks) }
-        val playlist = server.playlistText()
+        server.setInitSegments(gen, byteArrayOf(1), byteArrayOf(11))
+        repeat(9) { i -> server.addSegment(gen, byteArrayOf(i.toByte()), byteArrayOf(i.toByte()), ticks) }
+        val playlist = server.videoPlaylistText()
         assertTrue("window head advanced", playlist.contains("#EXT-X-MEDIA-SEQUENCE:4"))
         assertEquals("five 3 s segments span 15 s", 15.0, windowSpanSeconds(playlist), 0.001)
         assertEquals("still no PROGRAM-DATE-TIME", emptyList<String>(), programDateTimes(playlist))
@@ -101,12 +101,12 @@ class CastHlsProxyTimelineTest {
     fun `playlist across a discontinuity puts the new MAP straight after the tag`() {
         val server = CastHlsProxyServer(log = {})
         val gen1 = server.beginGeneration()
-        server.setInitSegment(gen1, byteArrayOf(1))
-        repeat(5) { i -> server.addSegment(gen1, byteArrayOf(i.toByte()), ticks) } // seq 0..4
+        server.setInitSegments(gen1, byteArrayOf(1), byteArrayOf(11))
+        repeat(5) { i -> server.addSegment(gen1, byteArrayOf(i.toByte()), byteArrayOf(i.toByte()), ticks) } // seq 0..4
         val gen2 = server.beginGeneration()
-        server.setInitSegment(gen2, byteArrayOf(2))
-        repeat(2) { i -> server.addSegment(gen2, byteArrayOf((i + 5).toByte()), ticks) } // seq 5,6
-        val playlist = server.playlistText()
+        server.setInitSegments(gen2, byteArrayOf(2), byteArrayOf(22))
+        repeat(2) { i -> server.addSegment(gen2, byteArrayOf((i + 5).toByte()), byteArrayOf((i + 5).toByte()), ticks) } // seq 5,6
+        val playlist = server.videoPlaylistText()
         val lines = playlist.lines()
         assertEquals("no PROGRAM-DATE-TIME across a splice", emptyList<String>(), programDateTimes(playlist))
         val disc = lines.indexOf("#EXT-X-DISCONTINUITY")
@@ -134,8 +134,13 @@ class CastHlsProxyTimelineTest {
     private class Capture : TsToFmp4Remuxer.Listener {
         val census = ArrayList<Census>()
         val durations = ArrayList<Long>()
-        override fun onInitSegment(data: ByteArray) {}
-        override fun onMediaSegment(data: ByteArray, durationTicks: Long) { durations.add(durationTicks) }
+        override fun onInitSegments(video: ByteArray, audio: ByteArray?) {}
+        override fun onMediaSegment(
+            video: ByteArray,
+            audio: ByteArray?,
+            videoDurationTicks: Long,
+            audioDurationTicks: Long,
+        ) { durations.add(videoDurationTicks) }
         override fun onSegmentComposition(
             videoSamples: Int,
             audioSamples: Int,
