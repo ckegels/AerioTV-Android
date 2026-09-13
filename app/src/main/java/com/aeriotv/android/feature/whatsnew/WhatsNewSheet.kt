@@ -256,22 +256,45 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Smoother resolution switching on NVIDIA Shield",
-            body = "With Match Content Resolution on, the audio no longer " +
-                "drops out and re-buffers right after the picture mode " +
-                "changes.",
+            title = "A new media center",
+            body = "Movies, TV Shows and DVR are now full tabs with hero " +
+                "art, Continue Watching decks, shelves, search and filters, " +
+                "on the phone and on the TV.",
         ),
         WhatsNewItem(
-            title = "Event channels in the guide",
-            body = "Channels with no guide data show the channel name as the " +
-                "programme, and when the name carries a date and time the " +
-                "guide marks when the event starts.",
+            title = "Google Cast",
+            body = "Send live TV and recordings to a Chromecast or an " +
+                "Android TV, with surround sound passed straight through " +
+                "when the device can decode it.",
         ),
         WhatsNewItem(
-            title = "Manage groups from the pill row",
-            body = "When groups are shown as pills at the top of the guide, " +
-                "the round Manage Groups button now sits before the first " +
-                "pill, the same as in the sidebar.",
+            title = "One card for casting and the remote",
+            body = "Casting and the AerioTV Remote share a single card above " +
+                "the tab bar. Tap it for the controls, with 30 second skips " +
+                "on the cast transport.",
+        ),
+        WhatsNewItem(
+            title = "Faster launches and a faster guide",
+            body = "The guide paints from cache first and refreshes quietly " +
+                "in the background, so the app is usable sooner after a cold " +
+                "start.",
+        ),
+        WhatsNewItem(
+            title = "Steadier live playback",
+            body = "AerioTV learns how much buffer a bursty channel needs, " +
+                "reads the server's reason when a stream is busy, and moves " +
+                "to another stream when one goes silent.",
+        ),
+        WhatsNewItem(
+            title = "Better looking artwork",
+            body = "Posters, backdrops and related titles come from TMDB " +
+                "when you add a key, and are cached so they load instantly " +
+                "next time.",
+        ),
+        WhatsNewItem(
+            title = "Jump to any day in the guide",
+            body = "Tap the clock to snap back to now, or hold it to jump to " +
+                "another day and time.",
         ),
     )
 }
