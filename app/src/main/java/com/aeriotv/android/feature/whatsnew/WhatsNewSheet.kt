@@ -5,10 +5,14 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -95,35 +99,68 @@ private fun ColumnScope.WhatsNewBody(
     // target), every note row is its own focus target: Up/Down walks the
     // rows and Compose's focus machinery brings each one into view, so the
     // panel scrolls as a side effect and there is no dead end at either end.
-    val notesScroll = rememberScrollState()
     val firstRowFocus = remember { FocusRequester() }
-    Column(
-        modifier = Modifier
-            // fill = false so a short release (today: 3 notes) still wraps
-            // and the sheet stays compact; a long one takes the remaining
-            // height and scrolls inside it.
-            .weight(1f, fill = false)
-            .verticalScroll(notesScroll),
-    ) {
-        items.forEachIndexed { index, item ->
-            WhatsNewRow(
-                item = item,
-                isTv = isTv,
-                modifier = if (isTv && index == 0) {
-                    Modifier.focusRequester(firstRowFocus)
-                } else {
-                    Modifier
-                },
-            )
+    if (isTv) {
+        // TV: unchanged. The panel is a Dialog with a fixed heightIn cap, the
+        // rows are focusable, and D-pad focus movement drives the scroll.
+        val notesScroll = rememberScrollState()
+        Column(
+            modifier = Modifier
+                // fill = false so a short release still wraps and the panel
+                // stays compact; a long one takes the remaining height.
+                .weight(1f, fill = false)
+                .verticalScroll(notesScroll),
+        ) {
+            items.forEachIndexed { index, item ->
+                WhatsNewRow(
+                    item = item,
+                    isTv = true,
+                    modifier = if (index == 0) {
+                        Modifier.focusRequester(firstRowFocus)
+                    } else {
+                        Modifier
+                    },
+                )
+            }
+        }
+        // Bottom breathing room. On TV the window inset is zero and this is
+        // plain padding.
+        Spacer(Modifier.height(24.dp))
+    } else {
+        // PHONE / TABLET: the notes list gets a FIXED height, not a weight.
+        //
+        // Bug (2026-09-13): the sheet jumped up and down rapidly once the user
+        // reached the bottom of the notes. Root cause was a content-derived
+        // sheet height. FormFactorModal's touch branch is a wrap-content
+        // Column under heightIn(max = 88% of the window), and this block used
+        // Modifier.weight(1f, fill = false). "fill = false" means the measured
+        // height of the scroll viewport feeds back into the height of the
+        // sheet content, and ModalBottomSheet derives its Expanded anchor from
+        // exactly that measured content height. Once the notes saturate the
+        // weight, any remeasure during the gesture (overscroll settle, the
+        // safeDrawing inset the sheet pads with as the system bars react to
+        // the fling) moves the anchor, the sheet animates toward the new
+        // anchor, which changes the space offered to the weighted child, which
+        // changes the content height again: a measure/anchor feedback loop.
+        //
+        // fillMaxHeight(0.85f) resolves against the bounded 88% cap, so the
+        // viewport is a constant number of pixels regardless of how many notes
+        // there are or where the scroll sits. The sheet's height, and with it
+        // the Expanded anchor, can no longer change while scrolling.
+        //
+        // Single scrollable as well: one LazyColumn, no verticalScroll around
+        // it, and the trailing breathing room is contentPadding inside the
+        // same scroller instead of a sibling Spacer that would again make the
+        // wrapping column taller.
+        LazyColumn(
+            modifier = Modifier.fillMaxHeight(0.85f),
+            contentPadding = PaddingValues(bottom = 24.dp),
+        ) {
+            items(items) { item ->
+                WhatsNewRow(item = item, isTv = false)
+            }
         }
     }
-    // Bottom breathing room only. The navigation-bar inset is already handled
-    // by the sheet: ModalBottomSheet pads its content with
-    // BottomSheetDefaults.windowInsets, which is safeDrawing's Top + Bottom
-    // sides (material3 1.4.0, SheetDefaults.kt), and windowInsetsPadding
-    // CONSUMES that inset, so a navigationBarsPadding() here would measure
-    // zero anyway. On TV the inset is zero and this is plain padding.
-    Spacer(Modifier.height(24.dp))
     if (isTv) {
         // Park initial focus on the first note so Up/Down scrolls
         // immediately. Retried because the dialog's focus owner is not ready
