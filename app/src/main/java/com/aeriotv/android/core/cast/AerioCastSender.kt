@@ -54,6 +54,7 @@ import javax.inject.Singleton
 @Singleton
 class AerioCastSender @Inject constructor(
     private val hlsProxy: CastHlsProxySession,
+    private val nativeDevices: NativeCastDevices,
 ) {
 
     /** Sender connection state, surfaced to the player chrome. */
@@ -223,6 +224,15 @@ class AerioCastSender @Inject constructor(
      *  is in flight and whenever no session is connected. */
     val receiverTarget: StateFlow<ReceiverTarget> = _receiverTarget.asStateFlow()
 
+    /** Cast device ids that have answered the hello probe with
+     *  platform=android-tv-app at least once, so the picker can list those TVs
+     *  first under "AerioTV on TV". */
+    val nativeDeviceIds: StateFlow<Set<String>> = nativeDevices.deviceIds
+
+    /** Device id of the session currently attached, captured while the session
+     *  still exposes its CastDevice (it is cleared on an involuntary drop). */
+    private var currentDeviceId: String? = null
+
     /** A live tune held until the receiver type is known. */
     private data class DeferredTune(
         val base: Content,
@@ -265,6 +275,9 @@ class AerioCastSender @Inject constructor(
         if (_receiverTarget.value == target) return
         _receiverTarget.value = target
         if (target == ReceiverTarget.ANDROID_TV_APP) {
+            // Remember this TV so the picker can list it under "AerioTV on TV"
+            // from now on. A device only moves after its first native session.
+            nativeDevices.remember(currentDeviceId)
             Log.i(TAG, "[Cast] target=android-tv-app, native playback (receiver answered)")
         } else if (answered) {
             Log.i(TAG, "[Cast] target=web-receiver (receiver answered)")
@@ -1061,6 +1074,7 @@ class AerioCastSender @Inject constructor(
         // degrades to a bare "Casting disconnected" (observed on a Z Fold 5
         // against a Google TV Streamer, 2026-08-19).
         session.castDevice?.friendlyName?.let { lastDeviceName = it }
+        currentDeviceId = session.castDevice?.deviceId
         _state.value = State.Connected(session.castDevice?.friendlyName)
         attachControl(session)
         // Name the load decision. In the 15:10 window the Nothing Phone showed

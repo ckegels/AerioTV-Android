@@ -37,6 +37,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.mediarouter.media.MediaRouter
+import com.google.android.gms.cast.CastDevice
 import com.aeriotv.android.core.cast.AerioCastSender
 import com.aeriotv.android.core.cast.companion.CompanionDiscovery
 import com.aeriotv.android.core.cast.companion.CompanionRemoteController
@@ -200,6 +201,18 @@ fun CastRouteChooserDialog(
         }
     }
 
+    // TVs that already ran a native Cast Connect session (hello reply
+    // platform=android-tv-app) are listed FIRST: casting to them plays inside
+    // the AerioTV app on the TV, with no phone-side proxy or transcode. A device
+    // can only be classified once it has been cast to, so it moves up after its
+    // first native session.
+    val nativeIds by sender.nativeDeviceIds.collectAsState()
+    val nativeRoutes = routes.filter { route ->
+        val id = runCatching { CastDevice.getFromBundle(route.extras)?.deviceId }.getOrNull()
+        id != null && id in nativeIds
+    }
+    val otherRoutes = routes - nativeRoutes.toSet()
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (connected) "Casting" else "Cast to") },
@@ -210,7 +223,8 @@ fun CastRouteChooserDialog(
                 ) {
                     Text("Searching for devices...")
                 }
-                routes.forEach { route ->
+                @Composable
+                fun routeRow(route: MediaRouter.RouteInfo) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -231,6 +245,27 @@ fun CastRouteChooserDialog(
                         Text(route.name)
                     }
                 }
+                if (nativeRoutes.isNotEmpty()) {
+                    Text(
+                        "AerioTV on TV",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        "Plays in the AerioTV app on the TV: no phone processing, full quality.",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    nativeRoutes.forEach { routeRow(it) }
+                    if (otherRoutes.isNotEmpty()) {
+                        Text(
+                            "Other devices",
+                            style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                otherRoutes.forEach { routeRow(it) }
                 // AerioTV TVs (GH #33 companion remote). A pending pairing takes
                 // over the section with the code entry.
                 when (companionConn) {
