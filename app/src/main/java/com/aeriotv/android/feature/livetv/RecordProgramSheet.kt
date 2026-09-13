@@ -640,7 +640,10 @@ private fun TvRecordForm(
     onSubmit: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    val art = remember(target.id) { com.aeriotv.android.feature.livetv.grid.cachedPreviewArt(target.dispatcharrProgramId, target.title) }
+    val art = remember(target.id) {
+        com.aeriotv.android.feature.livetv.grid.cachedPreviewArt(target.dispatcharrProgramId, target.title)
+            ?: target.iconUrl?.takeIf { it.isNotBlank() }
+    }
     var showCustomRule by remember { mutableStateOf(false) }
     val hasNoRecordingPath = isDispatcharr && !isLive && !canRecordToServer
     androidx.compose.ui.window.Dialog(

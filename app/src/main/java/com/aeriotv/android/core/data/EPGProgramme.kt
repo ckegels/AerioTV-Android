@@ -55,4 +55,14 @@ data class EPGProgramme(
     val isFinale: Boolean = false,
     /** Repeat/re-run (XMLTV `<previously-shown>`; not available from Dispatcharr). */
     val isRepeat: Boolean = false,
+    /**
+     * The programme's OWN artwork URL, from XMLTV `<icon src="...">` (or a
+     * Dispatcharr grid row that happens to carry one). This is the LAST art
+     * fallback everywhere a program shows a thumbnail: when the Dispatcharr
+     * program-detail lookup and TMDB-by-title both miss (sports events titled
+     * "Tomorrow at 21:00 - Villarreal v Real Betis" match nothing on TMDB),
+     * the feed's own icon is still a real picture of this program, so no art
+     * slot may render empty while this is set.
+     */
+    val iconUrl: String? = null,
 )

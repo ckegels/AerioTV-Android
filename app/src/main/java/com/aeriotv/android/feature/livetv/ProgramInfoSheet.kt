@@ -113,7 +113,22 @@ fun ProgramInfoSheet(
     // icon), then TMDB-by-title when that opt-in is enabled and a key is
     // stored. Null = no poster, render nothing. Mirrors iOS ProgramInfoView
     // (posterURL state at ProgramInfoView.swift:96).
-    var posterUrl by remember(target.id) { mutableStateOf<String?>(null) }
+    // Art resolved by a lookup (server detail, then TMDB). Null means every
+    // lookup missed, and [posterUrl] below then falls back to what the guide
+    // already resolved for this program and finally to the program's own
+    // icon, which is exactly the order the guide preview banner uses.
+    var resolvedPoster by remember(target.id) { mutableStateOf<String?>(null) }
+    // Art the guide preview banner already resolved for this program, so the
+    // sheet opens with the SAME picture the banner is showing, immediately.
+    val bannerPoster = remember(target.id) {
+        com.aeriotv.android.feature.livetv.grid.cachedPreviewArt(
+            target.dispatcharrProgramId,
+            target.title,
+        )
+    }
+    val posterUrl = resolvedPoster
+        ?: bannerPoster
+        ?: target.iconUrl?.takeIf { it.isNotBlank() }
 
     LaunchedEffect(target.id) {
         val entry = EntryPointAccessors.fromApplication(
@@ -131,7 +146,7 @@ fun ProgramInfoSheet(
                 playlist.sourceType == SourceType.DispatcharrUserPass.name
             )
         if (programId != null && playlist != null && isDispatcharr &&
-            (categoryNeeded || posterUrl == null || !target.isRepeat)
+            (categoryNeeded || resolvedPoster == null || !target.isRepeat)
         ) {
             val baseUrl = playlist.urlString
             val playlistId = playlist.id
@@ -152,18 +167,18 @@ fun ProgramInfoSheet(
                 detail.bestPosterString?.let { raw ->
                     // Server-relative icon paths (protected /media/ etc.) need
                     // the playlist origin prefixed before Coil can load them.
-                    posterUrl = if (raw.startsWith("/")) baseUrl.trimEnd('/') + raw else raw
+                    resolvedPoster = if (raw.startsWith("/")) baseUrl.trimEnd('/') + raw else raw
                 }
             }
         }
         // TMDB-by-title fallback for ANY source: opt-in pref + the user's own
         // key only (iOS loadTMDBPosterIfNeeded, ProgramInfoView.swift:369).
-        if (posterUrl == null && target.title.isNotBlank()) {
+        if (resolvedPoster == null && bannerPoster == null && target.title.isNotBlank()) {
             val prefs = entry.appPreferences()
             if (prefs.programPostersTmdbEnabled.first()) {
                 val key = prefs.tmdbApiKey.first()
                 if (key.isNotBlank()) {
-                    posterUrl = entry.tmdbService().posterUrlForTitle(target.title, key)
+                    resolvedPoster = entry.tmdbService().posterUrlForTitle(target.title, key)
                 }
             }
         }

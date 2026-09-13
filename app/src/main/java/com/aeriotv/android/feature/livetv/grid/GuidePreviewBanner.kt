@@ -65,7 +65,8 @@ import java.util.Date
  * 2026-09-05), halved from the 1080 pt canvas: a 106 dp banner above the
  * guide for the FOCUSED program. Text comes straight from the cell's
  * program; only the art arrives later. Art order: the Dispatcharr program
- * detail icon, then TMDB (backdrop, else poster), else the channel logo.
+ * detail icon, then TMDB (backdrop, else poster), then the program's own
+ * XMLTV icon, else the channel logo.
  * The description is the banner's one focus target: OK opens Program Info.
  */
 object GuidePreviewBanner {
@@ -158,6 +159,10 @@ fun GuidePreviewBanner(
                 }.getOrNull()
             }
         }
+        // Last stop: the program's OWN icon from the feed (XMLTV `<icon src>`).
+        // Sports events ("Tomorrow at 21:00 - Villarreal v Real Betis") match
+        // nothing on TMDB, but the feed ships a real picture for them.
+        if (url == null) url = p.iconUrl?.takeIf { it.isNotBlank() }
         previewArt[key] = url
     }
     val art = artKey?.let { previewArt[it] }

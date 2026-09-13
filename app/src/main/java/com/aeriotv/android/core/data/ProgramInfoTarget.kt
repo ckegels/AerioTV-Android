@@ -38,6 +38,13 @@ data class ProgramInfoTarget(
     val isPremiere: Boolean = false,
     val isFinale: Boolean = false,
     val isRepeat: Boolean = false,
+    /**
+     * The program's OWN artwork URL (XMLTV `<icon src>` / a grid row that
+     * carries one). Program Info renders this whenever the Dispatcharr
+     * program-detail lookup and TMDB-by-title both come back empty, so a
+     * program that ships art never shows an empty art slot.
+     */
+    val iconUrl: String? = null,
     /** DVR extras when the sheet opens from a recording (Apple parity). */
     val recording: RecordingFacts? = null,
 ) {
@@ -65,6 +72,7 @@ fun EPGProgramme.toInfoTarget(
         isPremiere = isPremiere,
         isFinale = isFinale,
         isRepeat = isRepeat,
+        iconUrl = iconUrl,
     )
 
 /**

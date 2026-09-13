@@ -174,6 +174,7 @@ object XMLTVParser {
         var isPremiere = false
         var isRepeat = false
         var epNumSystem = ""
+        var programmeIcon = ""
         val text = StringBuilder()
 
         var event = parser.eventType
@@ -223,6 +224,7 @@ object XMLTVParser {
                             isPremiere = false
                             isRepeat = false
                             epNumSystem = ""
+                            programmeIcon = ""
                         }
                         // Empty/self-closing marker elements: presence is the
                         // signal (they carry no text), so detect at START_TAG.
@@ -232,6 +234,13 @@ object XMLTVParser {
                         "previously-shown" -> if (insideProgramme) isRepeat = true
                         "episode-num" -> if (insideProgramme) {
                             epNumSystem = parser.getAttributeValue(null, "system").orEmpty()
+                        }
+                        // `<icon src="...">` is an attribute-only element, so
+                        // read it at START_TAG like the marker tags. This is
+                        // the programme's own artwork and the last art
+                        // fallback in Program Info / the guide preview banner.
+                        "icon" -> if (insideProgramme && programmeIcon.isEmpty()) {
+                            programmeIcon = parser.getAttributeValue(null, "src").orEmpty().trim()
                         }
                     }
                 }
@@ -278,6 +287,7 @@ object XMLTVParser {
                                         // XMLTV has no standard finale tag; only
                                         // repeat (<previously-shown>) is available.
                                         isRepeat = isRepeat,
+                                        iconUrl = programmeIcon.takeIf { it.isNotEmpty() },
                                     )
                                 )
                             }

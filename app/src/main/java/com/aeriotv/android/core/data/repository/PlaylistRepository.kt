@@ -3051,6 +3051,9 @@ private fun List<DispatcharrEpgEntry>.toProgrammes(): List<EPGProgramme> =
             isPremiere = entry.isPremiere,
             isFinale = entry.isFinale,
             isRepeat = entry.isPreviouslyShown,
+            // Newer grids sometimes carry the programme icon; when they do the
+            // banner / Program Info get real art with no detail fetch at all.
+            iconUrl = entry.icon?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -3071,6 +3074,7 @@ private fun EpgProgrammeEntity.toProgramme(): EPGProgramme = EPGProgramme(
     isPremiere = isPremiere,
     isFinale = isFinale,
     isRepeat = isRepeat,
+    iconUrl = iconUrl,
 )
 
 private fun EPGProgramme.toCacheEntity(playlistId: String, fetchedAt: Long): EpgProgrammeEntity =
@@ -3092,6 +3096,7 @@ private fun EPGProgramme.toCacheEntity(playlistId: String, fetchedAt: Long): Epg
         isPremiere = isPremiere,
         isFinale = isFinale,
         isRepeat = isRepeat,
+        iconUrl = iconUrl,
     )
 
 /** Channel snapshot cache row <-> M3UChannel mapping. We deliberately drop

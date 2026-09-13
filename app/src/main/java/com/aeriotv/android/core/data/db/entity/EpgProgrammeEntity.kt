@@ -65,6 +65,9 @@ data class EpgProgrammeEntity(
     @ColumnInfo(defaultValue = "0") val isPremiere: Boolean = false,
     @ColumnInfo(defaultValue = "0") val isFinale: Boolean = false,
     @ColumnInfo(defaultValue = "0") val isRepeat: Boolean = false,
+    /** Programme's own artwork URL (XMLTV `<icon src>`), schema v32 /
+     *  MIGRATION_31_32. Nullable, so the ALTER needs no default. */
+    val iconUrl: String? = null,
     /** Guide rebuild: "grid" | "user_xmltv" | "upstream" | "playlist_xmltv" (GuideSource.name lowercased). */
     @ColumnInfo(defaultValue = "grid") val source: String = "grid",
 )

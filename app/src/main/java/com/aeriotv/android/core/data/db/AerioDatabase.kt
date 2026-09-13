@@ -33,7 +33,7 @@ import com.aeriotv.android.core.data.db.entity.WatchProgressEntity
         ChannelSnapshotEntity::class,
         TmdbArtEntity::class,
     ],
-    version = 31,
+    version = 32,
     exportSchema = false,
 )
 abstract class AerioDatabase : RoomDatabase() {

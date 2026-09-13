@@ -3016,6 +3016,10 @@ data class DispatcharrEpgEntry(
     // array on the bulk grid — accept it as a free upgrade. Falls back to
     // the per-program lazy fetch when null.
     val categories: List<String>? = null,
+    /** XMLTV `<programme><icon>` when a newer grid serializer emits it. The
+     *  slim grid normally strips it (only the detail endpoint has it), so this
+     *  is a free upgrade, not something to rely on. */
+    val icon: String? = null,
 ) {
     /** Best-effort coercion of the heterogeneous `id` field to Int. */
     val programIdInt: Int?
