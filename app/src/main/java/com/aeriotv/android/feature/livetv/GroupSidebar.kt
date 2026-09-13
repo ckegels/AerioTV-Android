@@ -405,7 +405,7 @@ private fun GroupSidebarRow(
  * felt slow" was the REBUILD latency, not the debounce - E-1/E-3 attack the
  * rebuild itself, and this value can come back down once a switch is cheap.
  */
-private const val SidebarPreviewDebounceMs = 250L
+private const val SidebarPreviewDebounceMs = 150L
 
 private const val GroupSidebarLogTag = "GroupSidebar"
 
