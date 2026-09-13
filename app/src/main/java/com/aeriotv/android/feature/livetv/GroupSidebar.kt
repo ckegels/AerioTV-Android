@@ -114,6 +114,14 @@ internal fun GroupSidebarPanel(
     hiddenGroupCount: Int = 0,
     /** TV drawer: hold focus inside the panel at every edge. */
     trapFocus: Boolean = false,
+    /** True only where the HOST already gives the panel a finite width (the
+     *  guide's docked drawer pane, which sizes itself from the same label
+     *  measurement). Then the panel fills that width. Everywhere else -- the
+     *  player's channel-list overlay, which hands the panel an UNBOUNDED Row
+     *  slot -- the panel takes its own measured width, so a focused row's
+     *  highlight ends with the panel instead of running the whole screen
+     *  (Logan 2026-09-13, 0.5.2 regression report). */
+    hostConstrainsWidth: Boolean = false,
 ) {
     val listState = rememberLazyListState()
     val manageFocus = remember { FocusRequester() }
@@ -163,7 +171,7 @@ internal fun GroupSidebarPanel(
     var focusedRowIndex by remember { mutableStateOf(-1) }
     Column(
         modifier = modifier
-            .then(if (isTv) Modifier.fillMaxWidth() else Modifier.width(panelWidth))
+            .then(if (hostConstrainsWidth) Modifier.fillMaxWidth() else Modifier.width(panelWidth))
             .onPreviewKeyEvent { event ->
                 val down = event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
                 val key = event.key
@@ -489,6 +497,7 @@ internal fun GuideGroupSidebarPane(
                 onManageGroups = onManageGroups,
                 hiddenGroupCount = hiddenGroupCount,
                 trapFocus = true,
+                hostConstrainsWidth = true,
             )
         }
         // Hairline separating the menu from the shifted guide; same token as
