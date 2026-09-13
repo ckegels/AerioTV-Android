@@ -44,7 +44,6 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.text.input.ImeAction
-import com.aeriotv.android.feature.channels.SortMenu
 import com.aeriotv.android.feature.collections.AddToCollectionFlow
 import com.aeriotv.android.feature.collections.CollectionPill
 import com.aeriotv.android.feature.livetv.LiveTvPhoneCircle
@@ -571,7 +570,9 @@ fun GuideScreen(
                         onJumpToChannel = { id -> state.channels.firstOrNull { it.id == id }?.let(onChannelClick) },
                     )
                 },
-                sortMenu = { SortMenu(currentMode = state.sortMode, onSelect = viewModel::onSortModeChange, phoneCircle = true) },
+                sortMode = state.sortMode,
+                onSortModeChange = viewModel::onSortModeChange,
+                onJumpToDay = { showJumpSheet = true },
                 canToggleViewMode = canToggleViewMode,
                 showingGuide = viewMode == LiveTVViewMode.Guide,
                 onToggleViewMode = onToggleViewMode,

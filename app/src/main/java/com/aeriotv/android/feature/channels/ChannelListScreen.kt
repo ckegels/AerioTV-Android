@@ -384,13 +384,8 @@ fun ChannelListScreen(
                     },
                 )
             },
-            sortMenu = {
-                SortMenu(
-                    currentMode = state.sortMode,
-                    onSelect = viewModel::onSortModeChange,
-                    phoneCircle = true,
-                )
-            },
+            sortMode = state.sortMode,
+            onSortModeChange = viewModel::onSortModeChange,
             canToggleViewMode = canToggleViewMode,
             showingGuide = viewMode == LiveTVViewMode.Guide,
             onToggleViewMode = onToggleViewMode,

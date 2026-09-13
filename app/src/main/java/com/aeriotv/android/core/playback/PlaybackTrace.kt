@@ -403,14 +403,6 @@ class PlaybackTracer {
         (mediaDelta.toDouble() / wallDelta.toDouble()).coerceIn(0.0, 2.0)
     }
 
-    /**
-     * Drop the media-time ring. Called by the holder when a startup backlog
-     * burst is detected or joined: a dump of 30 s of media in one second is not
-     * a delivery RATE, and leaving those samples in the ring would tell the
-     * hold-back learner the feed is comfortably above real time.
-     */
-    fun resetMediaWindow() = synchronized(mediaLock) { mediaSamples.clear() }
-
     private fun stallSnapshot(): FeedStallSnapshot {
         val (_, worst) = feedSnapshot(now())
         return FeedStallSnapshot(

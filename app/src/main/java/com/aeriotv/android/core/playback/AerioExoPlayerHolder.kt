@@ -1836,9 +1836,6 @@ class AerioExoPlayerHolder @Inject constructor(
         // keep the walk's tried set).
         if (kind == "live") {
             liveFailover.onLiveTune(effectiveChannelId, title, userInitiated = channelId != null)
-            // Watch the first seconds for a Dispatcharr backlog dump and join
-            // near the live edge if one arrives.
-            startBurstJoinScan(startGateMs)
         } else {
             liveFailover.disarm()
         }
@@ -2071,7 +2068,6 @@ class AerioExoPlayerHolder @Inject constructor(
         liveFailover.resetWalk()
         watchdogJob?.cancel()
         watchdogJob = null
-        cancelBurstJoinScan()
         lastPlayUrl = null
         try {
             tracer.tracedPlayer = null
@@ -2474,125 +2470,8 @@ class AerioExoPlayerHolder @Inject constructor(
     }
 
     /** Reset watchdog state for a brand-new stream (iOS play(url:)/swapStream). */
-    // ---- startup backlog burst (join near the live edge) ----
-    // Dispatcharr's proxy stream profile dumps roughly 30 s of backlog in the
-    // first second of a tune (measured on Apple 2026-09-13). A ProgressiveMediaSource
-    // over that raw TS starts at the BEGINNING of the dump, so the whole session
-    // runs 25-30 s behind live. This scan watches buffered media against wall
-    // clock during the start gate; when far more than real time arrives it waits
-    // for the dump to settle and seeks once to the live end of it, keeping the
-    // hold-back cushion. It never seeks outside the buffered range and it never
-    // touches a timeshift, catch-up or VOD source.
-    private var burstJoinJob: Job? = null
-
-    private fun cancelBurstJoinScan() {
-        burstJoinJob?.cancel()
-        burstJoinJob = null
-    }
-
-    private fun startBurstJoinScan(startGateMs: Int) {
-        cancelBurstJoinScan()
-        val holdBackMs = maxOf(startGateMs, BURST_MIN_HOLDBACK_MS)
-        burstJoinJob = watchdogScope.launch {
-            var firstMediaAtMs = 0L
-            var peakBufferedMs = 0L
-            var lastGrowthAtMs = 0L
-            var burstAtMs = 0L
-            while (isActive) {
-                delay(BURST_SAMPLE_MS)
-                val p = player ?: return@launch
-                if (isTimeshifting || isCatchup) return@launch
-                val buffered = p.bufferedPosition
-                if (buffered == C.TIME_UNSET) continue
-                val now = SystemClock.elapsedRealtime()
-                if (firstMediaAtMs == 0L) {
-                    // Clock starts at the first buffered media, not at prime: the
-                    // connect time is not part of the delivery rate. A stream that
-                    // never delivers is the cold-start net's job, not this scan's.
-                    if (buffered <= 0L) {
-                        if (now - streamPrimedAtMs > BURST_ARM_TIMEOUT_MS) return@launch
-                        continue
-                    }
-                    firstMediaAtMs = now
-                    peakBufferedMs = buffered
-                    lastGrowthAtMs = now
-                    continue
-                }
-                if (buffered > peakBufferedMs + BURST_GROWTH_EPSILON_MS) {
-                    peakBufferedMs = buffered
-                    lastGrowthAtMs = now
-                }
-                if (burstAtMs == 0L) {
-                    val elapsed = now - firstMediaAtMs
-                    if (elapsed < BURST_MIN_ELAPSED_MS) continue
-                    val ratio = buffered.toDouble() / elapsed.toDouble()
-                    if (ratio >= BURST_RATIO_MIN && buffered >= BURST_MIN_MEDIA_MS) {
-                        burstAtMs = now
-                        // The dump is not a real-time delivery rate, so it must not
-                        // reach the hold-back learner's media-ratio window.
-                        tracer.resetMediaWindow()
-                    } else if (elapsed > BURST_DETECT_WINDOW_MS) {
-                        // A feed arriving at about real time: nothing to join to.
-                        return@launch
-                    }
-                    continue
-                }
-                val settled = buffered >= BURST_SETTLE_MIN_MEDIA_MS &&
-                    now - lastGrowthAtMs >= BURST_SETTLE_QUIET_MS
-                if (!settled && now - burstAtMs < BURST_SETTLE_CAP_MS) continue
-                joinAfterBurst(p, buffered, holdBackMs, now - firstMediaAtMs)
-                return@launch
-            }
-        }
-    }
-
-    /** Seek once to the live end of a settled backlog dump, keeping [holdBackMs]
-     *  of cushion. The target is clamped INSIDE the buffered range, so the seek
-     *  is served from the local buffer and never restarts the load. */
-    private fun joinAfterBurst(p: ExoPlayer, bufferedMs: Long, holdBackMs: Int, dumpMs: Long) {
-        // Size the cushion to the DUMP, not just to the start gate. A Dispatcharr
-        // proxy channel that dumps 12 s at tune then delivers 6 s chunks every
-        // 7-11 s (Apple device test 2026-09-13), so joining 4 s behind the
-        // buffered end starves inside 8 s. A dump that big is itself the measure
-        // of the feed's chunk cadence: keep nearly all of it, capped at 10 s.
-        val burstBackMs = (bufferedMs - BURST_CUSHION_SLACK_MS)
-            .coerceAtMost(BURST_CUSHION_MAX_MS)
-        val backMs = maxOf(holdBackMs.toLong(), BURST_MIN_HOLDBACK_MS.toLong(), burstBackMs)
-        val ceiling = (bufferedMs - BURST_SEEK_MARGIN_MS).coerceAtLeast(0L)
-        val target = (bufferedMs - backMs).coerceIn(0L, ceiling)
-        val pos = p.currentPosition.coerceAtLeast(0L)
-        if (target <= pos + BURST_MIN_SEEK_MS) {
-            Log.i(
-                TAG,
-                "[HOLDBACK] burst join skipped: buffered ${fmtSeconds(bufferedMs)} s, " +
-                    "cushion ${fmtSeconds(backMs)} s leaves nothing to skip",
-            )
-            return
-        }
-        Log.i(
-            TAG,
-            "[HOLDBACK] burst join: ${fmtSeconds(bufferedMs)} s dumped in ${dumpMs} ms, " +
-                "seeking to buffered - ${fmtSeconds(backMs)} s " +
-                "(cushion: gate ${fmtSeconds(holdBackMs.toLong())} s, " +
-                "burst ${fmtSeconds(burstBackMs.coerceAtLeast(0L))} s; target ${target} ms)",
-        )
-        p.seekTo(target)
-        // The dump inflated both the tune-time buffer reading and the learner's
-        // media-time ring; drop the ring so the next stall is judged on the
-        // steady feed only.
-        tracer.resetMediaWindow()
-        val now = SystemClock.elapsedRealtime()
-        lastKnownPositionMs = target
-        lastPositionAdvanceAtMs = now
-        lastKnownBufferedPositionMs = p.bufferedPosition
-        lastBufferAdvanceAtMs = now
-    }
-
-    private fun fmtSeconds(ms: Long): String = "%.1f".format(ms / 1000.0)
-
     private fun resetWatchdogStateForNewStream() {
         // A fresh stream gets the tune-path start gate, not a stale hold.
-        cancelBurstJoinScan()
         resumeGateActive = false
         resumeGateArmedAtMs = 0L
         resumeGateLoggedTargetMs = 0L
@@ -2850,42 +2729,6 @@ class AerioExoPlayerHolder @Inject constructor(
         /** Hard timeout: a feed that cannot rebuild the cushion in 25 s is not
          *  going to, so resume with whatever is buffered and log why. */
         private const val RESUME_GATE_TIMEOUT_MS = 25_000L
-        /** Startup backlog burst (Dispatcharr proxy profile). Sampling cadence
-         *  during the start gate: fine enough to see a 1 s dump. */
-        private const val BURST_SAMPLE_MS = 100L
-        /** Ignore the first samples: a ratio over a 100 ms window is noise. */
-        private const val BURST_MIN_ELAPSED_MS = 400L
-        /** More than this much media per unit of wall clock is a backlog dump,
-         *  not a live feed (a live feed sits around 1.0). */
-        private const val BURST_RATIO_MIN = 3.0
-        /** ...and the dump has to be big enough to be worth joining past. */
-        private const val BURST_MIN_MEDIA_MS = 3_000L
-        /** Past this the feed has proven it arrives at about real time. */
-        private const val BURST_DETECT_WINDOW_MS = 1_500L
-        /** Growth below this is jitter in bufferedPosition, not the dump. */
-        private const val BURST_GROWTH_EPSILON_MS = 100L
-        /** The dump has settled when nothing grew for this long ... */
-        private const val BURST_SETTLE_QUIET_MS = 250L
-        /** ... and at least this much media is buffered. */
-        private const val BURST_SETTLE_MIN_MEDIA_MS = 2_000L
-        /** Hard cap on waiting for the dump to settle. */
-        private const val BURST_SETTLE_CAP_MS = 1_500L
-        /** Floor on the cushion kept behind the end of the dump when the
-         *  learned start gate is smaller. */
-        private const val BURST_MIN_HOLDBACK_MS = 4_000
-        /** Slack taken off the dump when sizing the cushion to it, so the join
-         *  still lands inside the dumped media. */
-        private const val BURST_CUSHION_SLACK_MS = 2_000L
-        /** Ceiling on a dump-sized cushion: past this the user is watching
-         *  meaningfully old live. */
-        private const val BURST_CUSHION_MAX_MS = 10_000L
-        /** Never seek to the very end of the buffered range. */
-        private const val BURST_SEEK_MARGIN_MS = 500L
-        /** A shorter jump than this is not worth a seek. */
-        private const val BURST_MIN_SEEK_MS = 1_000L
-        /** Give up arming the burst scan if no media arrives by then; the
-         *  cold-start no-data net owns that case. */
-        private const val BURST_ARM_TIMEOUT_MS = 20_000L
         private const val TAG_DIAG = "AerioPlayerDiag"
 
         /** How long after a tune a decoder failure still counts as the codec

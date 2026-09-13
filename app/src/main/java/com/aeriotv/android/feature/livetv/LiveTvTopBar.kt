@@ -26,18 +26,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.FiberSmartRecord
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.ViewSidebar
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.aeriotv.android.ui.tv.tvFocusScale
@@ -54,6 +62,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aeriotv.android.core.data.ChannelCollection
+import com.aeriotv.android.feature.playlist.SortMode
 
 /**
  * GH #57 (Logan 2026-08-10): the TV Guide's round Manage Groups control.
@@ -365,9 +374,15 @@ fun LiveTvPhoneCircle(
  * Logan 2026-09-05 mockup "Phone - Live TV"). No title bar above it: the tab
  * bar already says where we are. Left to right: the groups control (drawer
  * button in sidebar mode, Manage Groups in pills mode), then either the pill
- * strip or the active group name + channel count, then Search, Sort and the
- * List / Guide toggle. 16dp horizontal / 6dp vertical padding, 8dp gaps.
- * The pill strip is CLIPPED so it never runs under the trailing buttons.
+ * strip or the active group name + channel count, then ONE overflow button.
+ * 16dp horizontal / 6dp vertical padding, 8dp gaps.
+ *
+ * The trailing actions (Search, Sort, Jump to day, List / Guide) used to be
+ * three or four circles side by side, which ate so much of the row that the
+ * pill strip was clipped to about one and a half pills and the second pill
+ * read as "Loca..." under the Search button (user report 2026-09-13). They now
+ * live in a single three-dot overflow menu, so the pills get that width back.
+ * The pill strip is still CLIPPED so it never runs under the overflow button.
  * Shared by the List and the Guide so the two views match exactly.
  */
 @Composable
@@ -386,12 +401,14 @@ fun LiveTvPhoneHeaderRow(
     collectionPillItem: @Composable (ChannelCollection) -> Unit,
     searchActive: Boolean,
     onToggleSearch: () -> Unit,
+    sortMode: SortMode,
+    onSortModeChange: (SortMode) -> Unit,
     modifier: Modifier = Modifier,
-    /** Extra circles between the group area and Search (global Search, the
-     *  kept-live indicator). */
+    /** Extra circles between the group area and the overflow button (the
+     *  kept-live indicator); these are status indicators, not menu actions. */
     extraActions: @Composable () -> Unit = {},
-    /** The Sort menu, built by the caller so it keeps its own dropdown. */
-    sortMenu: @Composable () -> Unit,
+    /** Guide only: opens the jump-to-day sheet. Null hides the menu item. */
+    onJumpToDay: (() -> Unit)? = null,
     canToggleViewMode: Boolean,
     showingGuide: Boolean,
     onToggleViewMode: () -> Unit,
@@ -454,19 +471,123 @@ fun LiveTvPhoneHeaderRow(
             }
         }
         extraActions()
-        LiveTvPhoneCircle(
-            icon = Icons.Outlined.Search,
-            contentDescription = if (searchActive) "Close search" else "Search channels",
-            onClick = onToggleSearch,
-            active = searchActive,
+        LiveTvHeaderOverflow(
+            searchActive = searchActive,
+            onToggleSearch = onToggleSearch,
+            sortMode = sortMode,
+            onSortModeChange = onSortModeChange,
+            onJumpToDay = onJumpToDay,
+            canToggleViewMode = canToggleViewMode,
+            showingGuide = showingGuide,
+            onToggleViewMode = onToggleViewMode,
         )
-        sortMenu()
-        if (canToggleViewMode) {
-            LiveTvPhoneCircle(
-                icon = if (showingGuide) Icons.Filled.ViewList else Icons.Filled.CalendarMonth,
-                contentDescription = if (showingGuide) "Show List" else "Show Guide",
-                onClick = onToggleViewMode,
+    }
+}
+
+/**
+ * The phone header's single trailing control: a three-dot circle whose menu
+ * carries Search, Sort, Jump to day and the List / Guide toggle. Sort opens a
+ * second stage in the SAME menu (Material's DropdownMenu has no submenu), with
+ * the active mode checkmarked exactly as the old standalone sort menu did.
+ */
+@Composable
+private fun LiveTvHeaderOverflow(
+    searchActive: Boolean,
+    onToggleSearch: () -> Unit,
+    sortMode: SortMode,
+    onSortModeChange: (SortMode) -> Unit,
+    onJumpToDay: (() -> Unit)?,
+    canToggleViewMode: Boolean,
+    showingGuide: Boolean,
+    onToggleViewMode: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var sortStage by remember { mutableStateOf(false) }
+    fun close() {
+        expanded = false
+        sortStage = false
+    }
+    Box {
+        LiveTvPhoneCircle(
+            icon = Icons.Filled.MoreVert,
+            contentDescription = "More options",
+            onClick = { sortStage = false; expanded = true },
+            active = expanded,
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { close() },
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            if (sortStage) {
+                SortMode.entries.forEach { mode ->
+                    DropdownMenuItem(
+                        leadingIcon = if (mode == sortMode) {
+                            {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        } else null,
+                        text = {
+                            Text(
+                                text = mode.label,
+                                color = if (mode == sortMode) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                                fontWeight = if (mode == sortMode) FontWeight.SemiBold
+                                else FontWeight.Normal,
+                            )
+                        },
+                        onClick = { onSortModeChange(mode); close() },
+                    )
+                }
+                return@DropdownMenu
+            }
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                text = { Text(if (searchActive) "Close search" else "Search") },
+                onClick = { close(); onToggleSearch() },
             )
+            DropdownMenuItem(
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.SwapVert,
+                        contentDescription = null,
+                    )
+                },
+                text = { Text("Sort") },
+                trailingIcon = {
+                    Text(
+                        text = sortMode.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+                onClick = { sortStage = true },
+            )
+            if (onJumpToDay != null) {
+                DropdownMenuItem(
+                    leadingIcon = { Icon(Icons.Filled.CalendarMonth, contentDescription = null) },
+                    text = { Text("Jump to day") },
+                    onClick = { close(); onJumpToDay() },
+                )
+            }
+            if (canToggleViewMode) {
+                HorizontalDivider()
+                DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(
+                            imageVector = if (showingGuide) Icons.Filled.ViewList
+                            else Icons.Filled.CalendarMonth,
+                            contentDescription = null,
+                        )
+                    },
+                    text = { Text(if (showingGuide) "Show List" else "Show Guide") },
+                    onClick = { close(); onToggleViewMode() },
+                )
+            }
         }
     }
 }
