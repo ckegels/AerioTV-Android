@@ -381,4 +381,91 @@ class CastSegmentContinuityTest {
         // bits 25-24 are sample_depends_on; 2 is "does not depend on others".
         assertEquals(2L, (flags shr 24) and 0x03L)
     }
+
+    // ---- generation start measurement (2026-09-13) ----
+
+    /** Keeps the two renditions apart, unlike [Capture], so the first
+     *  tfdt of each shipped track can be read on its own bytes. */
+    private class SplitCapture : TsToFmp4Remuxer.Listener {
+        val video = ArrayList<ByteArray>()
+        val audio = ArrayList<ByteArray>()
+        val videoDurations = ArrayList<Long>()
+        val audioDurations = ArrayList<Long>()
+        override fun onInitSegments(video: ByteArray, audio: ByteArray?) {}
+        override fun onMediaSegment(
+            video: ByteArray,
+            audio: ByteArray?,
+            videoDurationTicks: Long,
+            audioDurationTicks: Long,
+        ) {
+            this.video.add(video)
+            audio?.let { this.audio.add(it) }
+            videoDurations.add(videoDurationTicks)
+            audioDurations.add(audioDurationTicks)
+        }
+    }
+
+    private fun ingestSplit(bytes: ByteArray, limit: Int, allowAc3Passthrough: Boolean): SplitCapture {
+        val cap = SplitCapture()
+        val remuxer = TsToFmp4Remuxer(listener = cap, log = {}, allowAc3Passthrough = allowAc3Passthrough)
+        var off = 0
+        while (off < limit) {
+            val n = minOf(64 * 1024, limit - off)
+            remuxer.feed(bytes, off, n)
+            off += n
+        }
+        remuxer.release()
+        return cap
+    }
+
+    /** An AC-3 5.1 48 kHz fixture, the passthrough shape of the demuxed
+     *  audio rendition. */
+    private fun buildAc3Ts(): File {
+        val out = File(workDir, "ac3-start.ts")
+        if (out.isFile && out.length() > 0) return out
+        val p = ProcessBuilder(
+            ffmpeg.path, "-y", "-v", "error",
+            "-itsoffset", "0.12",
+            "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=60:duration=30",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=30",
+            "-c:v", "libx264", "-preset", "veryfast", "-bf", "1", "-g", "120", "-pix_fmt", "yuv420p",
+            "-af", "pan=5.1|c0=c0|c1=c0|c2=c0|c3=c0|c4=c0|c5=c0",
+            "-c:a", "ac3", "-b:a", "384k", "-ar", "48000",
+            "-f", "mpegts", out.path,
+        ).redirectErrorStream(true).start()
+        p.inputStream.bufferedReader().readText()
+        p.waitFor()
+        return out
+    }
+
+    private fun ms(ticks: Long): String =
+        "%.2f".format(ticks * 1000.0 / TsToFmp4Remuxer.TICKS_PER_SECOND)
+
+    private fun measureStart(label: String, ts: File, allowAc3Passthrough: Boolean) {
+        val bytes = ts.readBytes()
+        val gens = listOf(
+            "gen1" to ingestSplit(bytes, (bytes.size * 0.6).toInt(), allowAc3Passthrough),
+            "gen2" to ingestSplit(bytes, (bytes.size * 0.4).toInt(), allowAc3Passthrough),
+        )
+        for ((name, cap) in gens) {
+            val v = spans(cap.video.first())[1] ?: error("$label $name video rendition has no traf 1")
+            val a = spans(cap.audio.first())[2] ?: error("$label $name audio rendition has no traf 2")
+            println(
+                "START $label $name segments=${cap.video.size}/${cap.audio.size} " +
+                    "videoTfdt=${v.start} audioTfdt=${a.start} " +
+                    "videoFirstPts=${v.minPts} (${ms(v.minPts)} ms) " +
+                    "audioFirstPts=${a.minPts} (${ms(a.minPts)} ms) " +
+                    "avOffset=${a.minPts - v.minPts} (${ms(a.minPts - v.minPts)} ms) " +
+                    "firstSegVideoDur=${cap.videoDurations.first()} (${ms(cap.videoDurations.first())} ms) " +
+                    "firstSegAudioDur=${cap.audioDurations.first()} (${ms(cap.audioDurations.first())} ms)",
+            )
+        }
+    }
+
+    @Test
+    fun `measure generation start offsets across a channel change`() {
+        assumeTrue("ffmpeg present", ffmpeg.canExecute())
+        measureStart("AAC", buildLaggedTs(), allowAc3Passthrough = false)
+        measureStart("AC3", buildAc3Ts(), allowAc3Passthrough = true)
+    }
 }
