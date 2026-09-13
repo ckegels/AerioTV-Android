@@ -115,6 +115,15 @@ fun CastRemoteSheet(
     /** Label for the stop action: "Stop casting" for Cast, "Disconnect" for the
      *  companion transport. */
     stopLabel: String = "Stop casting",
+    /** Google Cast transport (Logan 2026-09-13): the skip back / skip forward 30 s
+     *  buttons were only ever drawn for the AerioTV Remote transport, because
+     *  the Cast receivers do not report a rewind window on the control channel.
+     *  When true they are drawn inline in the transport row instead, between
+     *  channel down and channel up. */
+    showInlineSkip: Boolean = false,
+    /** False when the transport reports no seekable range: the inline skip
+     *  buttons are still shown, but dimmed and inert. */
+    inlineSkipEnabled: Boolean = true,
     /** Companion transport only (Logan 2026-09-12): drop the AerioTV Remote link
      *  and hide the card while the TV keeps playing. Null for Google Cast, where
      *  there is nothing to leave behind once the session ends. */
@@ -249,12 +258,31 @@ fun CastRemoteSheet(
                 if (canChangeChannel) {
                     RemoteButton(Icons.Filled.KeyboardArrowDown, "Channel down", onChannelDown)
                 }
+                // Only when the dedicated rewind row above is absent, so the two
+                // transports never draw the skips twice.
+                val inlineSkip = showInlineSkip && !rewindActive
+                if (inlineSkip) {
+                    RemoteButton(
+                        Icons.Filled.Replay30,
+                        "Back 30 seconds",
+                        { onSeekBy(-30_000L) },
+                        enabled = inlineSkipEnabled,
+                    )
+                }
                 RemoteButton(
                     icon = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     desc = if (isPlaying) "Pause" else "Play",
                     onClick = onTogglePlayPause,
                     emphasized = true,
                 )
+                if (inlineSkip) {
+                    RemoteButton(
+                        Icons.Filled.Forward30,
+                        "Forward 30 seconds",
+                        { onSeekBy(30_000L) },
+                        enabled = inlineSkipEnabled,
+                    )
+                }
                 if (canChangeChannel) {
                     RemoteButton(Icons.Filled.KeyboardArrowUp, "Channel up", onChannelUp)
                 }
@@ -426,8 +454,10 @@ private fun RemoteButton(
     desc: String,
     onClick: () -> Unit,
     emphasized: Boolean = false,
+    enabled: Boolean = true,
 ) {
     val size = if (emphasized) 60.dp else 48.dp
+    val contentAlpha = if (enabled) 1f else 0.35f
     Box(
         modifier = Modifier
             .size(size)
@@ -438,15 +468,17 @@ private fun RemoteButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        IconButton(onClick = onClick) {
+        IconButton(onClick = onClick, enabled = enabled) {
             Icon(
                 imageVector = icon,
                 contentDescription = desc,
-                tint = if (emphasized) {
-                    MaterialTheme.colorScheme.onPrimary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+                tint = (
+                    if (emphasized) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    ).copy(alpha = contentAlpha),
                 modifier = Modifier.size(if (emphasized) 30.dp else 24.dp),
             )
         }

@@ -227,6 +227,9 @@ fun CastTransportCard(
             .collectAsStateWithLifecycle()
         val position by (if (isCompanion) companionRemote.position else castSender.position)
             .collectAsStateWithLifecycle()
+        // Google Cast only: the skips live in the transport row (the companion
+        // transport already draws them above its rewind scrubber).
+        val castCanSkip by castSender.canSkip.collectAsStateWithLifecycle()
         val canSwitchStream = currentChannel?.dispatcharrChannelId != null &&
             currentChannel.id.startsWith("disp:")
         CastRemoteSheet(
@@ -243,6 +246,8 @@ fun CastTransportCard(
             // Only the companion transport can be dropped while the TV plays on.
             onDisconnect = if (isCompanion) ({ disconnectCompanionOnly() }) else null,
             canChangeChannel = currentChannel != null,
+            showInlineSkip = !isCompanion,
+            inlineSkipEnabled = castCanSkip || position.canSeek || remoteState.canSeek,
             canSwitchStream = canSwitchStream,
             onTogglePlayPause = {
                 if (isCompanion) companionRemote.togglePlayPause() else castSender.togglePlayPause()
@@ -282,7 +287,7 @@ fun CastTransportCard(
                 sleepEndsAt = if (minutes == 0) null else System.currentTimeMillis() + minutes * 60_000L
             },
             onSeekBy = { delta ->
-                if (isCompanion) companionRemote.seekBy(delta) else castSender.seekBy(delta)
+                if (isCompanion) companionRemote.seekBy(delta) else castSender.skipBy(delta)
             },
             onSeekToWall = { target ->
                 if (isCompanion) companionRemote.seekToWall(target) else castSender.seekToWall(target)

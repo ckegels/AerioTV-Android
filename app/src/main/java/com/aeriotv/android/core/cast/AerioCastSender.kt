@@ -17,6 +17,7 @@ import com.google.android.gms.cast.HlsSegmentFormat
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.MediaSeekOptions
 import com.google.android.gms.cast.MediaStatus
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
@@ -203,6 +204,16 @@ class AerioCastSender @Inject constructor(
     private val _isPlaying = MutableStateFlow(true)
     /** Whether the cast receiver is currently playing (vs paused). */
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
+
+    private val _canSkip = MutableStateFlow(false)
+    /**
+     * Whether the 30 s skip buttons can do anything on THIS receiver
+     * (Logan 2026-09-13: the phone showed them for the AerioTV Remote transport
+     * only). True once the receiver reports a live seekable range over
+     * RemoteMediaClient, or once the native TV receiver reports a rewind window
+     * on the control channel. Reset when the session ends.
+     */
+    val canSkip: StateFlow<Boolean> = _canSkip.asStateFlow()
 
     private val _switchingTo = MutableStateFlow<String?>(null)
     /**
@@ -534,6 +545,9 @@ class AerioCastSender @Inject constructor(
             // "Switching to <channel>" ends the moment the receiver is actually
             // playing the new channel, not when the load was merely accepted.
             if (playerState == MediaStatus.PLAYER_STATE_PLAYING) _switchingTo.value = null
+            // A live HLS receiver advertises what it can seek within; without a
+            // range the skip buttons stay visible but disabled.
+            _canSkip.value = runCatching { status?.liveSeekableRange != null }.getOrDefault(false)
             // Resumed-session content recovery: mediaInfo is often null at
             // onConnected and only lands with the first status update. No-op once
             // content is known (GH #33).
@@ -1099,6 +1113,40 @@ class AerioCastSender @Inject constructor(
     fun seekBy(deltaMs: Long) =
         sendControl(CastControl.command(CastControl.CMD_SEEK_BY) { put(CastControl.KEY_DELTA_MS, deltaMs) })
 
+    /**
+     * The remote sheet's 30 s skip, for whichever receiver is live.
+     *
+     *  - Cast Connect (native Android TV app): the existing [CMD_SEEK_BY] control
+     *    command, which drives the TV's own Live Rewind timeshift buffer.
+     *  - Web receiver: a RemoteMediaClient seek off the approximate stream
+     *    position, clamped to the reported live seekable range. With no range
+     *    reported, forward is a no-op and back still attempts the seek.
+     */
+    fun skipBy(deltaMs: Long) {
+        if (_receiverTarget.value == ReceiverTarget.ANDROID_TV_APP) {
+            seekBy(deltaMs)
+            return
+        }
+        val client = currentSession()?.remoteMediaClient ?: return
+        val status = runCatching { client.mediaStatus }.getOrNull()
+        val range = runCatching { status?.liveSeekableRange }.getOrNull()
+        val current = runCatching { client.approximateStreamPosition }.getOrDefault(0L)
+        var target = current + deltaMs
+        if (range != null) {
+            val lo = minOf(range.startTime, range.endTime)
+            val hi = maxOf(range.startTime, range.endTime)
+            if (deltaMs > 0 && current >= hi) return
+            target = target.coerceIn(lo, hi)
+        } else if (deltaMs > 0) {
+            return
+        }
+        val position = target.coerceAtLeast(0L)
+        Log.i(TAG, "[Cast] skip ${deltaMs / 1000}s -> ${position}ms range=${range != null}")
+        runCatching {
+            client.seek(MediaSeekOptions.Builder().setPosition(position).build())
+        }
+    }
+
     /** Seek the TV's live-rewind playhead to an absolute wall-clock target (scrubber). */
     fun seekToWall(targetWallMs: Long) =
         sendControl(CastControl.command(CastControl.CMD_SEEK_WALL) { put(CastControl.KEY_TARGET_WALL_MS, targetWallMs) })
@@ -1236,6 +1284,7 @@ class AerioCastSender @Inject constructor(
         loggedCaps = null
         _remoteState.value = CastControl.RemoteState()
         _position.value = CastControl.PositionSnapshot()
+        _canSkip.value = false
     }
 
     private fun refreshFromContext() {
