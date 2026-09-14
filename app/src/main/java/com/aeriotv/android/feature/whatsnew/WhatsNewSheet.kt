@@ -293,19 +293,47 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Program images in Program Info",
-            body = "Program Info now shows the program's own image when no " +
-                "other artwork is found for it.",
+            title = "Tuning starts where it should",
+            body = "Every tune no longer jumps back a second or two after " +
+                "starting.",
         ),
         WhatsNewItem(
-            title = "One Cancel on the close prompt",
-            body = "Android TV: the confirm dialog for closing the app now " +
-                "shows a single Cancel row.",
+            title = "Default Group",
+            body = "Pick the group Live TV opens on, from All Channels, " +
+                "Favorites, Recently Watched or any group you have, in " +
+                "App Behaviors.",
         ),
         WhatsNewItem(
-            title = "Closer to the live edge",
-            body = "Live channels from a server that sends a large burst at " +
-                "tune start now start closer to the live edge.",
+            title = "Recently Watched",
+            body = "A group listing the last 25 channels you watched. Turn " +
+                "it on in Manage Groups.",
+        ),
+        WhatsNewItem(
+            title = "Hide movies and series",
+            body = "Long-press any title to hide it. Hidden titles live in " +
+                "the Hidden category in the Filter list and sync with your " +
+                "watchlist.",
+        ),
+        WhatsNewItem(
+            title = "Video Scale in the player",
+            body = "Fit, Fill and Stretch replace Aspect Ratio, with pinch " +
+                "to scale on phones and tablets.",
+        ),
+        WhatsNewItem(
+            title = "More audio formats decoded",
+            body = "AAC, AC-3, E-AC-3, DTS, TrueHD, MP2, MP3, FLAC and ALAC " +
+                "now decode in the app when the device cannot, which fixes " +
+                "silent E-AC-3 with passthrough off.",
+        ),
+        WhatsNewItem(
+            title = "Tidier phone Live TV header",
+            body = "Header actions sit behind a three-dot button when group " +
+                "pills are showing, and the syncing pill is gone.",
+        ),
+        WhatsNewItem(
+            title = "Back closes playback on TV",
+            body = "On Android TV a second Back within a moment closes " +
+                "playback instead of leaving the mini player.",
         ),
     )
 }
