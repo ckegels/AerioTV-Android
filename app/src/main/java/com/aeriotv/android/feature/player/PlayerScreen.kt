@@ -975,7 +975,16 @@ fun PlayerScreen(
                     // channel). A 404 only counts as a dead session when the
                     // live buffer has also stopped growing.
                     val ingestAgeMs = withContext(Dispatchers.Main.immediate) { exoHolder.ingestAgeMs() }
-                    if (ingestAgeMs < 8_000L) {
+                    // 2026-09-14 (Streamer): stopping the stream from
+                    // Dispatcharr's UI froze the picture for ~30s because a
+                    // confirmed-dead 404 still waited for three polls on a
+                    // growing backoff. A 404 WITH the ingest stalled is not
+                    // ambiguous -- nothing is arriving and the server says
+                    // there is no session -- so act on the first poll. The
+                    // three-poll rule stays for the GH #82 case it was written
+                    // for: 404 while bytes are still flowing.
+                    val ingestStalled = ingestAgeMs >= com.aeriotv.android.core.playback.AerioExoPlayerHolder.INGEST_STALL_STATUS_MS
+                    if (ingestAgeMs < 8_000L && !ingestStalled) {
                         if (deadStatusCount == 0) android.util.Log.i(
                             "DispatcharrSwitch",
                             "[FOLLOW] status 404 but ingest healthy (${ingestAgeMs}ms) ch=${ch.id}; not a dead session",
@@ -983,7 +992,12 @@ fun PlayerScreen(
                         deadStatusCount = 0
                         continue
                     }
-                    if (stillPlaying && ++deadStatusCount >= 3 && currentChannel?.id == ch.id &&
+                    val deadThreshold = if (ingestStalled) 1 else 3
+                    if (ingestStalled && stillPlaying) android.util.Log.w(
+                        "DispatcharrSwitch",
+                        "[FOLLOW] dead session: 404 with ingest stalled ${ingestAgeMs}ms ch=${ch.id}",
+                    )
+                    if (stillPlaying && ++deadStatusCount >= deadThreshold && currentChannel?.id == ch.id &&
                         switchStream == null && !exoHolder.isReprimeInFlight &&
                         !exoHolder.isTimeshifting
                     ) {

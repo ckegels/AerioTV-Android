@@ -544,6 +544,10 @@ class AerioExoPlayerHolder @Inject constructor(
      *  full effect on the next tune, which rebuilds the player). */
     private var builtMaxBufferMs = 0
 
+    /** True while this holder owns the "Reconnecting..." status published for a
+     *  live ingest stall, so it only ever clears a line it set itself. */
+    private var ingestStallStatusShown = false
+
     /** Milliseconds since the live buffer last grew (ingest freshness).
      *  GH #82: the Dispatcharr status follower must not declare a session
      *  dead while bytes are still arriving. */
@@ -2143,6 +2147,35 @@ class AerioExoPlayerHolder @Inject constructor(
                 }
                 lastWatchdogTickAtMs = now
 
+                // Ingest freshness, sampled EVERY tick (before any of the
+                // early-outs below), so [ingestAgeMs] is honest for the
+                // Dispatcharr follow-poller and for the stall status here.
+                val bufferedNow = p.bufferedPosition
+                if (bufferedNow != lastKnownBufferedPositionMs) {
+                    lastKnownBufferedPositionMs = bufferedNow
+                    lastBufferAdvanceAtMs = now
+                }
+                val ingestStaleNowMs = now - lastBufferAdvanceAtMs
+                // A frozen frame is never silent (field 2026-09-14: the stream
+                // was stopped server-side and the picture sat frozen ~30s with
+                // no message). Once bytes stop arriving on a live channel we
+                // intend to play, show the existing "Reconnecting" status until
+                // they flow again or the unavailable card takes over.
+                val stallWatchLive = lastPlayUrl?.let { isRawTsUrl(it) } == true &&
+                    p.playWhenReady && !isTimeshifting && !isCatchup &&
+                    (hasReachedPlaybackRestart || videoFrameRendered) &&
+                    !_streamUnavailable.value
+                if (stallWatchLive && ingestStaleNowMs >= INGEST_STALL_STATUS_MS) {
+                    if (!ingestStallStatusShown) {
+                        ingestStallStatusShown = true
+                        Log.i(TAG, "[STALL] ingest stalled ${ingestStaleNowMs}ms ch=$currentChannelId; showing Reconnecting")
+                        liveFailover.publishServerStatus("Reconnecting...")
+                    }
+                } else if (ingestStallStatusShown) {
+                    ingestStallStatusShown = false
+                    liveFailover.publishServerStatus(null)
+                }
+
                 // Live resume gate: runs before every heal below, because while it
                 // holds, playWhenReady is false and the stale-position check
                 // deliberately skips the stream.
@@ -2256,15 +2289,11 @@ class AerioExoPlayerHolder @Inject constructor(
                 // INGEST is also stale (wedged proxy read, dead source) gets
                 // the stale reload; that is the Shield 2026-07-15 wedge this
                 // check exists for.
-                val buffered = p.bufferedPosition
                 // GH #43: same change-detection rationale as the render
                 // position above - bufferedPosition is window-relative too.
-                if (buffered != lastKnownBufferedPositionMs) {
-                    lastKnownBufferedPositionMs = buffered
-                    lastBufferAdvanceAtMs = now
-                }
+                // Sampled once per tick at the top of the loop.
                 val staleMs = now - lastPositionAdvanceAtMs
-                val ingestStaleMs = now - lastBufferAdvanceAtMs
+                val ingestStaleMs = ingestStaleNowMs
                 if (watchdogReloadEnabled &&
                     staleMs >= staleReloadThresholdMs &&
                     ingestStaleMs >= staleReloadThresholdMs
@@ -2761,6 +2790,9 @@ class AerioExoPlayerHolder @Inject constructor(
 
     companion object {
         private const val TAG = "AerioExoPlayer"
+        /** Live ingest stall that surfaces the "Reconnecting" status (and that
+         *  the follow-poller treats as corroboration for a 404 dead session). */
+        const val INGEST_STALL_STATUS_MS = 2_000L
         /** Baseline live start gate (bufferForPlaybackMs). See the LoadControl
          *  comment in [acquireOrCreate] for why 1_200 and not 500 or 2_000. */
         private const val LIVE_START_GATE_DEFAULT_MS = 1_200
