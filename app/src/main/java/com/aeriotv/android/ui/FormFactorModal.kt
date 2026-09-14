@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -14,7 +15,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -91,10 +98,27 @@ fun FormFactorModal(
             }
         }
     } else {
+        // Expandable sheets opt out of the sheet's own TOP content inset.
+        //
+        // ModalBottomSheet pads its content column with
+        // `contentWindowInsets` (safeDrawing top + bottom) while the sheet
+        // itself consumes `WindowInsets(top = sheetState.offset)`. The top
+        // padding is therefore (statusBar - currentOffset): it is ZERO while
+        // the sheet sits low and GROWS to the full status bar height as the
+        // sheet is dragged to the top. Content height then depends on the
+        // sheet's own offset, the Expanded anchor is recomputed from that
+        // height (fullHeight - sheetSize.height), the sheet chases the moving
+        // anchor, and the sheet bounces up and down -- the same class of loop
+        // as 45483dd5. Keeping only the BOTTOM inset makes the measured
+        // height independent of the offset, so both anchors are stable.
         ModalBottomSheet(
             onDismissRequest = onDismiss,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = !sheetExpandable),
             containerColor = MaterialTheme.colorScheme.background,
+            contentWindowInsets = {
+                if (sheetExpandable) WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)
+                else BottomSheetDefaults.windowInsets
+            },
         ) {
             // Bound the content column to the window height.
             //
@@ -113,6 +137,22 @@ fun FormFactorModal(
             // scroll to their last row. Short sheets are unaffected (they
             // measure below the cap and still wrap).
             val maxSheetHeight = LocalConfiguration.current.screenHeightDp.dp * 0.88f
+            // Fixed, offset-independent height for the expandable sheet:
+            // the window height minus the top inset we no longer let the
+            // sheet pad for us, minus the drag handle block (4dp handle +
+            // 22dp padding above and below) and the bottom safe-drawing
+            // inset the sheet still applies. The sheet then measures exactly
+            // (window - status bar) tall no matter where it sits, so the
+            // Expanded anchor is a constant and the drag settles.
+            val density = LocalDensity.current
+            val windowHeightPx = LocalWindowInfo.current.containerSize.height
+            val topInsetPx = WindowInsets.safeDrawing.getTop(density)
+            val bottomInsetPx = WindowInsets.safeDrawing.getBottom(density)
+            val expandedContentHeight = with(density) {
+                (windowHeightPx - topInsetPx - bottomInsetPx - DragHandleBlockHeight.roundToPx())
+                    .coerceAtLeast(0)
+                    .toDp()
+            }
             // `sheetMaxWidth` narrows and centres the column inside the
             // full-width sheet. Done here rather than on the ModalBottomSheet
             // itself so the scrim, drag handle and dismiss gesture keep
@@ -131,7 +171,7 @@ fun FormFactorModal(
                         },
                     )
                     .then(
-                        if (sheetExpandable) Modifier.height(maxSheetHeight)
+                        if (sheetExpandable) Modifier.height(expandedContentHeight)
                         else Modifier.heightIn(max = maxSheetHeight),
                     ),
                 content = content,
@@ -139,3 +179,6 @@ fun FormFactorModal(
         }
     }
 }
+
+/** Height of the ModalBottomSheet drag handle block: 4dp handle + 22dp padding each side. */
+private val DragHandleBlockHeight = 48.dp
