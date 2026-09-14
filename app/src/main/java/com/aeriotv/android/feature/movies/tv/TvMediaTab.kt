@@ -44,6 +44,9 @@ internal fun TvMediaTab(
     kind: MediaKind,
     gridState: LazyGridState,
     heroPages: List<MediaHeroPage>,
+    /** Keys of the underlying Continue Watching progress rows (unresolved).
+     *  The mid-load hero hold may only keep pages still in this set. */
+    progressKeys: Set<String> = emptySet(),
     watchlistPages: List<MediaHeroPage>,
     backdrops: Map<String, String?>,
     /** Resolved poster per item: the cached TMDB art first, the provider's
@@ -167,10 +170,15 @@ internal fun TvMediaTab(
     // library is still loading, KEEP the pages already on screen instead of
     // swapping the carousel while the progress rows are still resolving.
     val heldHero = remember { mutableStateOf(emptyList<TvHeroPage>()) }
-    val tvHero = remember(heroPages, backdrops, watchlistKeys, hiddenKeys, isLoading) {
-        if (!isLoading || heroPages.isNotEmpty() || heldHero.value.isEmpty()) {
-            heldHero.value = heroPages.map { heroFor(it, watchlist = false) }
-        }
+    val tvHero = remember(heroPages, backdrops, watchlistKeys, hiddenKeys, isLoading, progressKeys) {
+        // Drop held pages whose progress row is gone: "Remove from Continue
+        // Watching" on the LAST item empties heroPages, and without this the
+        // hold kept the removed hero on screen whenever a library sweep
+        // happened to be running (Logan 2026-09-14).
+        val stillValid = heldHero.value.filter { it.key in progressKeys }
+        heldHero.value = if (!isLoading || heroPages.isNotEmpty() || stillValid.isEmpty()) {
+            heroPages.map { heroFor(it, watchlist = false) }
+        } else stillValid
         heldHero.value
     }
     val watchlistShelf = TvShelf(
@@ -217,7 +225,7 @@ internal fun TvMediaTab(
         gridState = gridState,
         heroPages = tvHero,
         // The hero is always the Continue Watching carousel.
-        heroSectionTitle = if (heroPages.isNotEmpty()) "Continue Watching" else null,
+        heroSectionTitle = if (tvHero.isNotEmpty()) "Continue Watching" else null,
         shelves = listOf(watchlistShelf),
         headerTitle = if (isSearching) "Results" else kind.libraryTitle,
         headerCount = gridItems.size,

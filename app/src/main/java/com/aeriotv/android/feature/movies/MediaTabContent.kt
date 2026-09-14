@@ -164,6 +164,28 @@ fun MediaTabContent(
                 }.filter { it.item?.key !in hiddenTitles }.take(12)
         }
     }
+    // The keys the TV hero hold is allowed to keep alive: the Continue
+    // Watching progress rows themselves, before the library resolves them.
+    // A row the user removes leaves this set at once, so the held hero
+    // cannot outlive it (removal is a user action, not a load transition).
+    val progressKeys: Set<String> = remember(recentProgress, state.movies, state.series, kind, hiddenTitles) {
+        val rows = recentProgress.filter { r ->
+            r.positionMs > 0L && !r.isFinished && (r.durationMs <= 0L || r.positionMs < r.durationMs - 5 * 60_000L)
+        }
+        if (kind == MediaKind.Movies) {
+            rows.filter { it.vodType == "movie" }
+                .filterNot { r -> (viewModel.movieByUuid(r.videoId)?.toMediaItem()?.key ?: ("m:" + r.videoId)) in hiddenTitles }
+                .map { "cw:" + it.videoId }.toSet()
+        } else {
+            rows.filter { it.vodType == "episode" && it.seriesId != null }
+                .distinctBy { it.seriesId }
+                .filterNot { r ->
+                    val s = r.seriesId?.toIntOrNull()?.let { viewModel.seriesById(it) }
+                    s != null && s.toMediaItem().key in hiddenTitles
+                }
+                .map { "cw:" + it.videoId }.toSet()
+        }
+    }
     LaunchedEffect(Unit) { viewModel.ensureLoaded() }
     val compact = rememberLiveTvFormFactor().widthClass == WindowWidthSizeClass.Compact
     val hiddenGroups by (if (kind == MediaKind.Movies) settingsVm.hiddenMovieGroups else settingsVm.hiddenSeriesGroups)
@@ -405,7 +427,7 @@ fun MediaTabContent(
     }
     if (isTv) {
         com.aeriotv.android.feature.movies.tv.TvMediaTab(
-            kind = kind, gridState = gridState, heroPages = heroPages, watchlistPages = watchlistPages,
+            kind = kind, gridState = gridState, heroPages = heroPages, progressKeys = progressKeys, watchlistPages = watchlistPages,
             backdrops = backdrops, library = library, gridItems = gridItems, available = available,
             posterUrlFor = posterUrlFor,
             isSearching = isSearching, searchActive = searchActive, query = query,
