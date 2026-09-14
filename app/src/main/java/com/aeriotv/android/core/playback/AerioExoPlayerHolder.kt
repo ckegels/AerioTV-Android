@@ -2517,9 +2517,9 @@ class AerioExoPlayerHolder @Inject constructor(
         // debug log): "No Sound / no audio track" on some devices (e.g.
         // Chromecast with Google TV). When the stream carries an audio track
         // the device can decode in neither hardware nor the bundled FFmpeg
-        // software decoder (since 2026-09-14 the bundled build covers ac3,
+        // software decoder (since 2026-09-14 the bundled build covers aac, ac3,
         // eac3, dca, truehd, mlp, mp2, mp3, flac and alac, so this path is now
-        // reached only by codecs outside that set, e.g. AAC or Opus on a
+        // reached only by codecs outside that set, e.g. Opus or Vorbis on a
         // device with no hardware decoder for them), ExoPlayer exposes the
         // group but marks it
         // unsupported, and the track selector offers nothing -- silent

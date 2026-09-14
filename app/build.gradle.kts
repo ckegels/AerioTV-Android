@@ -198,16 +198,17 @@ dependencies {
     // aerioRenderersFactory. Consumed via files() so its base media3 classes
     // resolve against the maven deps above.
     //
-    // Enabled decoders: ac3, eac3, dca, truehd, mlp, mp2, mp3, flac, alac.
+    // Enabled decoders: aac, ac3, eac3, dca, truehd, mlp, mp2, mp3, flac, alac.
     // eac3/dca/truehd/mlp were dropped 2026-09-11 and RESTORED 2026-09-14 to
     // match the decoder set VLC and Kodi ship: with surround passthrough off the
     // sink is forced to PCM, and a platform decoder that exposes E-AC-3 for
     // bitstream only (Shield TV) then declines the track, so without a software
-    // fallback the track got no renderer at all and played silent. aac stays
-    // dropped (2026-09-12): every supported device has a hardware AAC decoder,
-    // so AAC, HE-AAC on-demand recordings included, falls through to the
-    // platform MediaCodec. See app/libs/README.md for the rationale and the
-    // reproducible build steps, and the Patents section of README.md.
+    // fallback the track got no renderer at all and played silent. aac was
+    // dropped 2026-09-12 and RESTORED 2026-09-14 as well, which brings back the
+    // original GH #45 fix: on the on-demand path the FFmpeg renderer claims
+    // HE-AAC ahead of the hardware AAC decoders that throw on it. See
+    // app/libs/README.md for the rationale and the reproducible build steps,
+    // and the Patents section of README.md.
     implementation(files("libs/media3-decoder-ffmpeg.aar"))
 
     // Google Cast (GH #33). SENDER: cast-framework gives the phone/tablet the

@@ -61,10 +61,11 @@ fun aerioRenderersFactory(
     // fatals + retries the same broken decoder. PREFER routes AAC (and AC-3,
     // which this path already PCM-decodes with passthrough off) to FFmpeg
     // first. E-AC-3/DTS/TrueHD are NOT in the bundled FFmpeg build any more
-    // back in the bundled FFmpeg build since 2026-09-14, so on this path the
-    // FFmpeg renderer claims them first; that is what fixes the Shield E-AC-3
-    // VOD silence, where the platform decoder offers bitstream only and the
-    // forced-PCM sink cannot use it.
+    // back in the bundled FFmpeg build since 2026-09-14, along with aac, so on
+    // this path the FFmpeg renderer claims them first. That is what fixes the
+    // Shield E-AC-3 VOD silence, where the platform decoder offers bitstream
+    // only and the forced-PCM sink cannot use it, and it restores the original
+    // GH #45 HE-AAC routing described above.
     // Scoped to on-demand so live TV's 24/7 hardware-first audio
     // is untouched; a single finite VOD stream is a few % of one core, video
     // stays hardware-decoded. MUST stay false for the live holder + multiview.
@@ -203,11 +204,14 @@ fun aerioRenderersFactory(
         // falls through to the FFmpeg renderer behind it -- which no longer had
         // an eac3 decoder and declined it too, leaving the track with NO
         // renderer. Hardware still wins whenever it can actually produce PCM;
-        // FFmpeg only picks up what the platform refuses. AAC stays out of the
-        // build (dropped 2026-09-12; every supported device has a hardware AAC
-        // decoder). Anything with neither a hardware nor a bundled software
-        // decoder plays silent and logs the unsupported audio group (GH #8
-        // diagnostic in AerioExoPlayerHolder), alongside the always-on
+        // FFmpeg only picks up what the platform refuses. AAC came back on
+        // 2026-09-14 too (it had been dropped 2026-09-12), so the bundled build
+        // is now aac, ac3, eac3, dca, truehd, mlp, mp2, mp3, flac, alac. On
+        // THIS path that changes nothing for AAC: the platform AAC decoder is
+        // ahead of FFmpeg and every supported device has one, so live AAC still
+        // decodes in hardware. Anything with neither a hardware nor a bundled
+        // software decoder plays silent and logs the unsupported audio group
+        // (GH #8 diagnostic in AerioExoPlayerHolder), alongside the always-on
         // "audio renderer -> ..." line that names the renderer that won.
         // Routing ALL
         // audio through the software decoder 24/7 would waste CPU on formats the
@@ -219,23 +223,21 @@ fun aerioRenderersFactory(
         // renderer claimed AAC (incl. HE-AAC/SBR) ahead of the quirky hardware
         // AAC decoders that failed to decode those recordings.
         //
-        // The 2026-09-12 codec trim dropped `aac` from the FFmpeg build, so
-        // that no longer applies: HE-AAC on-demand recordings now rely on the
-        // device's HARDWARE AAC decoder in every case (the 2026-09-14 rebuild
-        // restored E-AC-3/DTS/TrueHD but did NOT restore aac). Every Android device the
-        // app supports has one (AAC is mandatory in the CDD), and the GH #45
-        // hardware failures have not recurred since, so this is the accepted
-        // trade. PREFER is kept rather than reverted to ON because it is now
-        // harmless: it changes ORDERING, not membership, and the software
-        // renderer no longer advertises AAC at all, so AAC falls through to
-        // hardware either way. What PREFER still buys is first claim on the
-        // codecs FFmpeg DOES carry (ac3, mp2, mp3, flac, alac) for on-demand
-        // files, where a software decode is cheap and more predictable than a
-        // marginal hardware one. Since 2026-09-14 that set also includes eac3,
-        // dca, truehd and mlp. Everything else FFmpeg does not advertise (AAC,
-        // Opus/Vorbis) falls through to hardware. No passthrough regression because the
-        // on-demand path already forces a PCM sink (audioPassthrough=false); if
-        // a "bitstream to receiver" option is ever added to VOD, revisit this.
+        // The 2026-09-12 codec trim had dropped `aac`, which suspended that fix
+        // and left HE-AAC on-demand recordings on the device's hardware AAC
+        // decoder. The 2026-09-14 rebuild restored `aac` along with eac3, dca,
+        // truehd and mlp, so PREFER once again does exactly what GH #45 needed:
+        // the software renderer claims AAC ahead of the quirky hardware ones.
+        //
+        // So on this path FFmpeg gets first claim on everything it carries
+        // (aac, ac3, eac3, dca, truehd, mlp, mp2, mp3, flac, alac) for
+        // on-demand files, where a software decode is cheap and more
+        // predictable than a marginal hardware one, and a finite VOD stream
+        // costs a few % of one core. Only Opus and Vorbis, which the build does
+        // not carry, fall through to hardware here. No passthrough regression
+        // because the on-demand path already forces a PCM sink
+        // (audioPassthrough=false); if a "bitstream to receiver" option is ever
+        // added to VOD, revisit this.
         .setExtensionRendererMode(
             if (preferSoftwareAudio) DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
             else DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON,

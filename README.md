@@ -360,10 +360,9 @@ GPL-3.0-or-later.
 
 AerioTV bundles an FFmpeg build (LGPL-2.1-or-later) and depends on a number of
 Apache-2.0 libraries. The FFmpeg build is configured without `--enable-gpl` and
-enables exactly nine audio decoders: `ac3`, `eac3`, `dca`, `truehd`, `mlp`,
-`mp2`, `mp3`, `flac` and `alac`. Anything outside that set, AAC included, relies
-on the device's own hardware decoder; HE-AAC on-demand recordings are handled by
-the hardware AAC decoder. See
+enables exactly ten audio decoders: `aac`, `ac3`, `eac3`, `dca`, `truehd`,
+`mlp`, `mp2`, `mp3`, `flac` and `alac`. Anything outside that set relies on the
+device's own hardware decoder. See
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the full list, the exact
 FFmpeg build configuration, and where to obtain the corresponding source. The
 same information is in the app under Settings > About > Open Source Licenses.

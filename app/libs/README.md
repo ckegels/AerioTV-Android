@@ -14,7 +14,7 @@ Chromecast with Google TV. It is wired in as the fallback audio renderer
 ### Enabled decoders (2026-09-14)
 
 ```
-ac3 eac3 dca truehd mlp mp2 mp3 flac alac
+aac ac3 eac3 dca truehd mlp mp2 mp3 flac alac
 ```
 
 **Why this set.** AerioTV matches what VLC and Kodi ship (Logan, 2026-09-14).
@@ -32,22 +32,23 @@ and the patent position is handled by notice instead: see the **Patents**
 section of the repo `README.md`, `THIRD_PARTY_LICENSES.md`, and the in-app
 Settings > About > Open Source Licenses screen.
 
-2026-09-12 dropped `aac` and that still stands. AAC's essential patents have
-expired, but every Android device the app supports has a hardware AAC decoder
-(AAC is mandatory in the Android CDD), so a software AAC decoder in the binary
-was never reached on real hardware and only added size.
+2026-09-12 had also dropped `aac`, on the reasoning that every supported Android
+device has a hardware AAC decoder (AAC is mandatory in the Android CDD) so the
+software one was never reached. That was reverted on 2026-09-14 too (Logan): the
+same VLC/Kodi parity call, and it restores the original GH #45 fix, where the
+on-demand path's `EXTENSION_RENDERER_MODE_PREFER` routes HE-AAC (AAC+ / SBR)
+recordings to the FFmpeg decoder ahead of the hardware AAC decoders that threw a
+runtime `CodecException 0xe` on them.
 
 Behavioral consequences:
 
-- AC-3, E-AC-3, DTS, TrueHD/MLP, MP2, MP3, FLAC and ALAC all have a software
-  fallback. The platform decoder still wins whenever it can actually produce
-  PCM (`EXTENSION_RENDERER_MODE_ON`); FFmpeg only picks up what the platform
+- All ten formats have a software fallback. On live and multiview the platform
+  decoder still wins whenever it can actually produce PCM
+  (`EXTENSION_RENDERER_MODE_ON`); FFmpeg only picks up what the platform
   refuses, which includes the bitstream-only case above.
-- AAC, including HE-AAC / AAC+ (SBR) on-demand recordings, relies entirely on
-  the device's hardware decoder. This is the GH #45 path: the on-demand
-  renderer mode stays `EXTENSION_RENDERER_MODE_PREFER`, but with no software
-  AAC in the build the FFmpeg renderer no longer advertises the MIME, so every
-  AAC track falls through to MediaCodec. See the note in
+- On the on-demand path only (`EXTENSION_RENDERER_MODE_PREFER`), the FFmpeg
+  renderer now claims AAC first again, which is the original GH #45 fix. Live
+  and multiview are untouched and stay hardware-first for AAC. See the note in
   `core/playback/AerioRenderers.kt`.
 - Which renderer actually won is logged on every tune by the always-on
   `audio renderer -> ...` line in `AerioExoPlayerHolder`, naming the decoder
@@ -81,7 +82,7 @@ platform decoder.
 # in the media3 checkout, from libraries/decoder_ffmpeg/src/main/jni
 ./build_ffmpeg.sh "<repo>/libraries/decoder_ffmpeg/src/main" \
   "$ANDROID_SDK/ndk/25.1.8937393" darwin-x86_64 21 \
-  ac3 mp2 mp3 flac alac eac3 dca truehd mlp
+  aac ac3 eac3 dca truehd mlp mp2 mp3 flac alac
 # then, from the media3 checkout root (ANDROID_HOME must be set)
 ./gradlew :lib-decoder-ffmpeg:assembleRelease
 # output: libraries/decoder_ffmpeg/buildout/outputs/aar/lib-decoder-ffmpeg-release.aar
@@ -89,11 +90,11 @@ platform decoder.
 
 The .so is stripped, so verify the codec set with `strings` rather than `nm`:
 `ff_ac3_decoder`, `ff_eac3_decoder`, `ff_dca_decoder`, `ff_truehd_decoder`,
-`ff_mlp_decoder`, `ff_mp2_decoder`, `ff_mp3_decoder`, `ff_flac_decoder` and
-`ff_alac_decoder` must each hit, and `ff_aac_decoder` must miss, on each of the
-four ABIs. Verified on all four for the 2026-09-14 build (AAR 1.6 MB to 2.4 MB),
-alongside `llvm-readelf -l` showing align `0x4000` on every LOAD segment.
+`ff_mlp_decoder`, `ff_mp2_decoder`, `ff_mp3_decoder`, `ff_flac_decoder`,
+`ff_alac_decoder` and `ff_aac_decoder` must each hit, on all four ABIs. Verified
+on all four for the 2026-09-14 build, alongside `llvm-readelf -l` showing align
+`0x4000` on every LOAD segment.
 
 Rebuild and replace this file when bumping the `media3` version so the extension
-stays binary-compatible with the maven media3 artifacts. Keep the decoder list
-above; do not re-add `aac`.
+stays binary-compatible with the maven media3 artifacts, keeping the decoder
+list above.
