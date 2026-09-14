@@ -696,6 +696,15 @@ class AerioExoPlayerHolder @Inject constructor(
     /** Same-url retries already spent on a "Channel is stopping" 503 this tune.
      *  Reset by [resetWatchdogStateForNewStream] like every other heal budget. */
     private var stoppingRetries = 0
+    /** The url whose 503 [handleLive503] most recently acted on, with when. A
+     *  single 503 reaches us twice (the load error, then the terminal player
+     *  error it becomes); the second arrival must not start a second retry or
+     *  a second failover step. */
+    private var live503HandledKey: String? = null
+    private var live503HandledAtMs = 0L
+    /** Whether that 503 left [handleLive503] owning recovery (a scheduled
+     *  same-url retry). False means the generic ladder must still run. */
+    private var live503OwnedRecovery = false
     /** Job holding the pending Retry-After wait, so a channel flip or teardown
      *  can cancel a retry that is no longer wanted. */
     private var stoppingRetryJob: Job? = null
@@ -1038,6 +1047,16 @@ class AerioExoPlayerHolder @Inject constructor(
                     return
                 }
             }
+            // A Dispatcharr 503 the server already explained is owned by
+            // handleLive503 (wait out a "Channel is stopping" teardown, or walk
+            // to the next member stream at once). It normally decides on the
+            // load error a moment earlier and this call is the de-duplicated
+            // second sighting; when the load error never arrives (a 503 on a
+            // path that reports only the terminal error) this is where it is
+            // decided. Either way the generic reload ladder must stand down:
+            // re-GETting the same url 15 ms later is what produced the instant
+            // "Channel Unavailable ... Retrying in 4s" card.
+            if (handleLive503(error)) return
             if (lastPlayUrl != null) {
                 if (onTerminalErrorRebuildUrl != null) {
                     watchdogScope.launch {
@@ -2338,12 +2357,22 @@ class AerioExoPlayerHolder @Inject constructor(
      * The user-facing text quotes the server verbatim either way; we never
      * substitute a guessed cause such as "too many connections".
      */
-    private fun handleLive503(error: Throwable) {
-        val info = Dispatcharr503.parse(error) ?: return
+    private fun handleLive503(error: Throwable): Boolean {
+        val info = Dispatcharr503.parse(error) ?: return false
         // Live only: VOD / catch-up / DVR have their own error paths and no
         // member-stream walk to fall back on.
-        val url = lastPlayUrl ?: return
-        if (isTimeshifting || isCatchup || PlaybackTracer.urlKind(url) != "live") return
+        val url = lastPlayUrl ?: return false
+        if (isTimeshifting || isCatchup || PlaybackTracer.urlKind(url) != "live") return false
+        // The same 503 arrives twice: once as the load error, then again as the
+        // terminal player error it turns into. Act once, but keep OWNING it both
+        // times so the generic reload ladder stands down on the second arrival.
+        val now = SystemClock.elapsedRealtime()
+        if (live503HandledKey == url && now - live503HandledAtMs < LIVE_503_DEDUPE_MS) {
+            return live503OwnedRecovery
+        }
+        live503HandledKey = url
+        live503HandledAtMs = now
+        live503OwnedRecovery = false
         serverReason = info.reason
         if (info.kind == Dispatcharr503.Kind.STOPPING) {
             if (stoppingRetries >= Dispatcharr503.MAX_STOPPING_RETRIES) {
@@ -2352,10 +2381,17 @@ class AerioExoPlayerHolder @Inject constructor(
                     "[FAILOVER] 503 reason=\"${info.reason}\" retried " +
                         "$stoppingRetries times on the same url; handing to the failover walk",
                 )
+                // Nothing owned here: the failover walk may have nowhere to go
+                // (single stream, no admin rights), so the generic ladder stays
+                // the safety net, exactly as [LiveStreamFailover] assumes when
+                // it logs "staying on the retry path".
                 liveFailover.onServer503(info.reason)
-                return
+                return false
             }
-            if (stoppingRetryJob?.isActive == true) return
+            if (stoppingRetryJob?.isActive == true) {
+                live503OwnedRecovery = true
+                return true
+            }
             stoppingRetries += 1
             val attempt = stoppingRetries
             liveFailover.publishServerStatus("Reconnecting...")
@@ -2371,9 +2407,15 @@ class AerioExoPlayerHolder @Inject constructor(
                 if (lastPlayUrl != url) return@launch
                 reprimeSameUrl("503 ${info.reason} retry $attempt")
             }
-            return
+            live503OwnedRecovery = true
+            return true
         }
+        // "No available streams", "Channel resources unavailable", a specific
+        // upstream error_reason: start the walk now, and leave the generic
+        // ladder running behind it -- the walk can legitimately find nothing to
+        // switch to, and that case must still reach the unavailable card.
         liveFailover.onServer503(info.reason)
+        return false
     }
 
     /**
@@ -2484,6 +2526,9 @@ class AerioExoPlayerHolder @Inject constructor(
         noFrameHealAttempts = 0
         noDataHealAttempts = 0
         stoppingRetries = 0
+        live503HandledKey = null
+        live503HandledAtMs = 0L
+        live503OwnedRecovery = false
         stoppingRetryJob?.cancel()
         stoppingRetryJob = null
         serverReason = null
@@ -2602,7 +2647,18 @@ class AerioExoPlayerHolder @Inject constructor(
             error: java.io.IOException,
             wasCanceled: Boolean,
         ) {
-            if (wasCanceled) return
+            // wasCanceled here does NOT mean "the user cancelled": Media3 sets
+            // it from `!loadErrorAction.isRetry()` (ProgressiveMediaPeriod /
+            // HlsSampleStreamWrapper), i.e. "this load will not be retried".
+            // Live503LoadErrorPolicy deliberately returns C.TIME_UNSET for a
+            // 503, which makes the action DONT_RETRY_FATAL -- so every 503 the
+            // policy handed us arrived here flagged wasCanceled and the old
+            // blanket early-return threw it away before handleLive503 ever ran
+            // (Frankie B. Shield log 2026-09-14 18:21:03: 503, no parse, no
+            // Retry-After, straight into the generic in-place reload ladder and
+            // the "Channel Unavailable ... Retrying in 4s" card).
+            val is503 = Dispatcharr503.parse(error) != null
+            if (wasCanceled && !is503) return
             Log.w(
                 TAG,
                 "load error uri=${loadEventInfo.uri} " +
@@ -2757,6 +2813,12 @@ class AerioExoPlayerHolder @Inject constructor(
         /** How long after a tune a decoder failure still counts as the codec
          *  handover race (session2.txt: the error landed 2.5 s after the flip). */
         private const val DECODER_RETRY_WINDOW_MS = 3_000L
+
+        /** How long one 503 stays "already decided" while its load error and the
+         *  terminal player error it becomes both reach [handleLive503]. Shorter
+         *  than [Dispatcharr503.DEFAULT_RETRY_AFTER_MS] so the NEXT 503, the one
+         *  answering a scheduled retry, is always judged fresh. */
+        private const val LIVE_503_DEDUPE_MS = 500L
 
         /**
          * Default player User-Agent. Without an explicit UA, Media3's
