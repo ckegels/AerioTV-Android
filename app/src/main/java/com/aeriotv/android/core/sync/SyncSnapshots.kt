@@ -129,10 +129,31 @@ data class WatchlistSnapshotEntry(
     val removedAt: Long? = null,
 )
 
+/**
+ * Hidden on-demand title. Same shape and the same tombstone rule as
+ * [WatchlistSnapshotEntry]: an unhide travels as a row with unhiddenAt set,
+ * and the later of hiddenAt / unhiddenAt wins on merge. [serverId] is the
+ * playlist scope (server host), so per-playlist hiding survives sync.
+ */
+@Serializable
+data class HiddenTitleSnapshotEntry(
+    val vodId: String,
+    val vodType: String = "movie",
+    val serverId: String? = null,
+    val hiddenAt: Long,
+    val unhiddenAt: Long? = null,
+)
+
 @Serializable
 data class WatchlistSnapshot(
     val envelope: SyncEnvelope,
     val entries: List<WatchlistSnapshotEntry>,
+    /**
+     * Hidden on-demand titles, added after the first watchlist.v1.json
+     * shipped. Defaults to empty so older payloads without the field still
+     * decode, and older clients ignore it as an unknown key.
+     */
+    val hidden: List<HiddenTitleSnapshotEntry> = emptyList(),
 )
 
 @Serializable

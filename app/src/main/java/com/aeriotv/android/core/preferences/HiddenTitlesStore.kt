@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -23,6 +24,11 @@ private val Context.hiddenTitlesDataStore: DataStore<Preferences> by preferences
  * from the "Hidden" category. Scoped per playlist exactly like
  * [WatchlistStore] (the server host, not the local playlist row id) and kept
  * as one JSON blob in its own DataStore like the other VOD stores.
+ *
+ * Sync: rides the Watchlist category through DriveSync with the same shape
+ * as [WatchlistStore]. An unhide leaves a tombstone instead of deleting the
+ * row, and a merge is last-writer-wins per (key, playlistId), so hiding on
+ * one device and unhiding on another resolves the same way everywhere.
  */
 @Singleton
 class HiddenTitlesStore @Inject constructor(
@@ -34,12 +40,36 @@ class HiddenTitlesStore @Inject constructor(
         val key: String,
         val playlistId: String? = null,
         val hiddenAt: Long = System.currentTimeMillis(),
-    )
+        /** Tombstone for sync: set instead of deleting so the unhide travels. */
+        val unhiddenAt: Long? = null,
+    ) {
+        val isLive: Boolean get() = unhiddenAt == null
+    }
 
     private val store get() = context.hiddenTitlesDataStore
 
     companion object {
         private val KEY = stringPreferencesKey("entries")
+
+        private fun Entry.sameIdentity(o: Entry) = key == o.key && playlistId == o.playlistId
+
+        private fun Entry.stamp(): Long = maxOf(hiddenAt, unhiddenAt ?: 0L)
+
+        /**
+         * Pure last-writer-wins merge, per (key, playlistId): the row with the
+         * later hiddenAt / unhiddenAt wins, unknown rows are inserted. Kept
+         * separate from the DataStore so it is unit testable.
+         */
+        fun mergeEntries(local: List<Entry>, remote: List<Entry>): List<Entry> {
+            if (remote.isEmpty()) return local
+            val merged = local.toMutableList()
+            remote.forEach { r ->
+                val i = merged.indexOfFirst { it.sameIdentity(r) }
+                if (i < 0) { merged += r; return@forEach }
+                if (r.stamp() > merged[i].stamp()) merged[i] = r
+            }
+            return merged
+        }
     }
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -47,24 +77,63 @@ class HiddenTitlesStore @Inject constructor(
     /** The hidden keys for a playlist; rows with no scope match every playlist. */
     fun observe(playlistId: String?): Flow<Set<String>> = store.data.map { prefs ->
         decode(prefs[KEY])
+            .filter { it.isLive }
             .filter { playlistId == null || it.playlistId == null || it.playlistId == playlistId }
             .mapTo(HashSet()) { it.key }
     }
 
+    /** Every row including tombstones, for the sync snapshot. */
+    suspend fun allOnce(): List<Entry> = decode(store.data.first()[KEY])
+
     suspend fun hide(key: String, playlistId: String?) {
         store.edit { prefs ->
+            val now = System.currentTimeMillis()
             val current = decode(prefs[KEY])
-            if (current.any { it.key == key && it.playlistId == playlistId }) return@edit
-            prefs[KEY] = json.encodeToString(current + Entry(key = key, playlistId = playlistId))
+            val existing = current.firstOrNull { it.key == key && it.playlistId == playlistId }
+            if (existing != null && existing.isLive) return@edit
+            prefs[KEY] = json.encodeToString(
+                if (existing == null) {
+                    current + Entry(key = key, playlistId = playlistId, hiddenAt = now)
+                } else {
+                    current.map {
+                        if (it.key == key && it.playlistId == playlistId) {
+                            it.copy(hiddenAt = now, unhiddenAt = null)
+                        } else {
+                            it
+                        }
+                    }
+                },
+            )
         }
     }
 
     suspend fun unhide(key: String, playlistId: String?) {
         store.edit { prefs ->
+            val now = System.currentTimeMillis()
             val current = decode(prefs[KEY])
-            val next = current.filterNot { it.key == key && (it.playlistId == playlistId || it.playlistId == null) }
-            if (next.size == current.size) return@edit
+            var changed = false
+            val next = current.map {
+                if (it.key == key && (it.playlistId == playlistId || it.playlistId == null) && it.isLive) {
+                    changed = true
+                    it.copy(unhiddenAt = now)
+                } else {
+                    it
+                }
+            }
+            if (!changed) return@edit
             prefs[KEY] = json.encodeToString(next)
+        }
+    }
+
+    /**
+     * Merge a remote snapshot: per (key, playlistId) the row with the later
+     * hiddenAt / unhiddenAt wins, so a hide on one device and a later unhide
+     * on another resolve the same way everywhere.
+     */
+    suspend fun mergeRemote(remote: List<Entry>) {
+        if (remote.isEmpty()) return
+        store.edit { prefs ->
+            prefs[KEY] = json.encodeToString(mergeEntries(decode(prefs[KEY]), remote))
         }
     }
 

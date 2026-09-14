@@ -37,7 +37,7 @@ enum class SyncCategory(
     ),
     Watchlist(
         displayName = "Watchlist",
-        subtitle = "Movies and TV shows you saved for later",
+        subtitle = "Movies and TV shows you saved for later, plus titles you hid",
         fileName = "watchlist.v1.json",
         storageSuffix = "watchlist",
     ),

@@ -46,6 +46,7 @@ class DriveSyncManager @Inject constructor(
     private val favoriteChannelDao: com.aeriotv.android.core.data.db.dao.FavoriteChannelDao,
     private val appPreferences: AppPreferences,
     private val watchlistStore: com.aeriotv.android.core.preferences.WatchlistStore,
+    private val hiddenTitlesStore: com.aeriotv.android.core.preferences.HiddenTitlesStore,
 ) {
 
     private val okHttp: OkHttpClient = OkHttpClient.Builder()
@@ -336,6 +337,15 @@ class DriveSyncManager @Inject constructor(
                     removedAt = e.removedAt,
                 )
             },
+            hidden = hiddenTitlesStore.allOnce().map { e ->
+                HiddenTitleSnapshotEntry(
+                    vodId = e.key.substringAfter(':'),
+                    vodType = if (e.key.startsWith("s:")) "series" else "movie",
+                    serverId = e.playlistId,
+                    hiddenAt = e.hiddenAt,
+                    unhiddenAt = e.unhiddenAt,
+                )
+            },
         )
 
     /** Tombstone-aware merge; see WatchlistStore.mergeRemote. */
@@ -353,6 +363,18 @@ class DriveSyncManager @Inject constructor(
                     playlistId = r.serverId,
                     addedAt = r.addedAt,
                     removedAt = r.removedAt,
+                )
+            },
+        )
+        // Absent in payloads written before hidden titles shipped, in which
+        // case this is an empty list and the local rows are left alone.
+        hiddenTitlesStore.mergeRemote(
+            snapshot.hidden.map { r ->
+                com.aeriotv.android.core.preferences.HiddenTitlesStore.Entry(
+                    key = (if (r.vodType == "series") "s:" else "m:") + r.vodId,
+                    playlistId = r.serverId,
+                    hiddenAt = r.hiddenAt,
+                    unhiddenAt = r.unhiddenAt,
                 )
             },
         )
