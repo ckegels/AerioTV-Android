@@ -64,6 +64,14 @@ object TvFocusTrace {
         Log.i(TAG, "[ANCHOR] $anchor DROPPED ($reason)")
     }
 
+    /** The single scroll owner resolved an anchor: one line per move, with the
+     *  offset it starts from, the absolute offset it is going to and the
+     *  geometry it was computed from. Paired with [anchorDropped], every
+     *  anchor in the trace now ends in exactly one of the two. */
+    fun move(anchor: Any, from: Int, to: Int, detail: String) {
+        Log.i(TAG, "[MOVE] $anchor $from -> $to $detail")
+    }
+
     /** A D-pad / Back decision at a page-level handler. */
     fun key(key: String, consumed: Boolean, by: String) {
         Log.i(TAG, "[KEY] $key consumed=$consumed by=$by")

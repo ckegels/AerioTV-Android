@@ -201,6 +201,27 @@ object TvReturnMemory {
      *  comes back at the exact offset (MoviesView.swift:221, 259-279); this is
      *  how Android reconstructs it. Not observed: read once on return. */
     val pendingOffset = HashMap<String, Pair<Int, Int>>()
+
+    /** MEASURED LEADING-ROW HEIGHTS, per page, for the life of the process.
+     *  Android disposes the page when a detail route is pushed over it (tvOS
+     *  never disposes the tab, see [pendingOffset]), so every `remember` in
+     *  TvMediaPage is gone on the way back while the grid's own saveable
+     *  offset is restored DEEP in the library. The leading rows then sit above
+     *  the restored position, are never composed, never report a height, and
+     *  the rest-top chain cannot be built at all: every anchor resolved to
+     *  null and the page stopped scrolling entirely (Logan 2026-09-13/14
+     *  Streamer trace: "[ANCHOR] ... DROPPED (geometry)" for GridRow, Pills
+     *  AND Header after "[RESTORE] returnOffset=4/176"). These heights are
+     *  the same layout on the way back, so they are kept here and seeded into
+     *  the fresh page; a row that composes replaces its entry with the real
+     *  measurement. Plain maps, read and written off the main thread's
+     *  layout pass only. */
+    val leadingHeights = HashMap<String, HashMap<Any, Int>>()
+
+    /** Grid cell height and the at-rest viewport height, kept for the same
+     *  reason as [leadingHeights] (cell height is re-measured quickly on the
+     *  way back, the at-rest viewport is not: the page is not at rest). */
+    val pageMetrics = HashMap<String, Pair<Int, Int>>()
 }
 
 object TvPage {
@@ -484,7 +505,14 @@ fun <T> TvMediaPage(
     // never cleared: a key survives a structure change (a shelf arriving
     // late, search opening). The table is rebuilt whenever a measured height,
     // the structure or the at-rest viewport changes.
-    val leadingHeightByKey = remember { HashMap<Any, Int>() }
+    // Seeded from the process-level table so a return from a detail (which
+    // disposes this whole composable) does not lose the leading block's
+    // measurements while the grid comes back parked deep. See
+    // TvReturnMemory.leadingHeights.
+    val leadingHeightByKey = remember(pageId) {
+        if (pageId.isEmpty()) HashMap<Any, Int>()
+        else TvReturnMemory.leadingHeights.getOrPut(pageId) { HashMap() }
+    }
     /** Bumped whenever a leading row reports a NEW height from its own layout
      *  pass. The geometry collector below watches it, so the table is rebuilt
      *  for a row that is composed but never visible. Written in the layout
@@ -533,8 +561,20 @@ fun <T> TvMediaPage(
     // collector below is keyed on leadingKeys, so inserting the hero used to
     // restart it with both back at 0 and the page could not compute a target
     // until it happened to sit at the very top again (Logan 2026-09-13).
-    val measuredCellHeight = remember { mutableIntStateOf(0) }
-    val measuredViewportAtTop = remember { mutableIntStateOf(0) }
+    // ... and they survive the page's DISPOSAL the same way, through
+    // TvReturnMemory.pageMetrics: a return from a detail brings the page back
+    // parked deep, where the at-rest viewport can never be measured.
+    val measuredCellHeight = remember(pageId) {
+        mutableIntStateOf(TvReturnMemory.pageMetrics[pageId]?.first ?: 0)
+    }
+    val measuredViewportAtTop = remember(pageId) {
+        mutableIntStateOf(TvReturnMemory.pageMetrics[pageId]?.second ?: 0)
+    }
+    val rememberMetrics: () -> Unit = {
+        if (pageId.isNotEmpty()) {
+            TvReturnMemory.pageMetrics[pageId] = measuredCellHeight.value to measuredViewportAtTop.value
+        }
+    }
     LaunchedEffect(gridState, leadingKeys, columns, gridRowSpacingPx) {
         var cellHeight = measuredCellHeight.value
         var viewportAtTop = measuredViewportAtTop.value
@@ -551,6 +591,7 @@ fun <T> TvMediaPage(
                 } else if (cellHeight != item.size.height) {
                     cellHeight = item.size.height
                     measuredCellHeight.value = cellHeight
+                    rememberMetrics()
                     dirty = true
                 }
             }
@@ -561,6 +602,7 @@ fun <T> TvMediaPage(
             ) {
                 viewportAtTop = info.viewportSize.height
                 measuredViewportAtTop.value = viewportAtTop
+                rememberMetrics()
                 dirty = true
             }
             if (dirty) {
@@ -569,13 +611,23 @@ fun <T> TvMediaPage(
                 val heights = IntArray(leadingCount + 1) { -1 }
                 var top = 0
                 var i = 0
+                // The first leading row with neither a measurement nor a
+                // design estimate: it stops the chain dead, so every rest top
+                // after it is unknown and EVERY anchor resolves to null. It is
+                // named in the dropped-anchor trace line below.
+                var unmeasured: Any? = null
+                var estimated = 0
                 while (i <= leadingCount) {
                     tops[i] = top
                     if (i == leadingCount) break
-                    val rowKey = leadingKeys.getOrNull(i) ?: break
+                    val rowKey = leadingKeys.getOrNull(i)
+                    if (rowKey == null) { unmeasured = "index:$i"; break }
                     // Measured first; a row that has never been composed falls
                     // back to its design height so the chain stays whole.
-                    val h = leadingHeightByKey[rowKey] ?: leadingEstimateByKey[rowKey] ?: break
+                    val h = leadingHeightByKey[rowKey]
+                        ?: leadingEstimateByKey[rowKey]?.also { estimated++ }
+                        ?: run { unmeasured = rowKey; null }
+                        ?: break
                     heights[i] = h
                     top += h + gridRowSpacingPx
                     i++
@@ -587,6 +639,8 @@ fun <T> TvMediaPage(
                     viewportAtTop = viewportAtTop,
                     rowSpacingPx = gridRowSpacingPx,
                     columns = columns,
+                    unmeasuredKey = unmeasured,
+                    estimatedRows = estimated,
                 )
             }
             // No anchor: LEAVE the previous value. Writing Int.MAX_VALUE hid
@@ -740,17 +794,28 @@ fun <T> TvMediaPage(
                 // measured yet. Wait a frame for them, up to 10, then give up
                 // silently. Never animateScrollToItem, never scrollToItem.
                 var attempt = 0
+                // WHY the last attempt could not resolve, for the trace: a
+                // dropped anchor used to print only "(geometry)", which never
+                // said which of the four inputs was missing (Logan 2026-09-14).
+                var why = "no-frame"
                 while (attempt < 10 && !ready) {
                     attempt++
                     val g = geometry.value
                     val live = inputsState.value
                     val now = if (g == null) null else scrollOffsetPx()
                     val viewport = gridState.layoutInfo.viewportSize.height
-                    if (g == null || now == null || viewport <= 0) { withFrameNanos { }; continue }
+                    if (g == null || now == null || viewport <= 0) {
+                        why = when {
+                            g == null -> "no-geometry"
+                            viewport <= 0 -> "no-viewport"
+                            else -> "no-offset " + g.summary()
+                        }
+                        withFrameNanos { }; continue
+                    }
                     duration = 300
                     easing = androidx.compose.animation.core.EaseOut
                     val raw: Int? = targetFor(target, g, live, now, viewport, down) { d, e -> duration = d; easing = e }
-                    if (raw == null) { withFrameNanos { }; continue }
+                    if (raw == null) { why = "no-target " + g.summary(); withFrameNanos { }; continue }
                     // Clamp only when a real limit is known; otherwise the
                     // bound guard in the animation does the job.
                     goal = raw.coerceAtLeast(0).let { g0 -> maxScrollPx()?.let { g0.coerceAtMost(it) } ?: g0 }
@@ -761,9 +826,21 @@ fun <T> TvMediaPage(
                     // Never silent: "[ANCHOR] Shelf(ordinal=0) from shelf-card"
                     // with nothing after it is exactly what a dropped anchor
                     // looked like in Logan's 2026-09-11 trace.
-                    TvFocusTrace.anchorDropped(target, "geometry")
+                    TvFocusTrace.anchorDropped(
+                        target,
+                        why + " first=" + gridState.firstVisibleItemIndex + "/" +
+                            gridState.firstVisibleItemScrollOffset,
+                    )
                     return@launch
                 }
+                // One line per resolved anchor (so one per Up/Down that moves
+                // focus on this page): where the page is, where it is going,
+                // and the state of the geometry it was computed from.
+                TvFocusTrace.move(
+                    target, current, goal,
+                    "first=" + gridState.firstVisibleItemIndex + "/" + gridState.firstVisibleItemScrollOffset +
+                        " " + (geometry.value?.summary() ?: "no-geometry"),
+                )
                 if (goal == current) return@launch
                 if (target is TvPageAnchor.Hero) {
                     // Bring the bar back before the page moves: one relayout,
@@ -2342,7 +2419,21 @@ internal class TvPageGeometry(
     val viewportAtTop: Int,
     val rowSpacingPx: Int,
     val columns: Int,
+    /** The leading row that stopped the rest-top chain (no measurement, no
+     *  design estimate), or null when the chain is whole. Logged by the
+     *  dropped-anchor trace: with this non-null NOTHING on the page can
+     *  scroll, so it is the first thing to read in a "D-pad does not scroll"
+     *  report. */
+    val unmeasuredKey: Any? = null,
+    /** How many leading rows are sitting on a design estimate rather than a
+     *  real measurement. */
+    val estimatedRows: Int = 0,
 ) {
+    /** One compact line for the trace. */
+    fun summary(): String =
+        "gridTop=${gridTopPx ?: -1} cell=$cellHeight vpTop=$viewportAtTop rows=${leadingTops.size - 1}" +
+            " est=$estimatedRows missing=${unmeasuredKey ?: "-"}"
+
     /** Rest top of the first grid row, or null while the leading block is unmeasured. */
     val gridTopPx: Int? get() = leadingTops.lastOrNull()?.takeIf { it >= 0 }
 
