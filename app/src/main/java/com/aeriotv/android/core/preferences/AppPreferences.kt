@@ -732,6 +732,28 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * Whether the "Recently Watched" option is offered as a Default Group,
+     * per playlist. Off by default (Logan 2026-09-14): the Default Group
+     * picker only lists it once the Manage Groups toggle is on, and with the
+     * toggle off a stored Recently Watched default falls back to All Channels.
+     * Scoped per playlist alongside [defaultGroupToken].
+     */
+    fun recentlyWatchedGroupEnabled(playlistId: String): Flow<Boolean> =
+        store.data.map { it[keyRecentlyWatchedGroup(playlistId)] ?: false }
+
+    suspend fun recentlyWatchedGroupEnabledOnce(playlistId: String): Boolean =
+        if (playlistId.isBlank()) false
+        else store.data.first()[keyRecentlyWatchedGroup(playlistId)] ?: false
+
+    suspend fun setRecentlyWatchedGroupEnabled(playlistId: String, enabled: Boolean) {
+        if (playlistId.isBlank()) return
+        store.edit { prefs ->
+            if (enabled) prefs[keyRecentlyWatchedGroup(playlistId)] = true
+            else prefs.remove(keyRecentlyWatchedGroup(playlistId))
+        }
+    }
+
+    /**
      * Hidden VOD group titles, separately per Movies and Series. Same storage
      * shape as [hiddenGroups] above (newline-delimited); same semantics
      * (empty = nothing hidden, all visible). Mirrors iOS MoviesView's
@@ -1656,6 +1678,9 @@ class AppPreferences @Inject constructor(
 
         /** GH #81: per-playlist Default Group setting (see [defaultGroupToken]). */
         private fun keyDefaultGroupToken(playlistId: String) = stringPreferencesKey("default_group_token_$playlistId")
+
+        /** Per-playlist "Recently Watched" default-group opt-in (see [recentlyWatchedGroupEnabled]). */
+        private fun keyRecentlyWatchedGroup(playlistId: String) = booleanPreferencesKey("recently_watched_group_$playlistId")
         private fun keyFeedValidators(url: String): androidx.datastore.preferences.core.Preferences.Key<String> {
             val d = java.security.MessageDigest.getInstance("SHA-1").digest(url.toByteArray())
             return stringPreferencesKey("feed_validators_" + d.joinToString("") { "%02x".format(it) })

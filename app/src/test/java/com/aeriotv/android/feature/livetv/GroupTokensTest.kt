@@ -101,14 +101,28 @@ class GroupTokensTest {
     }
 
     @Test
-    fun lastUsedAppliesWhenNoDefaultIsSet() {
+    fun recentlyWatchedAppliesWhenNoDefaultIsSet() {
         assertEquals("Sports", launchGroupToken("", "Sports", groups))
         assertEquals("Sports", launchGroupToken(null, "Sports", groups))
     }
 
     @Test
-    fun staleDefaultFallsBackToTheLastUsedGroup() {
+    fun staleDefaultFallsBackToTheRecentlyWatchedGroup() {
         assertEquals("Sports", launchGroupToken("Gone", "Sports", groups))
+    }
+
+    /**
+     * Logan 2026-09-14: with the Manage Groups "Recently Watched" toggle off
+     * the last used group is never consulted, so a stored Recently Watched
+     * default (the empty token) lands on the caller's All Channels fallback.
+     */
+    @Test
+    fun recentlyWatchedDefaultFallsBackToAllWhenTheToggleIsOff() {
+        assertNull(launchGroupToken("", "Sports", groups, recentlyWatchedEnabled = false))
+        assertNull(launchGroupToken(null, "Sports", groups, recentlyWatchedEnabled = false))
+        assertNull(launchGroupToken("Gone", "Sports", groups, recentlyWatchedEnabled = false))
+        // An explicit default still wins with the toggle off.
+        assertEquals("News", launchGroupToken("News", "Sports", groups, recentlyWatchedEnabled = false))
     }
 
     @Test

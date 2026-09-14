@@ -185,6 +185,7 @@ fun GuideScreen(
     val groupSortModeRaw by settingsVm.groupSortMode.collectAsStateWithLifecycle()
     val groupOrder by settingsVm.groupOrder.collectAsStateWithLifecycle()
     val groupSortMode = GroupSortMode.from(groupSortModeRaw)
+    val recentlyWatchedGroup by settingsVm.recentlyWatchedGroupEnabled.collectAsStateWithLifecycle()
     val favoritesOrNull by favoritesVm.all.collectAsStateWithLifecycle()
     val favoritesList = favoritesOrNull ?: emptyList()
     val favoriteIds = remember(favoritesList) { favoritesList.mapTo(HashSet()) { it.channelId } }
@@ -850,6 +851,8 @@ fun GuideScreen(
                 onDismiss = { showManageGroups = false; groupSidebarOpen = false; runCatching { gridFocus.requestFocus() } },
                 reorderEnabled = true, sortMode = groupSortMode,
                 onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
+                recentlyWatchedEnabled = recentlyWatchedGroup,
+                onRecentlyWatchedChange = { settingsVm.setRecentlyWatchedGroupEnabled(it) },
                 onCommit = { hidden, order ->
                     if (hidden != hiddenGroups) settingsVm.setHiddenGroups(hidden)
                     order?.let { settingsVm.setGroupOrder(it) }
@@ -862,6 +865,8 @@ fun GuideScreen(
                 onDismiss = { showManageGroups = false },
                 reorderEnabled = true, sortMode = groupSortMode,
                 onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
+                recentlyWatchedEnabled = recentlyWatchedGroup,
+                onRecentlyWatchedChange = { settingsVm.setRecentlyWatchedGroupEnabled(it) },
                 onReorder = { settingsVm.setGroupOrder(it) },
             )
         }

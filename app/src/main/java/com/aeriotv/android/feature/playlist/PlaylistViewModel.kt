@@ -563,7 +563,11 @@ class PlaylistViewModel @Inject constructor(
         // falls through to the saved selection exactly as before.
         val preferred = appPreferences.defaultGroupTokenOnce(playlistId)
         val saved = appPreferences.liveGroupTokenOnce(playlistId)
-        val restored = com.aeriotv.android.feature.livetv.launchGroupToken(preferred, saved, knownGroups)
+        // Logan 2026-09-14: the last used group is only reopened when the
+        // Manage Groups "Recently Watched" toggle is on; otherwise the empty
+        // default means All Channels.
+        val recentlyWatched = appPreferences.recentlyWatchedGroupEnabledOnce(playlistId)
+        val restored = com.aeriotv.android.feature.livetv.launchGroupToken(preferred, saved, knownGroups, recentlyWatched)
             ?: ALL_GROUPS
         _state.update { if (it.selectedGroup == restored) it else it.copy(selectedGroup = restored) }
     }

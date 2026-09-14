@@ -174,11 +174,30 @@ class SettingsViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
-    /** Empty token stores nothing, which is the "Last used" option. */
+    /** Empty token stores nothing, which is the "Recently Watched" option when it is enabled, and All Channels otherwise. */
     fun setDefaultGroupToken(token: String) {
         val id = activePlaylistId.value
         if (id.isNullOrBlank()) return
         viewModelScope.launch { prefs.setDefaultGroupToken(id, token) }
+    }
+
+    /**
+     * Manage Groups "Recently Watched" opt-in, per playlist (Logan
+     * 2026-09-14). Off by default; only when it is on does the Default Group
+     * picker offer Recently Watched.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val recentlyWatchedGroupEnabled: StateFlow<Boolean> = activePlaylistId
+        .flatMapLatest { id ->
+            if (id.isNullOrBlank()) kotlinx.coroutines.flow.flowOf(false)
+            else prefs.recentlyWatchedGroupEnabled(id)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setRecentlyWatchedGroupEnabled(enabled: Boolean) {
+        val id = activePlaylistId.value
+        if (id.isNullOrBlank()) return
+        viewModelScope.launch { prefs.setRecentlyWatchedGroupEnabled(id, enabled) }
     }
 
     // VOD group filters (iOS MoviesView hiddenMovieGroups / TVShowsView

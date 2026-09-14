@@ -179,6 +179,7 @@ fun ChannelListScreen(
     val groupSortModeRaw by settingsVm.groupSortMode.collectAsStateWithLifecycle(initialValue = "Default")
     val groupOrder by settingsVm.groupOrder.collectAsStateWithLifecycle(initialValue = emptyList())
     val groupSortMode = com.aeriotv.android.feature.livetv.GroupSortMode.from(groupSortModeRaw)
+    val recentlyWatchedGroup by settingsVm.recentlyWatchedGroupEnabled.collectAsStateWithLifecycle()
 
     // Catch-up (task #137): resolve a past programme to its timeshift URL,
     // then play; failures surface as a toast (same flow as GuideScreen).
@@ -762,6 +763,8 @@ fun ChannelListScreen(
             reorderEnabled = true,
             sortMode = groupSortMode,
             onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
+            recentlyWatchedEnabled = recentlyWatchedGroup,
+            onRecentlyWatchedChange = { settingsVm.setRecentlyWatchedGroupEnabled(it) },
             onReorder = { settingsVm.setGroupOrder(it) },
         )
     }

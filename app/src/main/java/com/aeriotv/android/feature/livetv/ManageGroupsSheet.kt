@@ -29,6 +29,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -148,6 +149,9 @@ fun ManageGroupsSheet(
     sortMode: GroupSortMode = GroupSortMode.Default,
     onSortModeChange: (GroupSortMode) -> Unit = {},
     onReorder: (List<String>) -> Unit = {},
+    /** Logan 2026-09-14: opt in to the "Recently Watched" Default Group option. */
+    recentlyWatchedEnabled: Boolean = false,
+    onRecentlyWatchedChange: (Boolean) -> Unit = {},
 ) {
     var working by remember(hiddenGroups) { mutableStateOf(hiddenGroups.toMutableSet()) }
     val manualReorder = reorderEnabled && sortMode == GroupSortMode.Manual
@@ -214,6 +218,32 @@ fun ManageGroupsSheet(
                             )
                         }
                     }
+                }
+            }
+            if (reorderEnabled) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onRecentlyWatchedChange(!recentlyWatchedEnabled) }
+                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Recently Watched",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = "Offer it as a Default Group so Live TV reopens the group you were last on",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = recentlyWatchedEnabled,
+                        onCheckedChange = onRecentlyWatchedChange,
+                    )
                 }
             }
             Row(
@@ -429,6 +459,9 @@ fun TvGroupPicker(
     reorderEnabled: Boolean = false,
     sortMode: GroupSortMode = GroupSortMode.Default,
     onSortModeChange: (GroupSortMode) -> Unit = {},
+    /** Logan 2026-09-14: opt in to the "Recently Watched" Default Group option. */
+    recentlyWatchedEnabled: Boolean = false,
+    onRecentlyWatchedChange: (Boolean) -> Unit = {},
     /** E-4 (perf campaign 2026-08-19): one commit per dialog SESSION, fired at
      *  dismissal, replacing the per-press onToggle / per-drop onReorder
      *  callbacks. Each of those was a synchronous DataStore write plus a
@@ -506,6 +539,38 @@ fun TvGroupPicker(
                                 )
                             }
                         }
+                    }
+                }
+                if (reorderEnabled) {
+                    var rwFocused by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier
+                            .padding(horizontal = 24.dp, vertical = 4.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(
+                                width = if (rwFocused) 2.dp else 0.dp,
+                                color = if (rwFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                shape = RoundedCornerShape(10.dp),
+                            )
+                            .onFocusChanged { rwFocused = it.isFocused }
+                            .clickable { onRecentlyWatchedChange(!recentlyWatchedEnabled) }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Recently Watched",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = if (recentlyWatchedEnabled) "On" else "Off",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (recentlyWatchedEnabled) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 HorizontalDivider(

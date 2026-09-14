@@ -84,16 +84,23 @@ fun groupDisplayName(
 /**
  * GH #81: which group Live TV opens on for a playlist.
  *
- * [defaultToken] is the user's "Default Group" setting (empty = "Last used"),
- * [lastUsedToken] the group the playlist was left on. Both are validated
- * against [knownGroupNames] exactly like [restoredGroupToken] does, so a
- * default pointing at a group the provider dropped degrades to the last used
- * group (and then to the caller's own All fallback) instead of filtering the
- * guide down to nothing. Returns null when neither resolves.
+ * [defaultToken] is the user's "Default Group" setting (empty = All Channels,
+ * or "Recently Watched" when that option is enabled), [lastUsedToken] the group
+ * the playlist was left on. Both are validated against [knownGroupNames]
+ * exactly like [restoredGroupToken] does, so a default pointing at a group the
+ * provider dropped degrades instead of filtering the guide down to nothing.
+ *
+ * [recentlyWatchedEnabled] is the Manage Groups toggle (Logan 2026-09-14). It
+ * is off by default: the picker then offers All Channels, Favorites and the
+ * visible groups only, and a previously stored Recently Watched default (the
+ * empty token) falls back to All Channels because the last used group is not
+ * consulted at all. Returns null when nothing resolves, which is the caller's
+ * All Channels fallback.
  */
 fun launchGroupToken(
     defaultToken: String?,
     lastUsedToken: String?,
     knownGroupNames: Collection<String>,
+    recentlyWatchedEnabled: Boolean = true,
 ): String? = restoredGroupToken(defaultToken, knownGroupNames)
-    ?: restoredGroupToken(lastUsedToken, knownGroupNames)
+    ?: if (recentlyWatchedEnabled) restoredGroupToken(lastUsedToken, knownGroupNames) else null
