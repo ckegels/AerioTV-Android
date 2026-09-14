@@ -1,5 +1,11 @@
 package com.aeriotv.android.feature.livetv
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,6 +35,7 @@ import androidx.compose.material.icons.filled.FiberSmartRecord
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
@@ -37,7 +44,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -52,6 +58,7 @@ import com.aeriotv.android.ui.tv.tvFocusScale
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -370,6 +377,38 @@ fun LiveTvPhoneCircle(
 }
 
 /**
+ * Background-activity indicator for the phone Live TV header: an 18dp refresh
+ * glyph rotating once per second, laid out in the same 38dp slot the header
+ * circles use so the row does not jump when it appears. It is NOT a button:
+ * no click, no ripple, no focus target. Pull to refresh remains the manual
+ * trigger.
+ */
+@Composable
+private fun LiveTvPhoneSyncSpinner() {
+    val transition = rememberInfiniteTransition(label = "headerSync")
+    val angle by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "headerSyncAngle",
+    )
+    Box(
+        modifier = Modifier.size(38.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Refresh,
+            contentDescription = "Syncing",
+            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+            modifier = Modifier.size(18.dp).rotate(angle),
+        )
+    }
+}
+
+/**
  * Phone header row (Apple `phoneHeaderRow`, ChannelListView.swift:755-820,
  * Logan 2026-09-05 mockup "Phone - Live TV"). No title bar above it: the tab
  * bar already says where we are. Left to right: the groups control (drawer
@@ -381,8 +420,12 @@ fun LiveTvPhoneCircle(
  * three or four circles side by side, which ate so much of the row that the
  * pill strip was clipped to about one and a half pills and the second pill
  * read as "Loca..." under the Search button (user report 2026-09-13). They now
- * live in a single three-dot overflow menu, so the pills get that width back.
- * The pill strip is still CLIPPED so it never runs under the overflow button.
+ * collapse behind a single three-dot circle WHENEVER THE PILLS ARE SHOWING, so
+ * the pills get that width back; tapping it expands the circles back in place
+ * (they are not a dropdown), and any other tap in the header collapses them.
+ * With no pills to compete with (sidebar mode) the circles are simply inline
+ * and there is no three-dot at all.
+ * The pill strip is still CLIPPED so it never runs under the trailing buttons.
  * Shared by the List and the Guide so the two views match exactly.
  */
 @Composable
@@ -407,12 +450,21 @@ fun LiveTvPhoneHeaderRow(
     /** Extra circles between the group area and the overflow button (the
      *  kept-live indicator); these are status indicators, not menu actions. */
     extraActions: @Composable () -> Unit = {},
+    /** True while the channel list or the guide is still loading. Draws a
+     *  small spinning refresh glyph in the header. INDICATOR ONLY: pull to
+     *  refresh stays the manual trigger (Logan 2026-09-14, replacing the
+     *  "Syncing | Tap for Info" pill that covered the sidebar button). */
+    syncing: Boolean = false,
     /** Guide only: opens the jump-to-day sheet. Null hides the menu item. */
     onJumpToDay: (() -> Unit)? = null,
     canToggleViewMode: Boolean,
     showingGuide: Boolean,
     onToggleViewMode: () -> Unit,
 ) {
+    // The three-dot only exists when the pills are competing for the row.
+    val collapsible = !sidebarMode && showPills
+    var actionsExpanded by remember { mutableStateOf(false) }
+    if (!collapsible && actionsExpanded) actionsExpanded = false
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -454,14 +506,14 @@ fun LiveTvPhoneHeaderRow(
                 icon = Icons.Outlined.Tune,
                 contentDescription = if (hiddenGroupsCount == 0) "Manage groups"
                 else "Manage groups ($hiddenGroupsCount hidden)",
-                onClick = onManageGroups,
+                onClick = { actionsExpanded = false; onManageGroups() },
                 badgeCount = hiddenGroupsCount,
             )
             if (showPills) {
                 LiveTvHeaderPillStrip(
                     groups = groups,
                     selectedGroup = selectedGroup,
-                    onSelectGroup = onSelectGroup,
+                    onSelectGroup = { actionsExpanded = false; onSelectGroup(it) },
                     collections = collections,
                     collectionPillItem = collectionPillItem,
                     modifier = Modifier.weight(1f).clipToBounds(),
@@ -470,28 +522,61 @@ fun LiveTvPhoneHeaderRow(
                 Spacer(Modifier.weight(1f).widthIn(min = 4.dp))
             }
         }
+        if (syncing) LiveTvPhoneSyncSpinner()
         extraActions()
-        LiveTvHeaderOverflow(
-            searchActive = searchActive,
-            onToggleSearch = onToggleSearch,
-            sortMode = sortMode,
-            onSortModeChange = onSortModeChange,
-            onJumpToDay = onJumpToDay,
-            canToggleViewMode = canToggleViewMode,
-            showingGuide = showingGuide,
-            onToggleViewMode = onToggleViewMode,
-        )
+        if (collapsible) {
+            // Pills are showing, so the row cannot afford four circles. The
+            // three-dot EXPANDS IN PLACE into them (no dropdown), and any tap
+            // in the header collapses it again.
+            if (actionsExpanded) {
+                LiveTvHeaderActions(
+                    searchActive = searchActive,
+                    onToggleSearch = onToggleSearch,
+                    sortMode = sortMode,
+                    onSortModeChange = onSortModeChange,
+                    onJumpToDay = onJumpToDay,
+                    canToggleViewMode = canToggleViewMode,
+                    showingGuide = showingGuide,
+                    onToggleViewMode = onToggleViewMode,
+                    onActionTaken = { actionsExpanded = false },
+                )
+            }
+            LiveTvPhoneCircle(
+                icon = Icons.Filled.MoreVert,
+                contentDescription = if (actionsExpanded) "Hide options" else "More options",
+                onClick = { actionsExpanded = !actionsExpanded },
+                active = actionsExpanded,
+            )
+        } else {
+            // Sidebar mode (and any other pill-less header): the row has the
+            // width for the original inline circles, so no three-dot at all.
+            LiveTvHeaderActions(
+                searchActive = searchActive,
+                onToggleSearch = onToggleSearch,
+                sortMode = sortMode,
+                onSortModeChange = onSortModeChange,
+                onJumpToDay = onJumpToDay,
+                canToggleViewMode = canToggleViewMode,
+                showingGuide = showingGuide,
+                onToggleViewMode = onToggleViewMode,
+                onActionTaken = {},
+            )
+        }
     }
 }
 
 /**
- * The phone header's single trailing control: a three-dot circle whose menu
- * carries Search, Sort, Jump to day and the List / Guide toggle. Sort opens a
- * second stage in the SAME menu (Material's DropdownMenu has no submenu), with
- * the active mode checkmarked exactly as the old standalone sort menu did.
+ * The phone header's trailing action circles: Search, Sort, Jump to day and
+ * the List / Guide toggle, laid out inline.
+ *
+ * These are the circles the header always had. When the group pills are
+ * showing they are hidden behind a three-dot circle that reveals them in
+ * place (no dropdown); [onActionTaken] is what collapses that back. Sort
+ * still opens its own small menu, checkmarking the active mode exactly as the
+ * old standalone sort menu did.
  */
 @Composable
-private fun LiveTvHeaderOverflow(
+private fun LiveTvHeaderActions(
     searchActive: Boolean,
     onToggleSearch: () -> Unit,
     sortMode: SortMode,
@@ -500,95 +585,65 @@ private fun LiveTvHeaderOverflow(
     canToggleViewMode: Boolean,
     showingGuide: Boolean,
     onToggleViewMode: () -> Unit,
+    onActionTaken: () -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    var sortStage by remember { mutableStateOf(false) }
-    fun close() {
-        expanded = false
-        sortStage = false
-    }
+    var sortOpen by remember { mutableStateOf(false) }
+    LiveTvPhoneCircle(
+        icon = Icons.Outlined.Search,
+        contentDescription = if (searchActive) "Close search" else "Search",
+        onClick = { onActionTaken(); onToggleSearch() },
+        active = searchActive,
+    )
     Box {
         LiveTvPhoneCircle(
-            icon = Icons.Filled.MoreVert,
-            contentDescription = "More options",
-            onClick = { sortStage = false; expanded = true },
-            active = expanded,
+            icon = Icons.Filled.SwapVert,
+            contentDescription = "Sort: ${sortMode.label}",
+            onClick = { sortOpen = true },
+            active = sortOpen,
         )
         DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { close() },
+            expanded = sortOpen,
+            onDismissRequest = { sortOpen = false },
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
-            if (sortStage) {
-                SortMode.entries.forEach { mode ->
-                    DropdownMenuItem(
-                        leadingIcon = if (mode == sortMode) {
-                            {
-                                Icon(
-                                    imageVector = Icons.Filled.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        } else null,
-                        text = {
-                            Text(
-                                text = mode.label,
-                                color = if (mode == sortMode) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurface,
-                                fontWeight = if (mode == sortMode) FontWeight.SemiBold
-                                else FontWeight.Normal,
+            SortMode.entries.forEach { mode ->
+                DropdownMenuItem(
+                    leadingIcon = if (mode == sortMode) {
+                        {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
                             )
-                        },
-                        onClick = { onSortModeChange(mode); close() },
-                    )
-                }
-                return@DropdownMenu
-            }
-            DropdownMenuItem(
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                text = { Text(if (searchActive) "Close search" else "Search") },
-                onClick = { close(); onToggleSearch() },
-            )
-            DropdownMenuItem(
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Filled.SwapVert,
-                        contentDescription = null,
-                    )
-                },
-                text = { Text("Sort") },
-                trailingIcon = {
-                    Text(
-                        text = sortMode.label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                },
-                onClick = { sortStage = true },
-            )
-            if (onJumpToDay != null) {
-                DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.Filled.CalendarMonth, contentDescription = null) },
-                    text = { Text("Jump to day") },
-                    onClick = { close(); onJumpToDay() },
-                )
-            }
-            if (canToggleViewMode) {
-                HorizontalDivider()
-                DropdownMenuItem(
-                    leadingIcon = {
-                        Icon(
-                            imageVector = if (showingGuide) Icons.Filled.ViewList
-                            else Icons.Filled.CalendarMonth,
-                            contentDescription = null,
+                        }
+                    } else null,
+                    text = {
+                        Text(
+                            text = mode.label,
+                            color = if (mode == sortMode) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface,
+                            fontWeight = if (mode == sortMode) FontWeight.SemiBold
+                            else FontWeight.Normal,
                         )
                     },
-                    text = { Text(if (showingGuide) "Show List" else "Show Guide") },
-                    onClick = { close(); onToggleViewMode() },
+                    onClick = { sortOpen = false; onActionTaken(); onSortModeChange(mode) },
                 )
             }
         }
+    }
+    if (onJumpToDay != null) {
+        LiveTvPhoneCircle(
+            icon = Icons.Filled.CalendarMonth,
+            contentDescription = "Jump to day",
+            onClick = { onActionTaken(); onJumpToDay() },
+        )
+    }
+    if (canToggleViewMode) {
+        LiveTvPhoneCircle(
+            icon = if (showingGuide) Icons.Filled.ViewList else Icons.Filled.CalendarMonth,
+            contentDescription = if (showingGuide) "Show List" else "Show Guide",
+            onClick = { onActionTaken(); onToggleViewMode() },
+        )
     }
 }
 

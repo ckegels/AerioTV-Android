@@ -55,3 +55,45 @@ fun restoredGroupToken(saved: String?, knownGroupNames: Collection<String>): Str
     if (knownGroupNames.isEmpty()) return token
     return knownGroupNames.firstOrNull { it.equals(token, ignoreCase = true) }
 }
+
+/**
+ * GH #81: the human label for a group token. The tokens are storage values,
+ * not copy: [PlaylistViewModel.FAVORITES_GROUP] is the literal "__favorites__"
+ * and it leaked into the Manage Groups sheet (screenshot 2026-09-13), while
+ * [PlaylistViewModel.ALL_GROUPS] is the bare "All". Every site that renders a
+ * token as text routes through here so there is exactly one mapping.
+ *
+ * Collection tokens ("collection:<id>") resolve to the collection's own name
+ * when [collections] carries it; callers that have no collection list fall
+ * back to the generic "Collection" rather than printing the id.
+ */
+@JvmOverloads
+fun groupDisplayName(
+    token: String,
+    collections: List<com.aeriotv.android.core.data.ChannelCollection> = emptyList(),
+): String = when {
+    token == PlaylistViewModel.ALL_GROUPS -> "All Channels"
+    token == PlaylistViewModel.FAVORITES_GROUP -> "Favorites"
+    token.startsWith(com.aeriotv.android.core.data.ChannelCollection.TOKEN_PREFIX) -> {
+        val id = com.aeriotv.android.core.data.ChannelCollection.idFromToken(token)
+        collections.firstOrNull { it.id == id }?.name ?: "Collection"
+    }
+    else -> token
+}
+
+/**
+ * GH #81: which group Live TV opens on for a playlist.
+ *
+ * [defaultToken] is the user's "Default Group" setting (empty = "Last used"),
+ * [lastUsedToken] the group the playlist was left on. Both are validated
+ * against [knownGroupNames] exactly like [restoredGroupToken] does, so a
+ * default pointing at a group the provider dropped degrades to the last used
+ * group (and then to the caller's own All fallback) instead of filtering the
+ * guide down to nothing. Returns null when neither resolves.
+ */
+fun launchGroupToken(
+    defaultToken: String?,
+    lastUsedToken: String?,
+    knownGroupNames: Collection<String>,
+): String? = restoredGroupToken(defaultToken, knownGroupNames)
+    ?: restoredGroupToken(lastUsedToken, knownGroupNames)

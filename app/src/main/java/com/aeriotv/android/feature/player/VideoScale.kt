@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -105,66 +104,92 @@ fun videoScaleResizeMode(
 }
 
 /**
- * Transparent pinch layer for touch devices: pinch out sets Fill, pinch in
- * sets Fit, with a brief centered label. Pointer events are never consumed,
- * so the tap / vertical drag layers underneath keep working; only the
- * two-finger case is interpreted here.
+ * Shared, transient signal for the centered "Fit" / "Fill" / "Stretch" label.
  *
- * Both players host this in one line because their top-level composables sit
- * near the JVM verifier's register limit, so all of the state lives here.
+ * The pinch detector is a [Modifier] (see [videoScalePinch]) so it can live in
+ * the SAME modifier chain as the player's tap / drag layer: overlapping Compose
+ * siblings do NOT all get pointer events (hit testing stops at the topmost hit
+ * sibling), so a full-size pinch Box on top of the tap layer swallowed every
+ * tap. Modifiers cannot emit UI, so the label reads this object instead. Only
+ * one player is on screen at a time, so a single holder is enough.
  */
-@Composable
-fun BoxScope.VideoScalePinchLayer(
+private object VideoScalePinchSignal {
+    var label by mutableStateOf(videoScaleLabel(VIDEO_SCALE_FIT))
+    var serial by mutableIntStateOf(0)
+}
+
+/**
+ * Pinch out -> Fill, pinch in -> Fit, for touch devices.
+ *
+ * Add this to the same modifier chain as the existing tap / vertical-drag
+ * layer: several `pointerInput` modifiers in one chain all receive events.
+ * Single-pointer events are never consumed, so tap-to-toggle-chrome and the
+ * channel-flip drag keep working untouched. Once a second pointer is down the
+ * gesture is claimed (changes consumed) so the pinch does not also register as
+ * a tap.
+ */
+fun Modifier.videoScalePinch(
     settingsVm: SettingsViewModel,
     enabled: Boolean = true,
-) {
+): Modifier = if (!enabled) {
+    this
+} else {
+    this.pointerInput(settingsVm) {
+        awaitPointerEventScope {
+            while (true) {
+                var event = awaitPointerEvent()
+                // Single touch: leave it completely alone.
+                if (event.changes.size < 2) continue
+                event.changes.forEach { it.consume() }
+                val start = pinchSpan(event.changes[0].position, event.changes[1].position)
+                var ratio = 1f
+                while (event.changes.size >= 2 && event.changes.any { it.pressed }) {
+                    event = awaitPointerEvent()
+                    event.changes.forEach { it.consume() }
+                    if (event.changes.size >= 2 && start > 0f) {
+                        ratio = pinchSpan(
+                            event.changes[0].position,
+                            event.changes[1].position,
+                        ) / start
+                    }
+                }
+                val next = when {
+                    ratio > PINCH_OUT_RATIO -> VIDEO_SCALE_FILL
+                    ratio < PINCH_IN_RATIO -> VIDEO_SCALE_FIT
+                    else -> null
+                }
+                if (next != null) {
+                    settingsVm.setVideoScaleMode(next)
+                    VideoScalePinchSignal.label = videoScaleLabel(next)
+                    VideoScalePinchSignal.serial++
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The transient centered "Fit" / "Fill" / "Stretch" label for [videoScalePinch].
+ *
+ * Purely decorative: it installs no pointer input, so it never takes part in hit
+ * testing and the tap layer underneath keeps receiving every touch. Both players
+ * host it in one line because their top-level composables sit near the JVM
+ * verifier's register limit, so all of the state lives here.
+ */
+@Composable
+fun BoxScope.VideoScaleLabelOverlay(enabled: Boolean = true) {
     if (!enabled) return
-    val scaleMode by settingsVm.videoScaleMode
-        .collectAsStateWithLifecycle(initialValue = VIDEO_SCALE_FIT)
-    var labelText by remember { mutableStateOf(VIDEO_SCALE_FIT) }
-    var labelSerial by remember { mutableIntStateOf(0) }
+    // Ignore whatever a previous player instance left behind: only a pinch that
+    // happens while this overlay is composed may raise the label.
+    val baseSerial = remember { VideoScalePinchSignal.serial }
     var labelVisible by remember { mutableStateOf(false) }
 
-    LaunchedEffect(labelSerial) {
-        if (labelSerial == 0) return@LaunchedEffect
+    LaunchedEffect(VideoScalePinchSignal.serial) {
+        if (VideoScalePinchSignal.serial == baseSerial) return@LaunchedEffect
         labelVisible = true
         delay(SCALE_LABEL_MS)
         labelVisible = false
     }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(scaleMode) {
-                awaitPointerEventScope {
-                    while (true) {
-                        var event = awaitPointerEvent()
-                        if (event.changes.size < 2) continue
-                        val start = pinchSpan(event.changes[0].position, event.changes[1].position)
-                        var ratio = 1f
-                        while (event.changes.size >= 2 && event.changes.any { it.pressed }) {
-                            event = awaitPointerEvent()
-                            if (event.changes.size >= 2 && start > 0f) {
-                                ratio = pinchSpan(
-                                    event.changes[0].position,
-                                    event.changes[1].position,
-                                ) / start
-                            }
-                        }
-                        val next = when {
-                            ratio > PINCH_OUT_RATIO -> VIDEO_SCALE_FILL
-                            ratio < PINCH_IN_RATIO -> VIDEO_SCALE_FIT
-                            else -> null
-                        }
-                        if (next != null) {
-                            settingsVm.setVideoScaleMode(next)
-                            labelText = videoScaleLabel(next)
-                            labelSerial++
-                        }
-                    }
-                }
-            },
-    )
 
     AnimatedVisibility(
         visible = labelVisible,
@@ -173,7 +198,7 @@ fun BoxScope.VideoScalePinchLayer(
         modifier = Modifier.align(Alignment.Center),
     ) {
         Text(
-            text = labelText,
+            text = VideoScalePinchSignal.label,
             fontSize = 28.sp,
             color = Color.White,
             modifier = Modifier

@@ -559,8 +559,11 @@ class PlaylistViewModel @Inject constructor(
      * down to nothing.
      */
     private suspend fun restoreSelectedGroup(playlistId: String, knownGroups: Collection<String>) {
+        // GH #81: an explicit "Default Group" setting wins; "Last used" (empty)
+        // falls through to the saved selection exactly as before.
+        val preferred = appPreferences.defaultGroupTokenOnce(playlistId)
         val saved = appPreferences.liveGroupTokenOnce(playlistId)
-        val restored = com.aeriotv.android.feature.livetv.restoredGroupToken(saved, knownGroups)
+        val restored = com.aeriotv.android.feature.livetv.launchGroupToken(preferred, saved, knownGroups)
             ?: ALL_GROUPS
         _state.update { if (it.selectedGroup == restored) it else it.copy(selectedGroup = restored) }
     }

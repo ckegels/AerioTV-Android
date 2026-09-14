@@ -329,7 +329,7 @@ fun CastRemoteSheet(
                     optionsOpen = false
                     speedOpen = true
                 }
-                OptionRow(Icons.Outlined.AspectRatio, "Aspect Ratio", remoteState.aspect.label) {
+                OptionRow(Icons.Outlined.AspectRatio, "Video Scale", remoteState.aspect.label) {
                     onSetAspect(remoteState.aspect.next())
                 }
                 OptionRow(Icons.Filled.Timer, "Sleep Timer", null) {

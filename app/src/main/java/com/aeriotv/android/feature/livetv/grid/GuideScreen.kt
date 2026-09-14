@@ -267,7 +267,7 @@ fun GuideScreen(
         begin.map { ChannelCollection.token(it.id) to it.name } +
             // Tokens (Favorites, All) read through the shared label map; the
             // raw "__favorites__" token showed on the Streamer (2026-09-10).
-            groups.map { it to (if (it == com.aeriotv.android.feature.playlist.PlaylistViewModel.FAVORITES_GROUP) "Favorites" else it) } +
+            groups.map { it to com.aeriotv.android.feature.livetv.groupDisplayName(it) } +
             end.map { ChannelCollection.token(it.id) to it.name }
     }
     val groupedChannels by produceState(
@@ -572,6 +572,7 @@ fun GuideScreen(
                 collectionPillItem = collectionPillItem,
                 searchActive = searchActive,
                 onToggleSearch = { searchActive = !searchActive; if (!searchActive) viewModel.onSearchQueryChange("") },
+                syncing = state.isLoading || state.isEpgLoading,
                 extraActions = {
                     RetainedChannelsAction(
                         viewModel = retainedVm, buttonSize = 38.dp, iconSize = 18.dp,

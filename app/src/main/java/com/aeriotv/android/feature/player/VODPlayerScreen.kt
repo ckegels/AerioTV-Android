@@ -1330,10 +1330,12 @@ fun VODPlayerScreen(
             },
         )
 
-        // Pinch to switch Fit <-> Fill on touch devices. One line: all of the
-        // gesture + label state lives in VideoScale.kt, since this composable
-        // is at the ART verifier's register limit.
-        VideoScalePinchLayer(settingsVm, enabled = !isTvForm && !inPip)
+        // Transient "Fit" / "Fill" label for the pinch gesture on the tap layer
+        // below. Non-interactive: the detector itself is a modifier there, since
+        // a sibling overlay Box would swallow every tap. One line: all of the
+        // state lives in VideoScale.kt, since this composable is at the ART
+        // verifier's register limit.
+        VideoScaleLabelOverlay(enabled = !isTvForm && !inPip)
 
         // 1 s heartbeat poll for the tracer (parity with the live holder's
         // watchdog cadence). The tracer itself rate-limits to one [PERF] +
@@ -1620,7 +1622,11 @@ fun VODPlayerScreen(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                ) { chromeVisible = !chromeVisible },
+                ) { chromeVisible = !chromeVisible }
+                // Pinch to switch Fit <-> Fill on touch devices. Same modifier
+                // chain as the tap handler: a sibling overlay Box would win hit
+                // testing and swallow every tap.
+                .videoScalePinch(settingsVm, enabled = !isTvForm && !inPip),
         )
 
         // TV: park D-pad focus on the playback surface (mount + every chrome

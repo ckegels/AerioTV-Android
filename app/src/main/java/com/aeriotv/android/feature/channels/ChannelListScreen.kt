@@ -346,9 +346,7 @@ fun ChannelListScreen(
             collections.filter { it.placement != ChannelCollection.PLACEMENT_BEGINNING }.map { ChannelCollection.token(it.id) }
     }
     val groupLabelFor: (String) -> String = { token ->
-        ChannelCollection.idFromToken(token)
-            ?.let { id -> collections.firstOrNull { it.id == id }?.name }
-            ?: com.aeriotv.android.feature.livetv.groupSidebarLabel(token)
+        com.aeriotv.android.feature.livetv.groupDisplayName(token, collections)
     }
 
     Box(modifier = modifierWrap.fillMaxSize()) {
@@ -383,6 +381,7 @@ fun ChannelListScreen(
                 if (!searchActive) viewModel.onSearchQueryChange("")
             },
             modifier = Modifier.statusBarsPadding(),
+            syncing = state.isLoading || state.isEpgLoading,
             extraActions = {
                 com.aeriotv.android.feature.livetv.RetainedChannelsAction(
                     viewModel = retainedVm,
@@ -519,7 +518,7 @@ fun ChannelListScreen(
                     FilterChip(
                         selected = state.selectedGroup == group,
                         onClick = { viewModel.onGroupSelected(group) },
-                        label = { Text(com.aeriotv.android.feature.livetv.groupSidebarLabel(group), style = MaterialTheme.typography.labelLarge) },
+                        label = { Text(com.aeriotv.android.feature.livetv.groupDisplayName(group), style = MaterialTheme.typography.labelLarge) },
                         shape = CircleShape,
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = Color.Transparent,

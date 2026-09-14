@@ -1969,6 +1969,10 @@ class PlaylistRepository @Inject constructor(
         // distinct streams) -- the list key is url precisely so those don't collide.
         channelSnapshotDao.forPlaylist(playlistId).map { it.toChannel() }.distinctBy { it.url }
 
+    /** GH #81: distinct provider group names in the cached snapshot. */
+    suspend fun cachedGroupTitles(playlistId: String): List<String> =
+        channelSnapshotDao.distinctGroupTitles(playlistId)
+
     suspend fun newestChannelFetch(playlistId: String): Long? =
         channelSnapshotDao.newestFetchedAt(playlistId)
 

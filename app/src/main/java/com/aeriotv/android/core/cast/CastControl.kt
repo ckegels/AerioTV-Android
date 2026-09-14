@@ -158,14 +158,19 @@ object CastControl {
     )
 
     /**
-     * Aspect / resize modes. The sender shows [label]; the receiver maps [key] to
+     * Video scale modes. The sender shows [label]; the receiver maps [key] to
      * the actual PlayerView RESIZE_MODE. Kept in this shared file so the sender's
      * cycle order and labels always match what the receiver applies.
+     *
+     * The wire keys predate the "Video Scale" naming: "zoom" is Fill (aspect
+     * kept, overflow cropped) and "fill" is Stretch (aspect ignored), which is
+     * what videoScaleFromCastAspectKey already maps them to. Only the labels
+     * and the cycle order changed, so old receivers stay compatible.
      */
     enum class AspectMode(val key: String, val label: String) {
         FIT("fit", "Fit"),
-        FILL("fill", "Fill"),
-        ZOOM("zoom", "Zoom");
+        ZOOM("zoom", "Fill"),
+        FILL("fill", "Stretch");
 
         fun next(): AspectMode = entries[(ordinal + 1) % entries.size]
 

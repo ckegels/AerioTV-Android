@@ -396,7 +396,9 @@ fun ManageGroupsSheet(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = group,
+                                // Tokens are storage values: "__favorites__"
+                                // rendered literally here (GH #81 screenshot).
+                                text = groupDisplayName(group),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )

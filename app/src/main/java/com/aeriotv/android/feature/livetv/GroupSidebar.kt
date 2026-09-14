@@ -87,11 +87,7 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
  * lifecycle - dangling ids, hidden-group bypass - is pill-tested; fold them
  * in when the sidebar earns a settings surface).
  */
-internal fun groupSidebarLabel(token: String): String = when (token) {
-    PlaylistViewModel.ALL_GROUPS -> "All Channels"
-    PlaylistViewModel.FAVORITES_GROUP -> "Favorites"
-    else -> token
-}
+internal fun groupSidebarLabel(token: String): String = groupDisplayName(token)
 
 @Composable
 internal fun GroupSidebarPanel(

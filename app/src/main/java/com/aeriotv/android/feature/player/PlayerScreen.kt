@@ -1571,13 +1571,19 @@ fun PlayerScreen(
                         },
                         onVerticalDrag = { _, dy -> totalDy += dy },
                     )
-                },
+                }
+                // Pinch to switch Fit <-> Fill on touch devices (no-op on TV).
+                // Lives in the SAME chain as the tap / drag handlers: a sibling
+                // overlay Box would win hit testing and swallow every tap.
+                .videoScalePinch(settingsVm, enabled = !isTvForm),
         )
 
-        // Pinch to switch Fit <-> Fill on touch devices (no-op on TV). All of
-        // the gesture + label state lives in VideoScale.kt: this composable is
-        // register-pressure sensitive.
-        VideoScalePinchLayer(settingsVm, enabled = !isTvForm)
+        // Transient "Fit" / "Fill" label for the pinch gesture above (no-op on
+        // TV). Non-interactive: the pinch detector itself is a modifier on the
+        // tap layer, since an overlay Box would swallow its taps. All of the
+        // state lives in VideoScale.kt: this composable is register-pressure
+        // sensitive.
+        VideoScaleLabelOverlay(enabled = !isTvForm)
 
         // Dead-upstream net: the holder's no-data watchdog reconnected once and
         // still got zero bytes, so it flagged the channel unavailable + stopped.

@@ -29,6 +29,17 @@ interface ChannelSnapshotDao {
     @Query("SELECT MAX(catchupDays) FROM channel_snapshot WHERE playlistId = :playlistId")
     suspend fun maxCatchupDays(playlistId: String): Int?
 
+    /**
+     * GH #81: the playlist's distinct provider group names, for surfaces that
+     * only need the group list (Settings > Default Group) and must not pull the
+     * whole channel snapshot into memory to get it.
+     */
+    @Query(
+        "SELECT DISTINCT groupTitle FROM channel_snapshot " +
+            "WHERE playlistId = :playlistId AND groupTitle != '' ORDER BY groupTitle COLLATE NOCASE ASC",
+    )
+    suspend fun distinctGroupTitles(playlistId: String): List<String>
+
     @Query("DELETE FROM channel_snapshot WHERE playlistId = :playlistId")
     suspend fun deleteForPlaylist(playlistId: String)
 

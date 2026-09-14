@@ -101,6 +101,10 @@ fun AppBehaviorsSettingsScreen(
     val startupRefreshRate by viewModel.startupRefreshRate.collectAsStateWithLifecycle(initialValue = "off")
     val vodRefreshHours by viewModel.vodLibraryRefreshHours.collectAsStateWithLifecycle(initialValue = 24)
     val matchContentResolution by viewModel.matchContentResolution.collectAsStateWithLifecycle(initialValue = false)
+    // GH #81: Default Group options for the active playlist (phone + TV share
+    // this screen, so one section covers both).
+    val defaultGroupToken by viewModel.defaultGroupToken.collectAsStateWithLifecycle()
+    val defaultGroupOptions by viewModel.defaultGroupOptions.collectAsStateWithLifecycle()
     TvKeyboardOnOkHost {
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "App Behaviors", onBack = onBack)
@@ -196,6 +200,33 @@ fun AppBehaviorsSettingsScreen(
                         label = label,
                         selected = current == value,
                         onClick = { viewModel.setDefaultLiveTVView(value) },
+                    )
+                }
+            }
+
+            // GH #81: Default Group (Apple parity naming). "Last used" keeps
+            // the restore-last-selection behavior; anything else pins the group
+            // Live TV opens on for the ACTIVE playlist.
+            SettingsSection(
+                header = "Default Group",
+                footer = "The Live TV group the app opens on for this playlist. " +
+                    "Last used reopens whichever group you were on. A group that " +
+                    "later disappears from the playlist falls back automatically.",
+            ) {
+                SettingsSelectionRow(
+                    label = "Last used",
+                    selected = defaultGroupToken.isBlank(),
+                    onClick = { viewModel.setDefaultGroupToken("") },
+                )
+                val fixedTokens = listOf(
+                    com.aeriotv.android.feature.playlist.PlaylistViewModel.ALL_GROUPS,
+                    com.aeriotv.android.feature.playlist.PlaylistViewModel.FAVORITES_GROUP,
+                )
+                (fixedTokens + defaultGroupOptions).forEach { token ->
+                    SettingsSelectionRow(
+                        label = com.aeriotv.android.feature.livetv.groupDisplayName(token),
+                        selected = defaultGroupToken == token,
+                        onClick = { viewModel.setDefaultGroupToken(token) },
                     )
                 }
             }

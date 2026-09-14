@@ -710,6 +710,28 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * GH #81: the user's explicit "Default Group" for Live TV, per playlist.
+     * Same raw-token storage as [liveGroupToken] (All / Favorites sentinels, a
+     * collection token, or a provider group name). Empty string = "Last used",
+     * which is the default and hands the launch group back to
+     * [liveGroupToken]'s restore path. Scoped per playlist because group names
+     * are playlist-specific (per-playlist media rule).
+     */
+    fun defaultGroupToken(playlistId: String): Flow<String> =
+        store.data.map { it[keyDefaultGroupToken(playlistId)] ?: "" }
+
+    suspend fun defaultGroupTokenOnce(playlistId: String): String =
+        if (playlistId.isBlank()) "" else store.data.first()[keyDefaultGroupToken(playlistId)] ?: ""
+
+    suspend fun setDefaultGroupToken(playlistId: String, token: String) {
+        if (playlistId.isBlank()) return
+        store.edit { prefs ->
+            if (token.isBlank()) prefs.remove(keyDefaultGroupToken(playlistId))
+            else prefs[keyDefaultGroupToken(playlistId)] = token
+        }
+    }
+
+    /**
      * Hidden VOD group titles, separately per Movies and Series. Same storage
      * shape as [hiddenGroups] above (newline-delimited); same semantics
      * (empty = nothing hidden, all visible). Mirrors iOS MoviesView's
@@ -1631,6 +1653,9 @@ class AppPreferences @Inject constructor(
 
         /** GH #81: per-playlist Live TV group token (see [liveGroupToken]). */
         private fun keyLiveGroupToken(playlistId: String) = stringPreferencesKey("live_group_token_$playlistId")
+
+        /** GH #81: per-playlist Default Group setting (see [defaultGroupToken]). */
+        private fun keyDefaultGroupToken(playlistId: String) = stringPreferencesKey("default_group_token_$playlistId")
         private fun keyFeedValidators(url: String): androidx.datastore.preferences.core.Preferences.Key<String> {
             val d = java.security.MessageDigest.getInstance("SHA-1").digest(url.toByteArray())
             return stringPreferencesKey("feed_validators_" + d.joinToString("") { "%02x".format(it) })

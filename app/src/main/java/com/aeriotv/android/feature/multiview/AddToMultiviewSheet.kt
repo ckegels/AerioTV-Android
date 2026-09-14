@@ -412,7 +412,12 @@ fun AddToMultiviewSheet(
                                 FilterChip(
                                     selected = group == selectedGroup,
                                     onClick = { selectedGroup = group },
-                                    label = { Text(group, maxLines = 1) },
+                                    label = {
+                                        Text(
+                                            com.aeriotv.android.feature.livetv.groupDisplayName(group),
+                                            maxLines = 1,
+                                        )
+                                    },
                                     colors = FilterChipDefaults.filterChipColors(
                                         selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
                                         selectedLabelColor = MaterialTheme.colorScheme.primary,

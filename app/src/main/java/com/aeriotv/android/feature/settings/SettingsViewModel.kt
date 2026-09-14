@@ -15,6 +15,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +32,7 @@ import kotlinx.coroutines.launch
 class SettingsViewModel @Inject constructor(
     private val prefs: AppPreferences,
     private val tmdb: TMDBService,
+    private val playlistRepository: com.aeriotv.android.core.data.repository.PlaylistRepository,
 ) : ViewModel() {
 
     // Appearance
@@ -143,6 +147,38 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, "Default")
     fun setGroupSortMode(mode: String) {
         viewModelScope.launch { prefs.setGroupSortMode(mode) }
+    }
+
+    // ---- GH #81: Default Group (App Behaviors) -------------------------------
+    // The group Live TV opens on, per playlist. Empty token = "Last used",
+    // which leaves the restore-last-selection path (901e6885) in charge.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val activePlaylistId: StateFlow<String?> = playlistRepository.observeActiveId()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** The playlist's provider group names, minus the user's hidden ones. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val defaultGroupOptions: StateFlow<List<String>> =
+        kotlinx.coroutines.flow.combine(activePlaylistId, hiddenGroups) { id, hidden -> id to hidden }
+            .mapLatest { (id, hidden) ->
+                if (id.isNullOrBlank()) emptyList()
+                else playlistRepository.cachedGroupTitles(id).filterNot { it in hidden }
+            }
+            .flowOn(kotlinx.coroutines.Dispatchers.IO)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val defaultGroupToken: StateFlow<String> = activePlaylistId
+        .flatMapLatest { id ->
+            if (id.isNullOrBlank()) kotlinx.coroutines.flow.flowOf("") else prefs.defaultGroupToken(id)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    /** Empty token stores nothing, which is the "Last used" option. */
+    fun setDefaultGroupToken(token: String) {
+        val id = activePlaylistId.value
+        if (id.isNullOrBlank()) return
+        viewModelScope.launch { prefs.setDefaultGroupToken(id, token) }
     }
 
     // VOD group filters (iOS MoviesView hiddenMovieGroups / TVShowsView

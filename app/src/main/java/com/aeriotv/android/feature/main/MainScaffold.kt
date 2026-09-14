@@ -566,24 +566,15 @@ fun MainScaffold(
         initialTabApplied = true
     }
 
-    // iOS BackgroundWork activity pill (HomeView.swift). ORs the content-fetch
-    // flags so the "Syncing" indicator shows while the channel list, EPG/guide,
-    // or On Demand library is still loading -- an activity light, NOT a
-    // cross-device-sync status. Vanishes the moment the flags clear.
-    val syncLabels = remember(
-        state.isLoading,
-        state.isEpgLoading,
-        onDemandState.isLoading,
-        onDemandState.isLoadingSeries,
-    ) {
-        buildList {
-            if (state.isLoading) add("Loading channels")
-            if (state.isEpgLoading) add("Loading guide")
-            if (onDemandState.isLoading) add("Loading Movies")
-            if (onDemandState.isLoadingSeries) add("Loading Series")
-        }
-    }
-    val anyBackgroundWork = syncLabels.isNotEmpty()
+    // Background-activity flag. ORs the content-fetch flags so the activity
+    // indicators show while the channel list, EPG/guide, or On Demand library
+    // is still loading -- an activity light, NOT a cross-device-sync status.
+    // It drives the TV bar's spinning Refresh circle and the phone Live TV
+    // header's spinning indicator; the old "Syncing | Tap for Info" pill it
+    // used to drive was removed (Logan 2026-09-14: it overlapped the sidebar
+    // button on both shells).
+    val anyBackgroundWork = state.isLoading || state.isEpgLoading ||
+        onDemandState.isLoading || onDemandState.isLoadingSeries
 
     // Pre-warm (Logan 2026-09-11): a FIRST visit to a tab still cost 419-567 ms
     // key to frame on the Streamer, of which ~250 ms was the settle window and
@@ -853,8 +844,6 @@ fun MainScaffold(
             // Preview banner reserves its column instead, so nothing moves
             // when a channel starts playing in the corner.
             //  - Live TV: a 16dp band under the bar holds the one-line strip.
-            //  - During background work the Syncing pill hangs below the bar,
-            //    so the band grows and the strip centers lower, clear of it.
             //  - Other tabs / fullscreen (Pending): none (no strip shown).
             val miniActive = miniPlayerState is MiniPlayerSession.State.Active
             val showHintStrip = hintsEnabled &&
@@ -863,7 +852,7 @@ fun MainScaffold(
             val topHintGap = when {
                 selectedTab == AppTab.LiveTV &&
                     miniPlayerState !is MiniPlayerSession.State.Pending ->
-                    if (anyBackgroundWork) 40.dp else 16.dp
+                    16.dp
                 else -> 0.dp
             }
             Box(
@@ -953,17 +942,8 @@ fun MainScaffold(
                         },
                 )
             }
-            // iOS "Syncing" pill, top-left. The centered nav pills + right-edge
-            // mini-player leave this corner clear. Non-focusable on TV (see
-            // SyncActivityPill) so it never steals D-pad focus.
-            SyncActivityPill(
-                active = anyBackgroundWork,
-                labels = syncLabels,
-                isTv = true,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 24.dp, top = 18.dp),
-            )
+            // No "Syncing" pill on TV: the top bar's Refresh circle already
+            // spins while background work runs (refreshing = anyBackgroundWork).
             // Remote hint strip (Logan's design, approved 2026-09-11). ONE
             // line, horizontally CENTERED, in the band between the tab bar and
             // the Channel Preview banner. Rendered at the Home level -- NOT
@@ -1165,17 +1145,9 @@ fun MainScaffold(
                 visited = visitedTabs,
                 modifier = Modifier.fillMaxSize(),
             )
-            // iOS "Syncing" pill, top-left over content (below the status bar).
-            // Tappable on phone -> background-activity details.
-            SyncActivityPill(
-                active = anyBackgroundWork,
-                labels = syncLabels,
-                isTv = false,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .padding(start = 16.dp, top = 8.dp),
-            )
+            // No "Syncing" pill on phone: it sat on top of the Live TV
+            // header's sidebar button. The header shows a small spinning
+            // refresh indicator instead (LiveTvPhoneHeaderRow syncing).
             // Bottom overlay: floating mini-player card above the floating tab
             // pill. The mini stays put while the pill slides away on scroll
             // (GH #20) so an active stream's controls are never hidden.

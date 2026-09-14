@@ -65,4 +65,63 @@ class GroupTokensTest {
         val tokens = groupTokens(ordered, emptySet())
         assertEquals(PlaylistViewModel.FAVORITES_GROUP, tokens.first())
     }
+
+    // ---- GH #81: display names -------------------------------------------
+
+    @Test
+    fun syntheticTokensGetHumanLabels() {
+        assertEquals("Favorites", groupDisplayName(PlaylistViewModel.FAVORITES_GROUP))
+        assertEquals("All Channels", groupDisplayName(PlaylistViewModel.ALL_GROUPS))
+    }
+
+    @Test
+    fun providerGroupNameIsItsOwnLabel() {
+        assertEquals("Sports", groupDisplayName("Sports"))
+    }
+
+    @Test
+    fun collectionTokenUsesTheCollectionName() {
+        val collection = ChannelCollection(id = "abc", name = "Late Night")
+        assertEquals(
+            "Late Night",
+            groupDisplayName(ChannelCollection.token("abc"), listOf(collection)),
+        )
+    }
+
+    @Test
+    fun unknownCollectionTokenNeverPrintsTheRawToken() {
+        assertEquals("Collection", groupDisplayName(ChannelCollection.token("gone")))
+    }
+
+    // ---- GH #81: default group resolution ---------------------------------
+
+    @Test
+    fun defaultGroupWinsOverTheLastUsedGroup() {
+        assertEquals("News", launchGroupToken("News", "Sports", groups))
+    }
+
+    @Test
+    fun lastUsedAppliesWhenNoDefaultIsSet() {
+        assertEquals("Sports", launchGroupToken("", "Sports", groups))
+        assertEquals("Sports", launchGroupToken(null, "Sports", groups))
+    }
+
+    @Test
+    fun staleDefaultFallsBackToTheLastUsedGroup() {
+        assertEquals("Sports", launchGroupToken("Gone", "Sports", groups))
+    }
+
+    @Test
+    fun nothingResolvesWhenBothTokensAreStaleOrEmpty() {
+        assertNull(launchGroupToken("Gone", "AlsoGone", groups))
+        assertNull(launchGroupToken("", "", groups))
+    }
+
+    @Test
+    fun favoritesIsAValidDefaultGroup() {
+        assertEquals(
+            PlaylistViewModel.FAVORITES_GROUP,
+            launchGroupToken(PlaylistViewModel.FAVORITES_GROUP, "Sports", groups),
+        )
+    }
 }
