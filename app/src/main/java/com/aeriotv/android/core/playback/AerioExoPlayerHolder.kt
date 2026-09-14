@@ -548,6 +548,14 @@ class AerioExoPlayerHolder @Inject constructor(
     /** True while this holder owns the "Reconnecting..." status published for a
      *  live ingest stall, so it only ever clears a line it set itself. */
     private var ingestStallStatusShown = false
+    /** True while the internal starving signal ([isLiveIngestStalled] shape) is
+     *  up. Logged only; it never drives UI on its own. */
+    private var liveStarving = false
+    /** Stall overlay position probe: the last playhead seen by the stall block
+     *  and when it last moved. Separate from the heal clocks below so the
+     *  overlay never depends on their early-outs. */
+    private var stallProbePositionMs = -1L
+    private var stallProbeAdvanceAtMs = 0L
 
     /** Milliseconds since the live buffer last grew (ingest freshness).
      *  GH #82: the Dispatcharr status follower must not declare a session
@@ -563,8 +571,10 @@ class AerioExoPlayerHolder @Inject constructor(
     }
 
     /**
-     * The one live stall predicate, shared by the watchdog's "Reconnecting"
-     * status and the Dispatcharr follow-poller's dead-session rule: the PLAYER
+     * The internal live "starving" predicate, used by the Dispatcharr
+     * follow-poller's dead-session rule (and logged by the watchdog). It does
+     * NOT drive the "Reconnecting" overlay, which waits for a real playback
+     * stall (rebuffer, frozen playhead, or empty buffer). The PLAYER
      * is starving, not merely the socket quiet. True when there is under
      * [STALL_BUFFER_AHEAD_MS] of media ahead AND either ingest has been silent
      * for [INGEST_STALL_STATUS_MS] or the player is sitting in BUFFERING while
@@ -2319,36 +2329,67 @@ class AerioExoPlayerHolder @Inject constructor(
                     p.playWhenReady && !isTimeshifting && !isCatchup &&
                     (hasReachedPlaybackRestart || videoFrameRendered) &&
                     !_streamUnavailable.value
-                // "Stalled" is a starving DECODER, never a quiet socket. This
+                // "Starving" is a draining buffer, never a quiet socket. This
                 // proxy bursts (8 to 9.5 s gaps with 10 s buffered), so silence
                 // only counts while the buffer ahead of the playhead has drained
-                // under STALL_BUFFER_AHEAD_MS; leaving READY into BUFFERING with
-                // that same empty buffer counts too, since that is a real
-                // underrun. Clearing takes STALL_CLEAR_BUFFER_AHEAD_MS of media
-                // or a return to READY, so one burst cannot flicker the overlay.
+                // under STALL_BUFFER_AHEAD_MS, or on a real BUFFERING underrun.
+                // That is an internal signal only (logged, mirrors
+                // [isLiveIngestStalled] for the follow-poller). With the start
+                // gate at 1200 ms the buffer routinely sits under 1.5 s between
+                // bursts while the picture plays perfectly (Streamer 2026-09-14:
+                // ~1 s Reconnecting flashes every few seconds at 60 fps), so the
+                // OVERLAY waits for playback itself to stop: a rebuffer after
+                // READY, the playhead frozen >= STALL_OVERLAY_FROZEN_MS, or the
+                // buffer effectively empty with ingest silent. It clears as soon
+                // as the playhead moves again.
                 val bufferAheadNowMs = (bufferedNow - p.currentPosition).coerceAtLeast(0L)
-                val starving = bufferAheadNowMs < STALL_BUFFER_AHEAD_MS
+                val lowBuffer = bufferAheadNowMs < STALL_BUFFER_AHEAD_MS
                 val ingestSilent = ingestStaleNowMs >= INGEST_STALL_STATUS_MS
                 val underrunBuffering =
                     p.playWhenReady && p.playbackState == Player.STATE_BUFFERING
-                if (stallWatchLive && starving && (ingestSilent || underrunBuffering)) {
+                val starvingNow = stallWatchLive && lowBuffer && (ingestSilent || underrunBuffering)
+                if (starvingNow != liveStarving) {
+                    liveStarving = starvingNow
+                    Log.i(
+                        TAG,
+                        if (starvingNow) {
+                            "[STALL] starving: buffered ahead ${bufferAheadNowMs}ms, " +
+                                "ingest quiet ${ingestStaleNowMs}ms ch=$currentChannelId"
+                        } else {
+                            "[STALL] fed: buffered ahead ${bufferAheadNowMs}ms ch=$currentChannelId"
+                        },
+                    )
+                }
+                val probePos = p.currentPosition
+                val playheadAdvanced = probePos != stallProbePositionMs
+                if (playheadAdvanced) {
+                    stallProbePositionMs = probePos
+                    stallProbeAdvanceAtMs = now
+                }
+                val playheadFrozen = !playheadAdvanced &&
+                    now - stallProbeAdvanceAtMs >= STALL_OVERLAY_FROZEN_MS
+                val bufferEmpty = bufferAheadNowMs < STALL_OVERLAY_EMPTY_BUFFER_MS && ingestSilent
+                val reallyStalled = stallWatchLive &&
+                    (underrunBuffering || playheadFrozen || bufferEmpty)
+                if (reallyStalled) {
                     if (!ingestStallStatusShown) {
                         ingestStallStatusShown = true
                         Log.i(
                             TAG,
-                            "[STALL] starving: buffered ahead ${bufferAheadNowMs}ms, " +
+                            "[STALL] playback stalled: state=${p.playbackState} " +
+                                "frozen=$playheadFrozen buffered ahead ${bufferAheadNowMs}ms, " +
                                 "ingest quiet ${ingestStaleNowMs}ms ch=$currentChannelId; showing Reconnecting",
                         )
                         liveFailover.publishServerStatus("Reconnecting...")
                     }
                 } else if (ingestStallStatusShown &&
-                    (!stallWatchLive || bufferAheadNowMs > STALL_CLEAR_BUFFER_AHEAD_MS ||
-                        p.playbackState == Player.STATE_READY)
+                    (!stallWatchLive || playheadAdvanced)
                 ) {
                     ingestStallStatusShown = false
                     Log.i(
                         TAG,
-                        "[STALL] cleared: buffered ahead ${bufferAheadNowMs}ms ch=$currentChannelId",
+                        "[STALL] cleared: playback advancing, buffered ahead ${bufferAheadNowMs}ms " +
+                            "ch=$currentChannelId; hiding Reconnecting",
                     )
                     liveFailover.publishServerStatus(null)
                 }
@@ -3023,9 +3064,13 @@ class AerioExoPlayerHolder @Inject constructor(
          *  player is actually starving. THIS is what "stalled" means. */
         const val STALL_BUFFER_AHEAD_MS = 1_500L
 
-        /** Buffered-ahead that clears the stall. Hysteresis against the burst
-         *  cadence: one burst must genuinely refill us before we say recovered. */
-        const val STALL_CLEAR_BUFFER_AHEAD_MS = 3_000L
+        /** Playhead frozen this long while we intend to play = a real stall
+         *  worth showing "Reconnecting" for. */
+        const val STALL_OVERLAY_FROZEN_MS = 1_000L
+
+        /** Buffered-ahead treated as empty for the overlay (with ingest silent). */
+        const val STALL_OVERLAY_EMPTY_BUFFER_MS = 250L
+
         /** Baseline live start gate (bufferForPlaybackMs). See the LoadControl
          *  comment in [acquireOrCreate] for why 1_200 and not 500 or 2_000. */
         private const val LIVE_START_GATE_DEFAULT_MS = 1_200
