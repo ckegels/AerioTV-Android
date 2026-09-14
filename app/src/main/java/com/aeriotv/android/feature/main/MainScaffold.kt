@@ -804,6 +804,19 @@ fun MainScaffold(
                 com.aeriotv.android.feature.player.MiniPlayerChrome
                     .topInsetDp.value = barDrawnBottom.value + 4f
             }
+            // Stash the corner mini at the trailing edge while Settings is
+            // the selected tab; cleared when the scaffold leaves composition
+            // so a player / search route never inherits a stashed mini.
+            androidx.compose.runtime.LaunchedEffect(selectedTab) {
+                com.aeriotv.android.feature.player.MiniPlayerChrome
+                    .settingsStashed.value = selectedTab == AppTab.Settings
+            }
+            androidx.compose.runtime.DisposableEffect(Unit) {
+                onDispose {
+                    com.aeriotv.android.feature.player.MiniPlayerChrome
+                        .settingsStashed.value = false
+                }
+            }
             // Collapse the bar only while the content reports a scrolled
             // state AND no pill holds focus: the UP-from-content redirect
             // (focusProperties onExit below) lands focus on the selected

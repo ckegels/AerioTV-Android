@@ -8,14 +8,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.key
@@ -26,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
@@ -167,6 +173,44 @@ fun BoxScope.PersistentExoWindow(
         animationSpec = miniSpec,
         label = "miniCorner",
     )
+    // Settings tab stash (TV only; the phone mini is an audio chip with the
+    // window Hidden). The frame keeps its size, so the SurfaceView is only
+    // repositioned, never resized: slide right until just [stashSliver] of
+    // video stays on screen. With animations off (animator duration scale 0)
+    // the move snaps and a short black cover fades out over the new spot.
+    val settingsStashed by MiniPlayerChrome.settingsStashed.collectAsStateWithLifecycle()
+    val stashTarget = miniTarget && settingsStashed
+    val reduceMotion = remember(cfg) {
+        android.provider.Settings.Global.getFloat(
+            context.contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) == 0f
+    }
+    val stashOffset by animateDpAsState(
+        targetValue = if (stashTarget) {
+            miniFitWidth + MINI_END_INSET - MiniPlayerChrome.stashSliver
+        } else 0.dp,
+        animationSpec = if (reduceMotion) snap() else miniSpec,
+        label = "miniStashOffset",
+    )
+    var stashFadeCover by remember { mutableFloatStateOf(0f) }
+    var lastStashTarget by remember { mutableStateOf(stashTarget) }
+    LaunchedEffect(stashTarget) {
+        if (lastStashTarget == stashTarget) return@LaunchedEffect
+        lastStashTarget = stashTarget
+        if (!reduceMotion) return@LaunchedEffect
+        // Frame-clock loop rather than an animate* call: the duration scale
+        // of 0 that asks for this fade would also collapse a Compose tween.
+        stashFadeCover = 1f
+        val start = withFrameNanos { it }
+        while (stashFadeCover > 0f) {
+            withFrameNanos { now ->
+                stashFadeCover = (1f - (now - start) / 150_000_000f).coerceAtLeast(0f)
+            }
+        }
+    }
+
     // Hidden is an instant teardown (no surface to animate); Fullscreen keeps
     // the mini frame only for as long as the expand spring is still running.
     val drawMiniFrame = miniTarget ||
@@ -188,6 +232,7 @@ fun BoxScope.PersistentExoWindow(
         drawMiniFrame -> Modifier
             .zIndex(1f)
             .align(Alignment.TopEnd)
+            .offset(x = stashOffset)
             .padding(end = miniEndInset, top = miniTopInset)
             .size(width = miniWidth, height = miniHeight)
             .shadow(elevation = 10.dp, shape = RoundedCornerShape(miniCorner))
@@ -492,6 +537,14 @@ fun BoxScope.PersistentExoWindow(
                 view.player = null
             },
         )
+        }
+        if (stashFadeCover > 0f) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = stashFadeCover }
+                    .background(Color.Black),
+            )
         }
     }
 }
