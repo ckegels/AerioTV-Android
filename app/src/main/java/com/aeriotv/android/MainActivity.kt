@@ -167,8 +167,12 @@ class MainActivity : ComponentActivity() {
             }
             val rightLongAction =
                 remoteMap.guideAction(com.aeriotv.android.core.remote.RemoteSlot.RIGHT_LONG)
+            // Only the two mini-player actions run here; any other mapping
+            // (Settings > Remote Control) is the guide grid's to dispatch, so
+            // the hold must reach Compose untouched.
             if (miniPlayerSession.state.value is MiniPlayerSession.State.Active &&
-                rightLongAction != com.aeriotv.android.core.remote.GuideRemoteAction.NONE
+                (rightLongAction == com.aeriotv.android.core.remote.GuideRemoteAction.CLOSE_MINI_PLAYER ||
+                    rightLongAction == com.aeriotv.android.core.remote.GuideRemoteAction.RESUME_PLAYER)
             ) {
                 if (event.isLongPress || event.repeatCount >= MINI_CLOSE_HOLD_REPEAT) {
                     // Remote Control map: guide rightLong slot. Default =
@@ -184,7 +188,7 @@ class MainActivity : ComponentActivity() {
                         }
                         com.aeriotv.android.core.remote.GuideRemoteAction.RESUME_PLAYER ->
                             miniPlayerSession.requestResume()
-                        else -> { /* wired in Phase A2 */ }
+                        else -> Unit
                     }
                     rightHoldPinUntil = android.os.SystemClock.uptimeMillis() + RIGHT_HOLD_PIN_MS
                     return true

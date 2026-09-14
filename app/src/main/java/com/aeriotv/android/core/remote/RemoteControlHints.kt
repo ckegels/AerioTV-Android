@@ -81,8 +81,8 @@ object RemoteControlHints {
     }
 
     /** The guide's hold-Left chip; null when the slot is unmapped. */
-    fun guideHoldLeftHint(map: RemoteControlMap): String? =
-        guidePhrase(map.guideAction(RemoteSlot.LEFT_LONG))
+    fun guideHoldLeftHint(map: RemoteControlMap, sidebarGroups: Boolean = false): String? =
+        guidePhrase(map.guideAction(RemoteSlot.LEFT_LONG, sidebarGroups))
             ?.let { "Hold left on remote to $it." }
 
     /**
@@ -105,8 +105,8 @@ object RemoteControlHints {
     }
 
     /** Terse form for the compact combined guide nav chip: "Hold Left = X". */
-    fun guideHoldLeftShort(map: RemoteControlMap): String? =
-        guidePhraseShort(map.guideAction(RemoteSlot.LEFT_LONG))
+    fun guideHoldLeftShort(map: RemoteControlMap, sidebarGroups: Boolean = false): String? =
+        guidePhraseShort(map.guideAction(RemoteSlot.LEFT_LONG, sidebarGroups))
             ?.let { "Hold Left = $it" }
 
     // ---------------------------------------------------------------
@@ -149,9 +149,12 @@ object RemoteControlHints {
             GuideRemoteAction.JUMP_TO_TOP -> "Top channel"
             GuideRemoteAction.RESUME_PLAYER -> "Resume"
             GuideRemoteAction.CLOSE_MINI_PLAYER -> "Close mini"
-            GuideRemoteAction.PROGRAM_INFO -> "Program menu"
+            GuideRemoteAction.PROGRAM_INFO -> "Program info"
+            GuideRemoteAction.PROGRAM_MENU -> "Program menu"
+            GuideRemoteAction.RECORD -> "Record"
+            GuideRemoteAction.PLAY -> "Play"
             GuideRemoteAction.OPEN_SEARCH -> "Search"
-            GuideRemoteAction.NONE -> null
+            GuideRemoteAction.NAVIGATE, GuideRemoteAction.NONE -> null
         }
 
     /** Strip wording for a player action; null = nothing worth advertising. */
@@ -188,10 +191,11 @@ object RemoteControlHints {
      * ("sidebar" drawer vs the pill row), [miniActive] whether the corner mini
      * is playing.
      *
-     * The groups pair reads the guide's REAL hold-Left resolution
-     * (GuideGrid.kt): sidebar mode always opens the drawer, otherwise the
-     * mapped leftLong action runs and an unmapped slot falls back to the group
-     * pills. Back is never a map slot: with a mini up the guide's Back belongs
+     * The Select / Left / Right pairs read the same resolution GuideGrid.kt
+     * dispatches (RemoteControlMap.guideAction with the group selector): an
+     * unset hold-Left opens the drawer in sidebar mode and browses earlier
+     * programs with the pills; a slot left on its default navigation or
+     * play is not advertised. Back is never a map slot: with a mini up the guide's Back belongs
      * to the mini (single = resume, double = top channel), without one a single
      * Back walks the guide back to the top channel.
      */
@@ -200,15 +204,19 @@ object RemoteControlHints {
         sidebarGroups: Boolean,
         miniActive: Boolean,
     ): List<RemoteHint> = buildList {
-        val holdLeft = if (sidebarGroups) {
-            GuideRemoteAction.FOCUS_GROUP_PILLS
-        } else {
-            map.guideAction(RemoteSlot.LEFT_LONG)
-                .takeIf { it != GuideRemoteAction.NONE }
-                ?: GuideRemoteAction.FOCUS_GROUP_PILLS
-        }
-        guideStripAction(holdLeft, sidebarGroups)?.let {
-            add(RemoteHint(slotLabel(RemoteSlot.LEFT_LONG), it))
+        // Select plays by default, so only a remapped Select is worth a pair;
+        // the arrows and their holds are advertised whenever they do something
+        // other than move focus (truthful to the map, Settings > Remote Control).
+        map.guideAction(RemoteSlot.OK_SHORT, sidebarGroups).takeIf { it != GuideRemoteAction.PLAY }
+            ?.let { guideStripAction(it, sidebarGroups) }
+            ?.let { add(RemoteHint(slotLabel(RemoteSlot.OK_SHORT), it)) }
+        for (slot in listOf(RemoteSlot.LEFT_LONG, RemoteSlot.LEFT_SHORT, RemoteSlot.RIGHT_SHORT, RemoteSlot.RIGHT_LONG)) {
+            val action = map.guideAction(slot, sidebarGroups)
+            // The mini-player pairs below cover these, and only while a mini is up.
+            if (action == GuideRemoteAction.CLOSE_MINI_PLAYER || action == GuideRemoteAction.RESUME_PLAYER) continue
+            guideStripAction(action, sidebarGroups)?.let {
+                add(RemoteHint(slotLabel(slot), it))
+            }
         }
         add(RemoteHint(if (miniActive) "Double Back" else "Back", "Top channel"))
         if (miniActive) {

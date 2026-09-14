@@ -158,6 +158,30 @@ class GuideGridState(
     }
 
     /**
+     * Read-only twin of [stepLeft]'s decision (the rule itself is untouched):
+     * true when a short Left would PAN rather than move the ring, meaning the
+     * focused cell is in the first program column on screen. A remapped short
+     * Left fires its action only here and navigates everywhere else.
+     */
+    fun leftStepWouldPan(nowMs: Long): Boolean {
+        if (rows.isEmpty) return true
+        val row = focusRow.coerceAtLeast(0)
+        val cells = rows.cells(row)
+        val idx = cells.indexOfFirst { it.startMillis == focusCellStartMs }
+        val prev = if (idx > 0) cells[idx - 1] else return true
+        if (prev.startMillis <= nowMs && nowMs < prev.endMillis) return false
+        return prev.startMillis < viewportStartMs - leadMs
+    }
+
+    /** True when the focused cell is the last one in its row (no later program to step onto). */
+    fun atLastCell(): Boolean {
+        if (rows.isEmpty) return true
+        val cells = rows.cells(focusRow.coerceAtLeast(0))
+        val idx = cells.indexOfFirst { it.startMillis == focusCellStartMs }
+        return idx < 0 || idx + 1 >= cells.size
+    }
+
+    /**
      * A short Right, tvOS rule: the timeline pans a step and the ring moves
      * onto the NEXT cell (the tvOS focus engine steps while the grid pans),
      * so a long live programme is left in one press instead of the ring

@@ -760,6 +760,13 @@ class AerioExoPlayerHolder @Inject constructor(
      *  restarted, retry never reconnected). Cleared on a fresh [playUrl]. */
     private var reconnectUrl: String? = null
 
+    /** Channel id of the stream [markStreamUnavailable] gave up on, preserved
+     *  for the same reason as [reconnectUrl]: its [stop] nulls both channel
+     *  ids, so the overlay retry used to re-prime with no id, the rebuild hook
+     *  returned null, and every [STALL] line after the recovery read ch=null
+     *  (phone log 2026-09-14 15:06:42 / 15:07:10, ESPN2 HD). */
+    private var reconnectChannelId: String? = null
+
     /** Task #150: manual/auto retry for the unavailable overlay. Clears the
      *  flag, resets the no-data heal budget, and re-primes the last URL --
      *  through the LAN/WAN re-probe hook when the screen wired one, so a
@@ -768,6 +775,9 @@ class AerioExoPlayerHolder @Inject constructor(
         // lastPlayUrl is null here (markStreamUnavailable -> stop() cleared it),
         // so fall back to the URL preserved at markStreamUnavailable time.
         val url = lastPlayUrl ?: reconnectUrl ?: return
+        // Restore the id stop() cleared BEFORE the rebuild hook reads it.
+        val channelId = currentChannelIdForRebuild ?: currentChannelId ?: reconnectChannelId
+        channelId?.let { currentChannelIdForRebuild = it }
         _streamUnavailable.value = false
         _lastErrorText.value = null
         noDataHealAttempts = 0
@@ -778,11 +788,12 @@ class AerioExoPlayerHolder @Inject constructor(
                     playUrl(
                         if (!fresh.isNullOrBlank()) fresh else url,
                         lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
+                        channelId = channelId,
                     )
                 }
             }
         } else {
-            playUrl(url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri)
+            playUrl(url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri, channelId = channelId)
         }
     }
 
@@ -2561,6 +2572,7 @@ class AerioExoPlayerHolder @Inject constructor(
         // the server returns). Prefer whatever fresh URL a rebuild hook would
         // yield next; the raw lastPlayUrl is the reliable fallback.
         reconnectUrl = lastPlayUrl ?: reconnectUrl
+        reconnectChannelId = currentChannelIdForRebuild ?: currentChannelId ?: reconnectChannelId
         if (_lastErrorText.value == null) {
             // Quote the server when it told us why; only fall back to the
             // generic no-data line when nothing was said.
@@ -2588,7 +2600,7 @@ class AerioExoPlayerHolder @Inject constructor(
         val attempts = noFrameHealAttempts
         destroy()
         acquireOrCreate(ctx)
-        playUrl(url, title, subtitle, art)
+        playUrl(url, title, subtitle, art, channelId = chan)
         // destroy()/playUrl() reset these; the heal must keep its place in the
         // escalation ladder and the screen's channel identity.
         currentChannelId = chan
@@ -2608,7 +2620,7 @@ class AerioExoPlayerHolder @Inject constructor(
         val chan = currentChannelId
         destroy()
         acquireOrCreate(ctx)
-        playUrl(url, title, subtitle, art)
+        playUrl(url, title, subtitle, art, channelId = chan)
         currentChannelId = chan
         // destroy() cleared the flag's backing player but not the field; keep
         // it set so this session stays on the working sink.
@@ -2644,6 +2656,7 @@ class AerioExoPlayerHolder @Inject constructor(
         // re-preserve the current URL. (retryUnavailable already captured its
         // URL before the playUrl that lands here, so clearing is safe.)
         reconnectUrl = null
+        reconnectChannelId = null
         decoderRetryUsed = false
         streamPrimedAtMs = lastPositionAdvanceAtMs
     }

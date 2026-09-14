@@ -57,7 +57,9 @@ private val PLAYER_EXTENDED_SLOTS = listOf(
     RemoteSlot.CHANNEL_UP, RemoteSlot.CHANNEL_DOWN,
 )
 private val GUIDE_SLOTS = listOf(
-    RemoteSlot.OK_LONG, RemoteSlot.LEFT_LONG, RemoteSlot.RIGHT_LONG,
+    RemoteSlot.OK_SHORT, RemoteSlot.OK_LONG,
+    RemoteSlot.LEFT_SHORT, RemoteSlot.LEFT_LONG,
+    RemoteSlot.RIGHT_SHORT, RemoteSlot.RIGHT_LONG,
 )
 private val GUIDE_EXTENDED_SLOTS = listOf(
     RemoteSlot.PLAY_PAUSE, RemoteSlot.FFWD, RemoteSlot.REWIND,
@@ -82,7 +84,31 @@ private val PLAYER_ACTION_CHOICES = listOf(
     PlayerRemoteAction.NONE,
 )
 
+private val GUIDE_ARROW_SLOTS = setOf(
+    RemoteSlot.OK_SHORT, RemoteSlot.OK_LONG,
+    RemoteSlot.LEFT_SHORT, RemoteSlot.LEFT_LONG,
+    RemoteSlot.RIGHT_SHORT, RemoteSlot.RIGHT_LONG,
+)
+
 private fun guideActionChoices(slot: RemoteSlot): List<GuideRemoteAction> = buildList {
+    if (slot in GUIDE_ARROW_SLOTS) {
+        add(GuideRemoteAction.FOCUS_GROUP_PILLS)
+        add(GuideRemoteAction.TIMELINE_BACK)
+        add(GuideRemoteAction.TIMELINE_FORWARD)
+        // Select has no focus movement of its own to fall back on.
+        if (slot != RemoteSlot.OK_SHORT && slot != RemoteSlot.OK_LONG) add(GuideRemoteAction.NAVIGATE)
+        add(GuideRemoteAction.PROGRAM_INFO)
+        add(GuideRemoteAction.PROGRAM_MENU)
+        add(GuideRemoteAction.RECORD)
+        add(GuideRemoteAction.PLAY)
+        add(GuideRemoteAction.JUMP_TO_NOW)
+        add(GuideRemoteAction.JUMP_TO_DAY)
+        add(GuideRemoteAction.PAGE_UP)
+        add(GuideRemoteAction.PAGE_DOWN)
+        if (slot == RemoteSlot.RIGHT_LONG) add(GuideRemoteAction.CLOSE_MINI_PLAYER)
+        add(GuideRemoteAction.NONE)
+        return@buildList
+    }
     add(GuideRemoteAction.TIMELINE_BACK)
     add(GuideRemoteAction.TIMELINE_FORWARD)
     add(GuideRemoteAction.PAGE_UP)
@@ -101,16 +127,16 @@ private fun guideActionChoices(slot: RemoteSlot): List<GuideRemoteAction> = buil
 
 private val RemoteSlot.displayName: String
     get() = when (this) {
-        RemoteSlot.OK_SHORT -> "OK"
-        RemoteSlot.OK_LONG -> "OK (hold)"
+        RemoteSlot.OK_SHORT -> "Select"
+        RemoteSlot.OK_LONG -> "Select (Hold)"
         RemoteSlot.UP_SHORT -> "Up"
         RemoteSlot.UP_LONG -> "Up (hold)"
         RemoteSlot.DOWN_SHORT -> "Down"
         RemoteSlot.DOWN_LONG -> "Down (hold)"
         RemoteSlot.LEFT_SHORT -> "Left"
-        RemoteSlot.LEFT_LONG -> "Left (hold)"
+        RemoteSlot.LEFT_LONG -> "Left (Hold)"
         RemoteSlot.RIGHT_SHORT -> "Right"
-        RemoteSlot.RIGHT_LONG -> "Right (hold)"
+        RemoteSlot.RIGHT_LONG -> "Right (Hold)"
         RemoteSlot.PLAY_PAUSE -> "Play/Pause"
         RemoteSlot.FFWD -> "Fast Forward"
         RemoteSlot.REWIND -> "Rewind"
@@ -146,6 +172,12 @@ private val PlayerRemoteAction.displayName: String
         PlayerRemoteAction.NONE -> "Do nothing"
     }
 
+/** Guide action name; the group menu is named for the selector it opens. */
+private fun GuideRemoteAction.displayName(sidebarGroups: Boolean): String = when (this) {
+    GuideRemoteAction.FOCUS_GROUP_PILLS -> if (sidebarGroups) "Open sidebar" else "Go to group pills"
+    else -> displayName
+}
+
 private val GuideRemoteAction.displayName: String
     get() = when (this) {
         GuideRemoteAction.PAGE_UP -> "Page channels up"
@@ -158,7 +190,11 @@ private val GuideRemoteAction.displayName: String
         GuideRemoteAction.FOCUS_GROUP_PILLS -> "Go to group pills"
         GuideRemoteAction.RESUME_PLAYER -> "Return to player"
         GuideRemoteAction.CLOSE_MINI_PLAYER -> "Close mini player"
-        GuideRemoteAction.PROGRAM_INFO -> "Program menu"
+        GuideRemoteAction.PROGRAM_INFO -> "Program info"
+        GuideRemoteAction.PROGRAM_MENU -> "Program menu"
+        GuideRemoteAction.RECORD -> "Record"
+        GuideRemoteAction.PLAY -> "Play"
+        GuideRemoteAction.NAVIGATE -> "Move focus"
         GuideRemoteAction.OPEN_SEARCH -> "Search"
         GuideRemoteAction.NONE -> "Do nothing"
     }
@@ -229,12 +265,12 @@ fun RemoteControlSettingsScreen(
 
                 SettingsSection(
                     header = "In the TV Guide",
-                    footer = "What each button does while browsing the guide. Short arrow presses always navigate.",
+                    footer = "What each button does while browsing the guide. A Left or Right set to anything other than Move focus still moves between programs, and runs its action once focus reaches the edge of the timeline (Play, Record, Program info and Program menu run on every press). Up, Down and Back always navigate.",
                 ) {
                     GUIDE_SLOTS.forEach { slot ->
                         SlotRow(
                             slotName = slot.displayName,
-                            valueName = map.guideAction(slot).displayName,
+                            valueName = map.guideAction(slot, groupSelector == "sidebar").displayName(groupSelector == "sidebar"),
                             onClick = { editingGuideSlot = slot },
                         )
                     }
@@ -254,7 +290,7 @@ fun RemoteControlSettingsScreen(
                     GUIDE_EXTENDED_SLOTS.forEach { slot ->
                         SlotRow(
                             slotName = "${slot.displayName} (guide)",
-                            valueName = map.guideAction(slot).displayName,
+                            valueName = map.guideAction(slot).displayName(groupSelector == "sidebar"),
                             onClick = { editingGuideSlot = slot },
                         )
                     }
@@ -273,7 +309,7 @@ fun RemoteControlSettingsScreen(
 
                 SettingsSection(
                     header = "TV Guide Groups",
-                    footer = "How channel groups are picked in the guide. Top pills keep the group row above the grid; the sidebar menu hides that row and opens by holding Left in the grid. Only one is active at a time.",
+                    footer = "How channel groups are picked in the guide. Top pills keep the group row above the grid; the sidebar menu hides that row and opens by holding Left in the grid (unless Left (Hold) is reassigned above). Only one is active at a time.",
                 ) {
                     SlotRow(
                         slotName = "Group Selection",
@@ -361,9 +397,10 @@ fun RemoteControlSettingsScreen(
         TvActionMenuDialog(
             title = slot.displayName,
             actions = guideActionChoices(slot).map { action ->
-                val current = map.guideAction(slot) == action
+                val current = map.guideAction(slot, groupSelector == "sidebar") == action
+                val name = action.displayName(groupSelector == "sidebar")
                 TvMenuAction(
-                    label = if (current) "${action.displayName}  (current)" else action.displayName,
+                    label = if (current) "$name  (current)" else name,
                 ) {
                     saveEdited(map.copy(guide = map.guide + (slot to action)))
                     editingGuideSlot = null

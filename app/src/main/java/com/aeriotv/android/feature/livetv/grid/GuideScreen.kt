@@ -510,6 +510,17 @@ fun GuideScreen(
                 }
                 true
             }
+            com.aeriotv.android.core.remote.GuideRemoteAction.RECORD -> {
+                val row = grid.focusRow; val cell = grid.focusedCell()
+                // Same gate as the program menu's Record item.
+                if (row >= 0 && cell != null && !cell.isPlaceholder && cell.endMillis > nowMs &&
+                    (nowMs in cell.startMillis until cell.endMillis || canRecordToServer)
+                ) {
+                    val ch = grid.rows.channel(row)
+                    recordTarget = cell.toInfoTarget(ch.name, ch.dispatcharrChannelId)
+                }
+                true
+            }
             com.aeriotv.android.core.remote.GuideRemoteAction.OPEN_SEARCH -> { onOpenSearch(); true }
             com.aeriotv.android.core.remote.GuideRemoteAction.JUMP_TO_DAY -> { showJumpSheet = true; true }
             else -> false
@@ -720,8 +731,7 @@ fun GuideScreen(
                 },
                 compact = previewMode,
                 clockSelectTrigger = clockSelectTrigger,
-                remoteAction = { slot -> remoteMap.guideAction(slot) },
-                holdLeftOpensGroups = sidebarGroupMode,
+                remoteAction = { slot -> remoteMap.guideAction(slot, sidebarGroupMode) },
                 onHostAction = hostAction,
                 focusRequester = gridFocus,
                 onGridFocusChanged = { gridHasFocus = it },

@@ -22,7 +22,9 @@ import kotlinx.serialization.json.put
  * Design invariants (do not relax without a plan change):
  * - Back is NEVER a slot: the Back/mini-player/guide-ladder model is
  *   device-verified canon and stays hardcoded.
- * - Guide SHORT arrows are focus navigation, never mappable.
+ * - Guide SHORT Left/Right default to focus navigation ([GuideRemoteAction.NAVIGATE]);
+ *   a remapped short arrow still navigates until focus reaches the edge
+ *   of the timeline (see GuideGrid), so the grid can never trap focus.
  * - Unknown slots/actions in a stored blob are IGNORED on read
  *   (forward compat with newer app versions); missing slots fall back
  *   to [RemoteControlMap.DEFAULT]'s assignment at RESOLVE time, so a
@@ -81,6 +83,14 @@ enum class GuideRemoteAction(val wire: String) {
     FOCUS_GROUP_PILLS("focusGroupPills"),
     RESUME_PLAYER("resumePlayer"), CLOSE_MINI_PLAYER("closeMiniPlayer"),
     PROGRAM_INFO("programInfo"), OPEN_SEARCH("openSearch"),
+    /** The program options menu (the guide's long-press Select menu). */
+    PROGRAM_MENU("programMenu"),
+    /** Tune the focused channel (the guide's Select). */
+    PLAY("play"),
+    /** Open the record sheet for the focused program. */
+    RECORD("record"),
+    /** Ordinary D-pad focus movement (short Left/Right default). */
+    NAVIGATE("navigate"),
     NONE("none");
 
     companion object {
@@ -112,8 +122,20 @@ data class RemoteControlMap(
     fun playerAction(slot: RemoteSlot): PlayerRemoteAction =
         player[slot] ?: DEFAULT.player[slot] ?: PlayerRemoteAction.NONE
 
-    fun guideAction(slot: RemoteSlot): GuideRemoteAction =
-        guide[slot] ?: DEFAULT.guide[slot] ?: GuideRemoteAction.NONE
+    fun guideAction(slot: RemoteSlot): GuideRemoteAction = guideAction(slot, sidebarGroups = false)
+
+    /**
+     * Guide resolve that knows the group selector: an unset Left (Hold)
+     * opens the group sidebar in sidebar mode and browses earlier programs
+     * with the top pills, which is exactly what the guide did before the
+     * slot was offered (it is the one default that depends on a setting).
+     */
+    fun guideAction(slot: RemoteSlot, sidebarGroups: Boolean): GuideRemoteAction =
+        guide[slot] ?: if (slot == RemoteSlot.LEFT_LONG) {
+            if (sidebarGroups) GuideRemoteAction.FOCUS_GROUP_PILLS else GuideRemoteAction.TIMELINE_BACK
+        } else {
+            DEFAULT.guide[slot] ?: GuideRemoteAction.NONE
+        }
 
     /** First slot currently mapped to [action], for dynamic hint copy. */
     fun playerSlotFor(action: PlayerRemoteAction): RemoteSlot? =
@@ -126,6 +148,7 @@ data class RemoteControlMap(
         val obj = buildJsonObject {
             put("version", SCHEMA_VERSION)
             put("preset", preset.wire)
+            put(GUIDE_KEYS_FIELD, GUIDE_KEYS_VERSION)
             put("player", buildJsonObject {
                 player.forEach { (slot, action) -> put(slot.wire, action.wire) }
             })
@@ -138,6 +161,12 @@ data class RemoteControlMap(
 
     companion object {
         const val SCHEMA_VERSION = 1
+
+        /** Marks a blob written after the guide Select/Left/Right slots
+         *  became honored. Older CUSTOM blobs carry full slot dumps whose
+         *  okLong / leftLong values the guide never read; see [fromJson]. */
+        private const val GUIDE_KEYS_FIELD = "guideKeys"
+        private const val GUIDE_KEYS_VERSION = 2
 
         /** The PRE-initiative control scheme, kept verbatim so any
          *  regression can be reverted by pointing DEFAULT back at it.
@@ -171,8 +200,9 @@ data class RemoteControlMap(
          *  unmapped - options live on the chrome's Options button): OK =
          *  show controls, Up/Down = channel surf, hold-Up = recently
          *  watched, hold-Down = search, Right = previous-channel zap,
-         *  hold-Right = program info, hold-Left in the guide pages into
-         *  already-aired programmes. */
+         *  hold-Right = program info. In the guide, Select plays, hold-Select
+         *  opens the program menu, hold-Left opens the group menu (sidebar
+         *  mode) or browses earlier programs (top pills). */
         val DEFAULT = RemoteControlMap(
             preset = RemotePreset.DEFAULT,
             player = mapOf(
@@ -192,13 +222,17 @@ data class RemoteControlMap(
                 RemoteSlot.CHANNEL_UP to PlayerRemoteAction.CHANNEL_UP,
                 RemoteSlot.CHANNEL_DOWN to PlayerRemoteAction.CHANNEL_DOWN,
             ),
+            // LEFT_LONG is deliberately absent: its default depends on the
+            // group selector and is resolved in guideAction(slot, sidebarGroups).
             guide = mapOf(
                 RemoteSlot.FFWD to GuideRemoteAction.PAGE_DOWN,
                 RemoteSlot.REWIND to GuideRemoteAction.PAGE_UP,
                 RemoteSlot.CHANNEL_UP to GuideRemoteAction.PAGE_UP,
                 RemoteSlot.CHANNEL_DOWN to GuideRemoteAction.PAGE_DOWN,
-                RemoteSlot.OK_LONG to GuideRemoteAction.PROGRAM_INFO,
-                RemoteSlot.LEFT_LONG to GuideRemoteAction.TIMELINE_BACK,
+                RemoteSlot.OK_SHORT to GuideRemoteAction.PLAY,
+                RemoteSlot.OK_LONG to GuideRemoteAction.PROGRAM_MENU,
+                RemoteSlot.LEFT_SHORT to GuideRemoteAction.NAVIGATE,
+                RemoteSlot.RIGHT_SHORT to GuideRemoteAction.NAVIGATE,
                 RemoteSlot.RIGHT_LONG to GuideRemoteAction.CLOSE_MINI_PLAYER,
                 RemoteSlot.PLAY_PAUSE to GuideRemoteAction.RESUME_PLAYER,
             ),
@@ -222,12 +256,34 @@ data class RemoteControlMap(
                 // lastChannel after the scheme moved it to recentChannels).
                 // Stored slots are only authoritative for CUSTOM.
                 if (preset == RemotePreset.DEFAULT) return DEFAULT
+                var guide = decodeContext(obj["guide"] as? JsonObject) { GuideRemoteAction.fromWire(it) }
+                if (obj[GUIDE_KEYS_FIELD] == null) guide = migrateLegacyGuide(guide)
                 RemoteControlMap(
                     preset = preset,
                     player = decodeContext(obj["player"] as? JsonObject) { PlayerRemoteAction.fromWire(it) },
-                    guide = decodeContext(obj["guide"] as? JsonObject) { GuideRemoteAction.fromWire(it) },
+                    guide = guide,
                 )
             }.getOrDefault(DEFAULT)
+        }
+
+        /**
+         * Pre-guideKeys blobs: the guide ignored okLong (always the program
+         * menu) and, in sidebar mode, leftLong (always the sidebar); a
+         * leftLong of NONE fell back to the group menu. Drop or rewrite those
+         * values so the saved map keeps doing what it did on device.
+         */
+        internal fun migrateLegacyGuide(guide: Map<RemoteSlot, GuideRemoteAction>): Map<RemoteSlot, GuideRemoteAction> {
+            val out = guide.toMutableMap()
+            out.remove(RemoteSlot.OK_SHORT)
+            out.remove(RemoteSlot.OK_LONG)
+            out.remove(RemoteSlot.LEFT_SHORT)
+            out.remove(RemoteSlot.RIGHT_SHORT)
+            when (out[RemoteSlot.LEFT_LONG]) {
+                GuideRemoteAction.TIMELINE_BACK -> out.remove(RemoteSlot.LEFT_LONG)
+                GuideRemoteAction.NONE -> out[RemoteSlot.LEFT_LONG] = GuideRemoteAction.FOCUS_GROUP_PILLS
+                else -> Unit
+            }
+            return out
         }
 
         private fun <A : Any> decodeContext(

@@ -113,10 +113,8 @@ fun GuideGrid(
     onOpenMenu: (M3UChannel, EPGProgramme) -> Unit,
     /** UP at the top row; return true if focus was taken. */
     onLeaveTop: () -> Boolean,
-    /** Remote map lookup for a slot (media keys, held Left/Right). */
+    /** Remote map lookup for a slot (Select, Left, Right, their holds, media keys); already resolved for the group selector. */
     remoteAction: (RemoteSlot) -> GuideRemoteAction,
-    /** Sidebar group mode: a held Left always opens the docked group menu, whatever the map says. */
-    holdLeftOpensGroups: Boolean,
     /** Host-level actions (group pills, mini player, program info, search). Return true if handled. */
     onHostAction: (GuideRemoteAction) -> Boolean,
     focusRequester: FocusRequester,
@@ -195,7 +193,15 @@ fun GuideGrid(
             GuideRemoteAction.TIMELINE_FORWARD -> { state.panBy((state.viewportDurationMs * 0.85f).toLong()); true }
             GuideRemoteAction.PAGE_UP -> { state.moveRows(-pageRows(listState)); true }
             GuideRemoteAction.PAGE_DOWN -> { state.moveRows(+pageRows(listState)); true }
-            GuideRemoteAction.NONE -> true
+            GuideRemoteAction.NONE, GuideRemoteAction.NAVIGATE -> true
+            GuideRemoteAction.PLAY, GuideRemoteAction.PROGRAM_MENU -> {
+                val channel = state.focusRow.takeIf { it >= 0 }?.let { state.rows.channel(it) }
+                val cell = state.focusedCell()
+                if (channel != null && cell != null) {
+                    if (action == GuideRemoteAction.PLAY) onPlay(channel, cell) else onOpenMenu(channel, cell)
+                }
+                true
+            }
             else -> onHostAction(action)
         }
     }
@@ -266,15 +272,24 @@ fun GuideGrid(
                 // Left/Right pan on RELEASE, not on press (Logan 2026-09-02): a
                 // held Left opens the group sidebar and must not pan the
                 // timeline first; a held Right maps to its own action too.
+                // Both presses and holds come from the remote map (Settings >
+                // Remote Control); a hold mapped to NAVIGATE does not latch, so
+                // its release runs the short press instead.
                 Key.DirectionRight -> {
                     if (down) {
                         if (repeat == 0) { rightHoldLatched = false; rightDownSeen = true }
-                        if (!rightHoldLatched && held) {
+                        val holdAction = remoteAction(RemoteSlot.RIGHT_LONG)
+                        if (!rightHoldLatched && held && holdAction != GuideRemoteAction.NAVIGATE) {
                             rightHoldLatched = true
-                            runAction(remoteAction(RemoteSlot.RIGHT_LONG))
+                            runAction(holdAction)
                         }
                     } else if (up) {
-                        if (rightDownSeen && !rightHoldLatched) state.stepRight()
+                        if (rightDownSeen && !rightHoldLatched) {
+                            val action = remoteAction(RemoteSlot.RIGHT_SHORT)
+                            // Edge-gated: a remapped Right still steps until the row runs out of programs.
+                            if (action == GuideRemoteAction.NAVIGATE || (!action.columnIndependent && !state.atLastCell())) state.stepRight()
+                            else runAction(action)
+                        }
                         rightDownSeen = false
                     }
                     true
@@ -282,14 +297,19 @@ fun GuideGrid(
                 Key.DirectionLeft -> {
                     if (down) {
                         if (repeat == 0) { leftHoldLatched = false; leftDownSeen = true }
-                        if (!leftHoldLatched && held) {
+                        val holdAction = remoteAction(RemoteSlot.LEFT_LONG)
+                        if (!leftHoldLatched && held && holdAction != GuideRemoteAction.NAVIGATE) {
                             leftHoldLatched = true
-                            // Held Left is the group menu unless the user mapped it away.
-                            val mapped = if (holdLeftOpensGroups) GuideRemoteAction.FOCUS_GROUP_PILLS else remoteAction(RemoteSlot.LEFT_LONG)
-                            runAction(if (mapped == GuideRemoteAction.NONE) GuideRemoteAction.FOCUS_GROUP_PILLS else mapped)
+                            runAction(holdAction)
                         }
                     } else if (up) {
-                        if (leftDownSeen && !leftHoldLatched) state.stepLeft(nowMs)
+                        if (leftDownSeen && !leftHoldLatched) {
+                            val action = remoteAction(RemoteSlot.LEFT_SHORT)
+                            // Edge-gated: a remapped Left still moves the ring until focus is in
+                            // the first program column (where the locked rule would pan).
+                            if (action == GuideRemoteAction.NAVIGATE || (!action.columnIndependent && !state.leftStepWouldPan(nowMs))) state.stepLeft(nowMs)
+                            else runAction(action)
+                        }
                         leftDownSeen = false
                     }
                     true
@@ -309,12 +329,12 @@ fun GuideGrid(
                         if (repeat == 0) { okLongLatched = false; okDownSeen = true }
                         if (!okLongLatched && repeat >= OK_LONG_REPEATS) {
                             okLongLatched = true
-                            onOpenMenu(channel, cell)
+                            runAction(remoteAction(RemoteSlot.OK_LONG))
                         }
                     } else if (up) {
-                        // Only a press that STARTED on the grid plays: the KeyUp of
+                        // Only a press that STARTED on the grid acts: the KeyUp of
                         // the press that opened the tab must not tune a channel.
-                        if (okDownSeen && !okLongLatched) onPlay(channel, cell)
+                        if (okDownSeen && !okLongLatched) runAction(remoteAction(RemoteSlot.OK_SHORT))
                         okDownSeen = false
                     }
                     true
@@ -860,6 +880,16 @@ val LocalLogoCache = staticCompositionLocalOf<GuideLogoCache> { error("GuideLogo
 private const val LANE_ROWS = 6
 private const val HOLD_LEFT_REPEATS = 4
 private const val OK_LONG_REPEATS = 1
+/**
+ * Actions about the focused program itself. Mapped to a short Left/Right
+ * they fire on every press; every other action (group menu, timeline,
+ * paging, Nothing, ...) fires only at the timeline edge and the arrow
+ * navigates elsewhere, so focus can always leave the first column.
+ */
+private val GuideRemoteAction.columnIndependent: Boolean
+    get() = this == GuideRemoteAction.PLAY || this == GuideRemoteAction.PROGRAM_MENU ||
+        this == GuideRemoteAction.PROGRAM_INFO || this == GuideRemoteAction.RECORD
+
 private fun GuideRemoteAction.orDefault(default: GuideRemoteAction) = if (this == GuideRemoteAction.NONE) default else this
 private const val MIN_CELL_PX = 6f
 private const val RAIL_NUMBER_KEY = Long.MIN_VALUE + 1
