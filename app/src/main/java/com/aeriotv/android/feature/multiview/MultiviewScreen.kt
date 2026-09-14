@@ -1608,6 +1608,8 @@ private fun ExoTile(
     val playerRef = remember { mutableStateOf<ExoPlayer?>(null) }
     val statsStopRef = remember { mutableStateOf<java.util.concurrent.atomic.AtomicBoolean?>(null) }
     val audioGateRef = remember { mutableStateOf<com.aeriotv.android.core.playback.TileAudioGate?>(null) }
+    // Live tile connections, closed on swap / re-prime / release (see TileLiveCalls).
+    val liveCalls = remember { TileLiveCalls() }
     // Once-only resume seek guard (first STATE_READY for a VOD tile).
     val didResumeRef = remember(tile.id) { mutableStateOf(false) }
     // A channel kept live in the background (Keep Recent Channels Live) holds
@@ -1656,13 +1658,14 @@ private fun ExoTile(
                     .setPrioritizeTimeOverSizeThresholds(true)
                     .build()
             }
+            // Send a real player UA (parity with live path); some panels
+            // reject the platform "Dalvik/..." default.
+            val tileUserAgent = "AerioTV/${com.aeriotv.android.BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})"
             val httpFactory = DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(30_000)
                 .setReadTimeoutMs(30_000)
-                // Send a real player UA (parity with live path); some panels
-                // reject the platform "Dalvik/..." default.
-                .setUserAgent("AerioTV/${com.aeriotv.android.BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})")
+                .setUserAgent(tileUserAgent)
             if (headers.isNotEmpty()) {
                 httpFactory.setDefaultRequestProperties(headers)
                 headers.entries
@@ -1673,18 +1676,22 @@ private fun ExoTile(
             // VOD/DVR: wrap the header-aware HTTP factory in
             // DefaultDataSource.Factory so a completed-recording file:// URL
             // resolves through FileDataSource (a bare HTTP factory cannot open
-            // file://, cf VODPlayerScreen.kt). LIVE keeps the bare HTTP factory
-            // + TsExtractor routing.
+            // file://, cf VODPlayerScreen.kt). LIVE gets a fresh tracked
+            // OkHttp factory per source (same headers, UA and 30 s timeouts)
+            // so a superseded source's socket can be closed, + TsExtractor
+            // routing. Call only inside liveCalls.setSource.
             // Byte-flow accounting for the [FEED] heartbeat. Pass-through
             // only; it counts bytes and changes nothing about the transfer.
-            val dataSourceFactory: androidx.media3.datasource.DataSource.Factory =
-                tracer.wrapDataSourceFactory(
-                    if (isVod || tile.kind == TileKind.Dvr) {
-                        DefaultDataSource.Factory(ctx, httpFactory)
-                    } else {
-                        httpFactory
-                    },
-                )
+            val vodDataSourceFactory: androidx.media3.datasource.DataSource.Factory? =
+                if (isVod || tile.kind == TileKind.Dvr) {
+                    tracer.wrapDataSourceFactory(DefaultDataSource.Factory(ctx, httpFactory))
+                } else {
+                    null
+                }
+            val dataSourceFactory: () -> androidx.media3.datasource.DataSource.Factory = {
+                vodDataSourceFactory
+                    ?: tracer.wrapDataSourceFactory(liveCalls.newFactory(headers, tileUserAgent, 30_000))
+            }
             // Tiles decode audio to PCM (no passthrough): PCM AudioTracks are
             // mixed by the platform in any number, so every tile can keep its
             // audio track selected and focus changes are a volume flip. The
@@ -1825,7 +1832,7 @@ private fun ExoTile(
                             .buildUpon()
                             .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
                             .build()
-                        player.setMediaSource(buildTileMediaSource(retryUrl, dataSourceFactory))
+                        liveCalls.setSource(player) { buildTileMediaSource(retryUrl, dataSourceFactory()) }
                         tracer.recover("audio sink fallback (${error.errorCodeName})")
                         tracer.markTuneStart(channelName, traceKind)
                         player.prepare()
@@ -1864,7 +1871,7 @@ private fun ExoTile(
                     lastRetryAtMs = now
                     consecutiveRetries++
                     Log.w(TAG, "Tile re-prepare on error: $channelName ${error.errorCodeName} attempt=$consecutiveRetries")
-                    player.setMediaSource(buildTileMediaSource(retryUrl, dataSourceFactory))
+                    liveCalls.setSource(player) { buildTileMediaSource(retryUrl, dataSourceFactory()) }
                     tracer.recover("tile re-prepare attempt=$consecutiveRetries")
                     tracer.markTuneStart(channelName, traceKind)
                     player.prepare()
@@ -1879,7 +1886,7 @@ private fun ExoTile(
                 val u = currentUrlRef.value
                 if (p != null && u.isNotBlank()) {
                     Log.i(TAG, "Tile error-overlay retry: $channelName")
-                    p.setMediaSource(buildTileMediaSource(u, dataSourceFactory))
+                    liveCalls.setSource(p) { buildTileMediaSource(u, dataSourceFactory()) }
                     tracer.recover("tile error-overlay retry")
                     tracer.markTuneStart(channelName, traceKind)
                     p.prepare()
@@ -1888,7 +1895,7 @@ private fun ExoTile(
 
             Log.i(TAG, "Tile ExoPlayer loading: $channelName")
             if (url.isNotBlank()) {
-                player.setMediaSource(buildTileMediaSource(url, dataSourceFactory))
+                liveCalls.setSource(player) { buildTileMediaSource(url, dataSourceFactory()) }
                 tracer.markTuneStart(channelName, traceKind)
                 player.prepare()
                 currentUrlRef.value = url
@@ -1927,21 +1934,31 @@ private fun ExoTile(
             // teardown -- hand the new URL to the same player.
             if (url.isNotBlank() && currentUrlRef.value != url) {
                 Log.i(TAG, "Tile ExoPlayer swap: ${currentUrlRef.value} -> $url")
-                val swapHttp = DefaultHttpDataSource.Factory()
-                    .setAllowCrossProtocolRedirects(true)
-                if (headers.isNotEmpty()) {
-                    swapHttp.setDefaultRequestProperties(headers)
+                // setSource closes the old channel's live connection once the
+                // player has dropped it; the swap factory is built inside so
+                // the new source's tracker is never the one retired.
+                liveCalls.setSource(player) {
+                    // Same file://-capable wrap as the factory path for VOD/DVR.
+                    val swapFactory: androidx.media3.datasource.DataSource.Factory =
+                        tracer.wrapDataSourceFactory(
+                            if (isVod || tile.kind == TileKind.Dvr) {
+                                val swapHttp = DefaultHttpDataSource.Factory()
+                                    .setAllowCrossProtocolRedirects(true)
+                                if (headers.isNotEmpty()) {
+                                    swapHttp.setDefaultRequestProperties(headers)
+                                }
+                                DefaultDataSource.Factory(view.context, swapHttp)
+                            } else {
+                                // DefaultHttpDataSource defaults: 8 s connect + read.
+                                liveCalls.newFactory(
+                                    headers,
+                                    "AerioTV/${com.aeriotv.android.BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})",
+                                    8_000,
+                                )
+                            },
+                        )
+                    buildTileMediaSource(url, swapFactory)
                 }
-                // Same file://-capable wrap as the factory path for VOD/DVR.
-                val swapFactory: androidx.media3.datasource.DataSource.Factory =
-                    tracer.wrapDataSourceFactory(
-                        if (isVod || tile.kind == TileKind.Dvr) {
-                            DefaultDataSource.Factory(view.context, swapHttp)
-                        } else {
-                            swapHttp
-                        },
-                    )
-                player.setMediaSource(buildTileMediaSource(url, swapFactory))
                 tracer.markPress(channelName)
                 tracer.markTuneStart(channelName, traceKind)
                 player.prepare()
@@ -1975,7 +1992,8 @@ private fun ExoTile(
             tracer.tracedPlayer = null
             playerRef.value?.let {
                 it.removeAnalyticsListener(tracer.analyticsListener)
-                it.release()
+                // Releases, then closes any live socket still parked in a read.
+                liveCalls.release(it)
                 com.aeriotv.android.core.playback.PlaybackActivityTracker.playerReleased()
             }
             playerRef.value = null
