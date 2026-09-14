@@ -55,6 +55,7 @@ class GroupTokensTest {
     fun syntheticTokensAreRecognized() {
         assertTrue(isSyntheticGroupToken(PlaylistViewModel.FAVORITES_GROUP))
         assertTrue(isSyntheticGroupToken(PlaylistViewModel.ALL_GROUPS))
+        assertTrue(isSyntheticGroupToken(PlaylistViewModel.RECENT_GROUP))
         assertTrue(isSyntheticGroupToken(ChannelCollection.token("1")))
     }
 
@@ -72,6 +73,7 @@ class GroupTokensTest {
     fun syntheticTokensGetHumanLabels() {
         assertEquals("Favorites", groupDisplayName(PlaylistViewModel.FAVORITES_GROUP))
         assertEquals("All Channels", groupDisplayName(PlaylistViewModel.ALL_GROUPS))
+        assertEquals("Recently Watched", groupDisplayName(PlaylistViewModel.RECENT_GROUP))
     }
 
     @Test
@@ -101,28 +103,72 @@ class GroupTokensTest {
     }
 
     @Test
-    fun recentlyWatchedAppliesWhenNoDefaultIsSet() {
+    fun theLastUsedGroupAppliesWhenNoDefaultIsSet() {
         assertEquals("Sports", launchGroupToken("", "Sports", groups))
         assertEquals("Sports", launchGroupToken(null, "Sports", groups))
     }
 
     @Test
-    fun staleDefaultFallsBackToTheRecentlyWatchedGroup() {
+    fun staleDefaultFallsBackToTheLastUsedGroup() {
         assertEquals("Sports", launchGroupToken("Gone", "Sports", groups))
     }
 
     /**
-     * Logan 2026-09-14: with the Manage Groups "Recently Watched" toggle off
-     * the last used group is never consulted, so a stored Recently Watched
-     * default (the empty token) lands on the caller's All Channels fallback.
+     * Logan 2026-09-14: Recently Watched is a real group token now, so it is a
+     * Default Group like any other and restores unconditionally (no channel
+     * carries that group name).
      */
     @Test
-    fun recentlyWatchedDefaultFallsBackToAllWhenTheToggleIsOff() {
-        assertNull(launchGroupToken("", "Sports", groups, recentlyWatchedEnabled = false))
-        assertNull(launchGroupToken(null, "Sports", groups, recentlyWatchedEnabled = false))
-        assertNull(launchGroupToken("Gone", "Sports", groups, recentlyWatchedEnabled = false))
-        // An explicit default still wins with the toggle off.
-        assertEquals("News", launchGroupToken("News", "Sports", groups, recentlyWatchedEnabled = false))
+    fun recentlyWatchedIsADefaultGroupLikeAnyOther() {
+        assertEquals(
+            PlaylistViewModel.RECENT_GROUP,
+            launchGroupToken(PlaylistViewModel.RECENT_GROUP, "Sports", groups),
+        )
+        assertEquals(
+            PlaylistViewModel.RECENT_GROUP,
+            restoredGroupToken(PlaylistViewModel.RECENT_GROUP, emptyList()),
+        )
+    }
+
+    /** The Recently Watched token is pinned into the ordered list and hides
+     *  like any group through the hidden set. */
+    @Test
+    fun recentlyWatchedIsPinnedAndHideable() {
+        val ordered = orderGroups(groups, GroupSortMode.Default, emptyList(), hasRecent = true)
+        assertTrue(PlaylistViewModel.RECENT_GROUP in ordered)
+        val hidden = setOf(PlaylistViewModel.RECENT_GROUP)
+        val tokens = groupTokens(ordered.filterNot { it in hidden }, hidden)
+        assertTrue(PlaylistViewModel.RECENT_GROUP !in tokens)
+    }
+
+    /** Manage Groups commits one hidden set; the Recently Watched token in it
+     *  is the visibility pref, not a hidden provider group. */
+    @Test
+    fun managedGroupsSplitsTheRecentlyWatchedVisibility() {
+        var hidden: Set<String>? = null
+        var visible: Boolean? = null
+        applyManagedGroups(
+            committed = setOf("News", PlaylistViewModel.RECENT_GROUP),
+            currentHidden = emptySet(),
+            currentRecentVisible = true,
+            setHiddenGroups = { hidden = it },
+            setRecentVisible = { visible = it },
+        )
+        assertEquals(setOf("News"), hidden)
+        assertEquals(false, visible)
+
+        // Checking it writes the pref and leaves the hidden set alone.
+        hidden = null
+        visible = null
+        applyManagedGroups(
+            committed = setOf("News"),
+            currentHidden = setOf("News"),
+            currentRecentVisible = false,
+            setHiddenGroups = { hidden = it },
+            setRecentVisible = { visible = it },
+        )
+        assertNull(hidden)
+        assertEquals(true, visible)
     }
 
     @Test

@@ -33,6 +33,7 @@ fun fallbackGroupToken(tokens: List<String>): String =
 fun isSyntheticGroupToken(token: String): Boolean =
     token == PlaylistViewModel.ALL_GROUPS ||
         token == PlaylistViewModel.FAVORITES_GROUP ||
+        token == PlaylistViewModel.RECENT_GROUP ||
         token.startsWith(com.aeriotv.android.core.data.ChannelCollection.TOKEN_PREFIX)
 
 /**
@@ -74,6 +75,7 @@ fun groupDisplayName(
 ): String = when {
     token == PlaylistViewModel.ALL_GROUPS -> "All Channels"
     token == PlaylistViewModel.FAVORITES_GROUP -> "Favorites"
+    token == PlaylistViewModel.RECENT_GROUP -> "Recently Watched"
     token.startsWith(com.aeriotv.android.core.data.ChannelCollection.TOKEN_PREFIX) -> {
         val id = com.aeriotv.android.core.data.ChannelCollection.idFromToken(token)
         collections.firstOrNull { it.id == id }?.name ?: "Collection"
@@ -84,23 +86,41 @@ fun groupDisplayName(
 /**
  * GH #81: which group Live TV opens on for a playlist.
  *
- * [defaultToken] is the user's "Default Group" setting (empty = All Channels,
- * or "Recently Watched" when that option is enabled), [lastUsedToken] the group
- * the playlist was left on. Both are validated against [knownGroupNames]
+ * [defaultToken] is the user's "Default Group" setting, [lastUsedToken] the
+ * group the playlist was left on. Both are validated against [knownGroupNames]
  * exactly like [restoredGroupToken] does, so a default pointing at a group the
- * provider dropped degrades instead of filtering the guide down to nothing.
+ * provider dropped degrades to the last used group (and then to the caller's
+ * own All Channels fallback) instead of filtering the guide down to nothing.
  *
- * [recentlyWatchedEnabled] is the Manage Groups toggle (Logan 2026-09-14). It
- * is off by default: the picker then offers All Channels, Favorites and the
- * visible groups only, and a previously stored Recently Watched default (the
- * empty token) falls back to All Channels because the last used group is not
- * consulted at all. Returns null when nothing resolves, which is the caller's
- * All Channels fallback.
+ * With no default set the last selected group is restored (Logan 2026-09-14).
+ * That is internal behavior with no user-facing name: the Default Group picker
+ * shows All Channels as the selection until the user picks something.
+ * Returns null when neither resolves.
  */
 fun launchGroupToken(
     defaultToken: String?,
     lastUsedToken: String?,
     knownGroupNames: Collection<String>,
-    recentlyWatchedEnabled: Boolean = true,
 ): String? = restoredGroupToken(defaultToken, knownGroupNames)
-    ?: if (recentlyWatchedEnabled) restoredGroupToken(lastUsedToken, knownGroupNames) else null
+    ?: restoredGroupToken(lastUsedToken, knownGroupNames)
+
+/**
+ * Split what Manage Groups committed back into its two stores (Logan
+ * 2026-09-14). The sheets know one mechanism, the hidden set, so the synthetic
+ * Recently Watched group rides in it: absent from the set means checked, which
+ * is the [com.aeriotv.android.core.preferences.AppPreferences.recentGroupVisible]
+ * pref. Writes only what actually changed, so a Done with no edits costs no
+ * DataStore round trip.
+ */
+fun applyManagedGroups(
+    committed: Set<String>,
+    currentHidden: Set<String>,
+    currentRecentVisible: Boolean,
+    setHiddenGroups: (Set<String>) -> Unit,
+    setRecentVisible: (Boolean) -> Unit,
+) {
+    val hidden = committed - PlaylistViewModel.RECENT_GROUP
+    val recentVisible = PlaylistViewModel.RECENT_GROUP !in committed
+    if (hidden != currentHidden) setHiddenGroups(hidden)
+    if (recentVisible != currentRecentVisible) setRecentVisible(recentVisible)
+}

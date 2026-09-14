@@ -179,7 +179,11 @@ fun ChannelListScreen(
     val groupSortModeRaw by settingsVm.groupSortMode.collectAsStateWithLifecycle(initialValue = "Default")
     val groupOrder by settingsVm.groupOrder.collectAsStateWithLifecycle(initialValue = emptyList())
     val groupSortMode = com.aeriotv.android.feature.livetv.GroupSortMode.from(groupSortModeRaw)
-    val recentlyWatchedGroup by settingsVm.recentlyWatchedGroupEnabled.collectAsStateWithLifecycle()
+    // Logan 2026-09-14: Recently Watched is a synthetic group, unchecked in
+    // Manage Groups until the user shows it; the pref folds into the hidden
+    // set so the sheet and the filters keep one mechanism.
+    val recentGroupVisible by settingsVm.recentGroupVisible.collectAsStateWithLifecycle()
+    val recentChannelIds by settingsVm.recentChannelIds.collectAsStateWithLifecycle(initialValue = emptyList())
 
     // Catch-up (task #137): resolve a past programme to its timeshift URL,
     // then play; failures surface as a toast (same flow as GuideScreen).
@@ -258,17 +262,25 @@ fun ChannelListScreen(
                 .toList()
             // Apply the user's Manage Groups sort preference (Default / A-Z /
             // Manual) on top of the source order.
-            com.aeriotv.android.feature.livetv.orderGroups(sourceOrder, groupSortMode, groupOrder, hasFavorites = favoriteIds.isNotEmpty())
+            com.aeriotv.android.feature.livetv.orderGroups(
+                sourceOrder, groupSortMode, groupOrder,
+                hasFavorites = favoriteIds.isNotEmpty(), hasRecent = true,
+            )
         }
     }
 
-    val groups by remember(allGroupsRaw, hiddenGroups) {
+    val effectiveHidden = remember(hiddenGroups, recentGroupVisible) {
+        if (recentGroupVisible) hiddenGroups
+        else hiddenGroups + PlaylistViewModel.RECENT_GROUP
+    }
+
+    val groups by remember(allGroupsRaw, effectiveHidden) {
         derivedStateOf {
             // Drop any provider group literally named "All" -- it collides with
             // the ALL_GROUPS sentinel and crashes the pill LazyRow on a
             // duplicate key (#45 review).
-            val visible = allGroupsRaw.filterNot { it in hiddenGroups }
-            com.aeriotv.android.feature.livetv.groupTokens(visible, hiddenGroups)
+            val visible = allGroupsRaw.filterNot { it in effectiveHidden }
+            com.aeriotv.android.feature.livetv.groupTokens(visible, effectiveHidden)
         }
     }
     // GH #80: All can be hidden; a stranded selection lands on the first pill.
@@ -292,15 +304,15 @@ fun ChannelListScreen(
     val filtered by androidx.compose.runtime.produceState(
         initialValue = com.aeriotv.android.feature.livetv.computeDisplayChannels(
             state.channels, state.selectedGroup, state.searchQuery, state.sortMode,
-            allGroupsRaw, groupSortMode, hiddenGroups, favoriteIds, collections,
+            allGroupsRaw, groupSortMode, effectiveHidden, favoriteIds, collections, recentChannelIds,
         ),
         state.channels, state.selectedGroup, state.searchQuery, state.sortMode,
-        allGroupsRaw, groupSortMode, hiddenGroups, favoriteIds, collections,
+        allGroupsRaw, groupSortMode, effectiveHidden, favoriteIds, collections, recentChannelIds,
     ) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             com.aeriotv.android.feature.livetv.computeDisplayChannels(
                 state.channels, state.selectedGroup, state.searchQuery, state.sortMode,
-                allGroupsRaw, groupSortMode, hiddenGroups, favoriteIds, collections,
+                allGroupsRaw, groupSortMode, effectiveHidden, favoriteIds, collections, recentChannelIds,
             )
         }
     }
@@ -382,7 +394,6 @@ fun ChannelListScreen(
                 if (!searchActive) viewModel.onSearchQueryChange("")
             },
             modifier = Modifier.statusBarsPadding(),
-            syncing = state.isLoading || state.isEpgLoading,
             extraActions = {
                 com.aeriotv.android.feature.livetv.RetainedChannelsAction(
                     viewModel = retainedVm,
@@ -757,14 +768,18 @@ fun ChannelListScreen(
     if (manageGroupsOpen) {
         ManageGroupsSheet(
             allGroups = allGroupsRaw,
-            hiddenGroups = hiddenGroups,
-            onSave = { settingsVm.setHiddenGroups(it) },
+            hiddenGroups = effectiveHidden,
+            onSave = { committed ->
+                com.aeriotv.android.feature.livetv.applyManagedGroups(
+                    committed, hiddenGroups, recentGroupVisible,
+                    setHiddenGroups = { settingsVm.setHiddenGroups(it) },
+                    setRecentVisible = { settingsVm.setRecentGroupVisible(it) },
+                )
+            },
             onDismiss = { manageGroupsOpen = false },
             reorderEnabled = true,
             sortMode = groupSortMode,
             onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
-            recentlyWatchedEnabled = recentlyWatchedGroup,
-            onRecentlyWatchedChange = { settingsVm.setRecentlyWatchedGroupEnabled(it) },
             onReorder = { settingsVm.setGroupOrder(it) },
         )
     }

@@ -377,38 +377,6 @@ fun LiveTvPhoneCircle(
 }
 
 /**
- * Background-activity indicator for the phone Live TV header: an 18dp refresh
- * glyph rotating once per second, laid out in the same 38dp slot the header
- * circles use so the row does not jump when it appears. It is NOT a button:
- * no click, no ripple, no focus target. Pull to refresh remains the manual
- * trigger.
- */
-@Composable
-private fun LiveTvPhoneSyncSpinner() {
-    val transition = rememberInfiniteTransition(label = "headerSync")
-    val angle by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "headerSyncAngle",
-    )
-    Box(
-        modifier = Modifier.size(38.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Filled.Refresh,
-            contentDescription = "Syncing",
-            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-            modifier = Modifier.size(18.dp).rotate(angle),
-        )
-    }
-}
-
-/**
  * Phone header row (Apple `phoneHeaderRow`, ChannelListView.swift:755-820,
  * Logan 2026-09-05 mockup "Phone - Live TV"). No title bar above it: the tab
  * bar already says where we are. Left to right: the groups control (drawer
@@ -450,11 +418,6 @@ fun LiveTvPhoneHeaderRow(
     /** Extra circles between the group area and the overflow button (the
      *  kept-live indicator); these are status indicators, not menu actions. */
     extraActions: @Composable () -> Unit = {},
-    /** True while the channel list or the guide is still loading. Draws a
-     *  small spinning refresh glyph in the header. INDICATOR ONLY: pull to
-     *  refresh stays the manual trigger (Logan 2026-09-14, replacing the
-     *  "Syncing | Tap for Info" pill that covered the sidebar button). */
-    syncing: Boolean = false,
     /** Guide only: opens the jump-to-day sheet. Null hides the menu item. */
     onJumpToDay: (() -> Unit)? = null,
     canToggleViewMode: Boolean,
@@ -522,7 +485,6 @@ fun LiveTvPhoneHeaderRow(
                 Spacer(Modifier.weight(1f).widthIn(min = 4.dp))
             }
         }
-        if (syncing) LiveTvPhoneSyncSpinner()
         extraActions()
         if (collapsible) {
             // Pills are showing, so the row cannot afford four circles. The

@@ -150,8 +150,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     // ---- GH #81: Default Group (App Behaviors) -------------------------------
-    // The group Live TV opens on, per playlist. Empty token = "Last used",
-    // which leaves the restore-last-selection path (901e6885) in charge.
+    // The group Live TV opens on, per playlist. An empty token leaves the
+    // restore-last-selection path (901e6885) in charge, which the picker shows
+    // as All Channels because that is where a first launch lands.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val activePlaylistId: StateFlow<String?> = playlistRepository.observeActiveId()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -174,30 +175,39 @@ class SettingsViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
-    /** Empty token stores nothing, which is the "Recently Watched" option when it is enabled, and All Channels otherwise. */
+    /**
+     * Empty token stores nothing, which reads as All Channels in the picker.
+     * Picking Recently Watched also checks it in Manage Groups (Logan
+     * 2026-09-14): a default the user can never see would open on an empty
+     * group list.
+     */
     fun setDefaultGroupToken(token: String) {
         val id = activePlaylistId.value
         if (id.isNullOrBlank()) return
-        viewModelScope.launch { prefs.setDefaultGroupToken(id, token) }
+        viewModelScope.launch {
+            prefs.setDefaultGroupToken(id, token)
+            if (token == com.aeriotv.android.feature.playlist.PlaylistViewModel.RECENT_GROUP) {
+                prefs.setRecentGroupVisible(id, true)
+            }
+        }
     }
 
     /**
-     * Manage Groups "Recently Watched" opt-in, per playlist (Logan
-     * 2026-09-14). Off by default; only when it is on does the Default Group
-     * picker offer Recently Watched.
+     * Whether the synthetic "Recently Watched" group is shown, per playlist
+     * (Logan 2026-09-14). Unchecked in Manage Groups by default.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val recentlyWatchedGroupEnabled: StateFlow<Boolean> = activePlaylistId
+    val recentGroupVisible: StateFlow<Boolean> = activePlaylistId
         .flatMapLatest { id ->
             if (id.isNullOrBlank()) kotlinx.coroutines.flow.flowOf(false)
-            else prefs.recentlyWatchedGroupEnabled(id)
+            else prefs.recentGroupVisible(id)
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    fun setRecentlyWatchedGroupEnabled(enabled: Boolean) {
+    fun setRecentGroupVisible(visible: Boolean) {
         val id = activePlaylistId.value
         if (id.isNullOrBlank()) return
-        viewModelScope.launch { prefs.setRecentlyWatchedGroupEnabled(id, enabled) }
+        viewModelScope.launch { prefs.setRecentGroupVisible(id, visible) }
     }
 
     // VOD group filters (iOS MoviesView hiddenMovieGroups / TVShowsView

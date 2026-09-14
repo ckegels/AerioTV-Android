@@ -185,7 +185,15 @@ fun GuideScreen(
     val groupSortModeRaw by settingsVm.groupSortMode.collectAsStateWithLifecycle()
     val groupOrder by settingsVm.groupOrder.collectAsStateWithLifecycle()
     val groupSortMode = GroupSortMode.from(groupSortModeRaw)
-    val recentlyWatchedGroup by settingsVm.recentlyWatchedGroupEnabled.collectAsStateWithLifecycle()
+    // Logan 2026-09-14: Recently Watched is a synthetic group, unchecked in
+    // Manage Groups until the user shows it. "Hidden" is the one mechanism, so
+    // the pref folds into the hidden set the sheets and the filters see.
+    val recentGroupVisible by settingsVm.recentGroupVisible.collectAsStateWithLifecycle()
+    val recentChannelIds by settingsVm.recentChannelIds.collectAsStateWithLifecycle(initialValue = emptyList())
+    val effectiveHidden = remember(hiddenGroups, recentGroupVisible) {
+        if (recentGroupVisible) hiddenGroups
+        else hiddenGroups + com.aeriotv.android.feature.playlist.PlaylistViewModel.RECENT_GROUP
+    }
     val favoritesOrNull by favoritesVm.all.collectAsStateWithLifecycle()
     val favoritesList = favoritesOrNull ?: emptyList()
     val favoriteIds = remember(favoritesList) { favoritesList.mapTo(HashSet()) { it.channelId } }
@@ -235,13 +243,16 @@ fun GuideScreen(
             listOf(com.aeriotv.android.feature.livetv.GuideMemo.Ref(state.channels), groupSortMode, groupOrder, favoriteIds.isNotEmpty()),
         ) {
             val sourceOrder = state.channels.asSequence().map { it.groupTitle }.filter { it.isNotBlank() }.distinct().toList()
-            orderGroups(sourceOrder, groupSortMode, groupOrder, hasFavorites = favoriteIds.isNotEmpty())
+            orderGroups(
+                sourceOrder, groupSortMode, groupOrder,
+                hasFavorites = favoriteIds.isNotEmpty(), hasRecent = true,
+            )
         }
     }
-    val groups = remember(allGroupNames, hiddenGroups) {
+    val groups = remember(allGroupNames, effectiveHidden) {
         com.aeriotv.android.feature.livetv.groupTokens(
-            allGroupNames.filter { it !in hiddenGroups },
-            hiddenGroups,
+            allGroupNames.filter { it !in effectiveHidden },
+            effectiveHidden,
         )
     }
     val fallbackGroup = com.aeriotv.android.feature.livetv.fallbackGroupToken(groups)
@@ -274,15 +285,15 @@ fun GuideScreen(
     val groupedChannels by produceState(
         initialValue = computeDisplayChannels(
             state.channels, state.selectedGroup, state.searchQuery, state.sortMode,
-            allGroupNames, groupSortMode, hiddenGroups, favoriteIds, collections,
+            allGroupNames, groupSortMode, effectiveHidden, favoriteIds, collections, recentChannelIds,
         ),
         state.channels, state.selectedGroup, state.searchQuery, state.sortMode,
-        allGroupNames, groupSortMode, hiddenGroups, favoriteIds, collections,
+        allGroupNames, groupSortMode, effectiveHidden, favoriteIds, collections, recentChannelIds,
     ) {
         value = withContext(Dispatchers.Default) {
             computeDisplayChannels(
                 state.channels, state.selectedGroup, state.searchQuery, state.sortMode,
-                allGroupNames, groupSortMode, hiddenGroups, favoriteIds, collections,
+                allGroupNames, groupSortMode, effectiveHidden, favoriteIds, collections, recentChannelIds,
             )
         }
     }
@@ -573,7 +584,6 @@ fun GuideScreen(
                 collectionPillItem = collectionPillItem,
                 searchActive = searchActive,
                 onToggleSearch = { searchActive = !searchActive; if (!searchActive) viewModel.onSearchQueryChange("") },
-                syncing = state.isLoading || state.isEpgLoading,
                 extraActions = {
                     RetainedChannelsAction(
                         viewModel = retainedVm, buttonSize = 38.dp, iconSize = 18.dp,
@@ -845,28 +855,34 @@ fun GuideScreen(
     if (showManageGroups) {
         if (isTv) {
             TvGroupPicker(
-                allGroups = allGroupNames, hiddenGroups = hiddenGroups,
+                allGroups = allGroupNames, hiddenGroups = effectiveHidden,
                 // Close the sidebar too: leaving it open with focus in the grid
                 // made a later held Left a no-op (already "open"). Logan 2026-09-02.
                 onDismiss = { showManageGroups = false; groupSidebarOpen = false; runCatching { gridFocus.requestFocus() } },
                 reorderEnabled = true, sortMode = groupSortMode,
                 onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
-                recentlyWatchedEnabled = recentlyWatchedGroup,
-                onRecentlyWatchedChange = { settingsVm.setRecentlyWatchedGroupEnabled(it) },
                 onCommit = { hidden, order ->
-                    if (hidden != hiddenGroups) settingsVm.setHiddenGroups(hidden)
+                    com.aeriotv.android.feature.livetv.applyManagedGroups(
+                        hidden, hiddenGroups, recentGroupVisible,
+                        setHiddenGroups = { settingsVm.setHiddenGroups(it) },
+                        setRecentVisible = { settingsVm.setRecentGroupVisible(it) },
+                    )
                     order?.let { settingsVm.setGroupOrder(it) }
                 },
             )
         } else {
             ManageGroupsSheet(
-                allGroups = allGroupNames, hiddenGroups = hiddenGroups,
-                onSave = { settingsVm.setHiddenGroups(it) },
+                allGroups = allGroupNames, hiddenGroups = effectiveHidden,
+                onSave = { committed ->
+                    com.aeriotv.android.feature.livetv.applyManagedGroups(
+                        committed, hiddenGroups, recentGroupVisible,
+                        setHiddenGroups = { settingsVm.setHiddenGroups(it) },
+                        setRecentVisible = { settingsVm.setRecentGroupVisible(it) },
+                    )
+                },
                 onDismiss = { showManageGroups = false },
                 reorderEnabled = true, sortMode = groupSortMode,
                 onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
-                recentlyWatchedEnabled = recentlyWatchedGroup,
-                onRecentlyWatchedChange = { settingsVm.setRecentlyWatchedGroupEnabled(it) },
                 onReorder = { settingsVm.setGroupOrder(it) },
             )
         }

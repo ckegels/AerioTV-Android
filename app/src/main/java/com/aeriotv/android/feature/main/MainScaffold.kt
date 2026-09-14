@@ -1146,8 +1146,7 @@ fun MainScaffold(
                 modifier = Modifier.fillMaxSize(),
             )
             // No "Syncing" pill on phone: it sat on top of the Live TV
-            // header's sidebar button. The header shows a small spinning
-            // refresh indicator instead (LiveTvPhoneHeaderRow syncing).
+            // header's sidebar button, and the tab already shows a spinner.
             // Bottom overlay: floating mini-player card above the floating tab
             // pill. The mini stays put while the pill slides away on scroll
             // (GH #20) so an active stream's controls are never hidden.

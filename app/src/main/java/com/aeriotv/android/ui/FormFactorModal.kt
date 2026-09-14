@@ -3,6 +3,7 @@ package com.aeriotv.android.ui
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,6 +61,14 @@ fun FormFactorModal(
      * with [tvWidthFraction].
      */
     sheetMaxWidth: Dp? = null,
+    /**
+     * Touch sheets only (Logan 2026-09-14): open at the partial height and let
+     * the user drag the sheet to full screen. The content column is then given
+     * a FIXED height rather than a max, so a list inside it scrolls and the
+     * expanded anchor never re-measures with the content (45483dd5: the What's
+     * New sheet bounced at the end of its list for exactly that reason).
+     */
+    sheetExpandable: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val isTv = rememberIsTvDevice()
@@ -84,7 +93,7 @@ fun FormFactorModal(
     } else {
         ModalBottomSheet(
             onDismissRequest = onDismiss,
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = !sheetExpandable),
             containerColor = MaterialTheme.colorScheme.background,
         ) {
             // Bound the content column to the window height.
@@ -121,7 +130,10 @@ fun FormFactorModal(
                             Modifier
                         },
                     )
-                    .heightIn(max = maxSheetHeight),
+                    .then(
+                        if (sheetExpandable) Modifier.height(maxSheetHeight)
+                        else Modifier.heightIn(max = maxSheetHeight),
+                    ),
                 content = content,
             )
         }

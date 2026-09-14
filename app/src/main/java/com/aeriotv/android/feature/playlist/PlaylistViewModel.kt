@@ -172,6 +172,10 @@ class PlaylistViewModel @Inject constructor(
         /** Pinned Favorites group inside Live TV (Apple parity: Favorites is a
          *  channel group, not a tab). Never a provider group name. */
         const val FAVORITES_GROUP = "__favorites__"
+        /** Synthetic "Recently Watched" group (Logan 2026-09-14): the last 25
+         *  channels played, most recent first. Hidden until it is checked in
+         *  Manage Groups. Never a provider group name. */
+        const val RECENT_GROUP = "__recent__"
         private const val TAG = "PlaylistViewModel"
 
         /**
@@ -559,15 +563,11 @@ class PlaylistViewModel @Inject constructor(
      * down to nothing.
      */
     private suspend fun restoreSelectedGroup(playlistId: String, knownGroups: Collection<String>) {
-        // GH #81: an explicit "Default Group" setting wins; "Last used" (empty)
-        // falls through to the saved selection exactly as before.
+        // GH #81: an explicit "Default Group" setting wins; with nothing set
+        // (empty) the last selected group is restored exactly as before.
         val preferred = appPreferences.defaultGroupTokenOnce(playlistId)
         val saved = appPreferences.liveGroupTokenOnce(playlistId)
-        // Logan 2026-09-14: the last used group is only reopened when the
-        // Manage Groups "Recently Watched" toggle is on; otherwise the empty
-        // default means All Channels.
-        val recentlyWatched = appPreferences.recentlyWatchedGroupEnabledOnce(playlistId)
-        val restored = com.aeriotv.android.feature.livetv.launchGroupToken(preferred, saved, knownGroups, recentlyWatched)
+        val restored = com.aeriotv.android.feature.livetv.launchGroupToken(preferred, saved, knownGroups)
             ?: ALL_GROUPS
         _state.update { if (it.selectedGroup == restored) it else it.copy(selectedGroup = restored) }
     }

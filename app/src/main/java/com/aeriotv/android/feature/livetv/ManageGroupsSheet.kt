@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -29,7 +30,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +52,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
+import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import sh.calvin.reorderable.ReorderableItem
@@ -93,16 +94,23 @@ fun orderGroups(
     savedOrder: List<String>,
     /** Include the pinned Favorites token (when the user has favorites). */
     hasFavorites: Boolean = false,
+    /** Include the pinned Recently Watched token (Logan 2026-09-14). Callers
+     *  pass true whenever the token belongs in the list at all; whether it is
+     *  SHOWN is the hidden-groups question, same as any other group. */
+    hasRecent: Boolean = false,
 ): List<String> {
     // The All Channels token is part of the ordered list (Logan 2026-09-08,
     // Apple parity): in Manual mode any group can sit above it. A provider
     // group literally named "All" is dropped so it can never collide with
     // the sentinel (#45 review).
     val groups = allGroups.filterNot {
-        it.equals(PlaylistViewModel.ALL_GROUPS, ignoreCase = true) || it == PlaylistViewModel.FAVORITES_GROUP
+        it.equals(PlaylistViewModel.ALL_GROUPS, ignoreCase = true) ||
+            it == PlaylistViewModel.FAVORITES_GROUP ||
+            it == PlaylistViewModel.RECENT_GROUP
     }
     val pinned = buildList {
         if (hasFavorites) add(PlaylistViewModel.FAVORITES_GROUP)
+        if (hasRecent) add(PlaylistViewModel.RECENT_GROUP)
         add(PlaylistViewModel.ALL_GROUPS)
     }
     return when (sortMode) {
@@ -149,9 +157,6 @@ fun ManageGroupsSheet(
     sortMode: GroupSortMode = GroupSortMode.Default,
     onSortModeChange: (GroupSortMode) -> Unit = {},
     onReorder: (List<String>) -> Unit = {},
-    /** Logan 2026-09-14: opt in to the "Recently Watched" Default Group option. */
-    recentlyWatchedEnabled: Boolean = false,
-    onRecentlyWatchedChange: (Boolean) -> Unit = {},
 ) {
     var working by remember(hiddenGroups) { mutableStateOf(hiddenGroups.toMutableSet()) }
     val manualReorder = reorderEnabled && sortMode == GroupSortMode.Manual
@@ -167,11 +172,20 @@ fun ManageGroupsSheet(
         // the cap, so nothing changes there. The TV path is the centered
         // dialog above and is unaffected.
         sheetMaxWidth = 640.dp,
+        // Logan 2026-09-14: the touch sheet opens at a partial height and
+        // drags all the way to full screen. The content below claims the whole
+        // sheet height and the list scrolls inside it, so the expanded anchor
+        // never moves with the content (the 45483dd5 bounce).
+        sheetExpandable = true,
     ) {
+        val expandable = !rememberIsTvDevice()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 320.dp, max = 600.dp)
+                .then(
+                    if (expandable) Modifier.fillMaxHeight()
+                    else Modifier.heightIn(min = 320.dp, max = 600.dp),
+                )
                 .padding(bottom = 8.dp),
         ) {
             Row(
@@ -218,32 +232,6 @@ fun ManageGroupsSheet(
                             )
                         }
                     }
-                }
-            }
-            if (reorderEnabled) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onRecentlyWatchedChange(!recentlyWatchedEnabled) }
-                        .padding(horizontal = 20.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Recently Watched",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = "Offer it as a Default Group so Live TV reopens the group you were last on",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = recentlyWatchedEnabled,
-                        onCheckedChange = onRecentlyWatchedChange,
-                    )
                 }
             }
             Row(
@@ -344,7 +332,7 @@ fun ManageGroupsSheet(
                 }
                 LazyColumn(
                     state = lazyListState,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                     contentPadding = PaddingValues(vertical = 6.dp),
                 ) {
                     items(workingOrder, key = { it }) { group ->
@@ -396,7 +384,7 @@ fun ManageGroupsSheet(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                     contentPadding = PaddingValues(vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(0.dp),
                 ) {
@@ -459,9 +447,6 @@ fun TvGroupPicker(
     reorderEnabled: Boolean = false,
     sortMode: GroupSortMode = GroupSortMode.Default,
     onSortModeChange: (GroupSortMode) -> Unit = {},
-    /** Logan 2026-09-14: opt in to the "Recently Watched" Default Group option. */
-    recentlyWatchedEnabled: Boolean = false,
-    onRecentlyWatchedChange: (Boolean) -> Unit = {},
     /** E-4 (perf campaign 2026-08-19): one commit per dialog SESSION, fired at
      *  dismissal, replacing the per-press onToggle / per-drop onReorder
      *  callbacks. Each of those was a synchronous DataStore write plus a
@@ -539,38 +524,6 @@ fun TvGroupPicker(
                                 )
                             }
                         }
-                    }
-                }
-                if (reorderEnabled) {
-                    var rwFocused by remember { mutableStateOf(false) }
-                    Row(
-                        modifier = Modifier
-                            .padding(horizontal = 24.dp, vertical = 4.dp)
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .border(
-                                width = if (rwFocused) 2.dp else 0.dp,
-                                color = if (rwFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                shape = RoundedCornerShape(10.dp),
-                            )
-                            .onFocusChanged { rwFocused = it.isFocused }
-                            .clickable { onRecentlyWatchedChange(!recentlyWatchedEnabled) }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "Recently Watched",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            text = if (recentlyWatchedEnabled) "On" else "Off",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (recentlyWatchedEnabled) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                 }
                 HorizontalDivider(

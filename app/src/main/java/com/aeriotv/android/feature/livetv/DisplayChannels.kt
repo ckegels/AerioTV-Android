@@ -36,16 +36,19 @@ internal fun computeDisplayChannels(
     hiddenGroups: Set<String>,
     favoriteIds: Set<String>,
     collections: List<ChannelCollection>,
+    /** Recently watched channel ids, most recent first (Logan 2026-09-14). */
+    recentIds: List<String> = emptyList(),
 ): List<M3UChannel> = GuideMemo.get(
     "displayChannels",
     listOf(
         GuideMemo.Ref(channels), selectedGroup, searchQuery, sortMode,
         GuideMemo.Ref(allGroupNames), groupSortMode, hiddenGroups, favoriteIds, GuideMemo.Ref(collections),
+        recentIds,
     ),
 ) {
     computeDisplayChannelsUncached(
         channels, selectedGroup, searchQuery, sortMode,
-        allGroupNames, groupSortMode, hiddenGroups, favoriteIds, collections,
+        allGroupNames, groupSortMode, hiddenGroups, favoriteIds, collections, recentIds,
     )
 }
 
@@ -59,8 +62,20 @@ private fun computeDisplayChannelsUncached(
     hiddenGroups: Set<String>,
     favoriteIds: Set<String>,
     collections: List<ChannelCollection>,
+    recentIds: List<String>,
 ): List<M3UChannel> {
     val query = searchQuery.trim()
+    // Recently Watched is its own order: the recents LRU, most recent first.
+    // The chosen sort does not apply (the whole point of the group is the
+    // order it was watched in); search still filters inside it.
+    if (selectedGroup == PlaylistViewModel.RECENT_GROUP) {
+        val rank = recentIds.withIndex().associate { (i, id) -> id to i }
+        return channels.asSequence()
+            .filter { it.id in rank }
+            .filter { query.isEmpty() || it.name.contains(query, ignoreCase = true) }
+            .sortedBy { rank[it.id] ?: Int.MAX_VALUE }
+            .toList()
+    }
     val activeCollection = ChannelCollection.idFromToken(selectedGroup)
         ?.let { cid -> collections.firstOrNull { it.id == cid } }
     val collectionMembers = activeCollection?.memberIds?.toSet()

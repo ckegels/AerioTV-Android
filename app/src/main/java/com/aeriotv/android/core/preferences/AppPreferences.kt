@@ -732,24 +732,19 @@ class AppPreferences @Inject constructor(
     }
 
     /**
-     * Whether the "Recently Watched" option is offered as a Default Group,
-     * per playlist. Off by default (Logan 2026-09-14): the Default Group
-     * picker only lists it once the Manage Groups toggle is on, and with the
-     * toggle off a stored Recently Watched default falls back to All Channels.
-     * Scoped per playlist alongside [defaultGroupToken].
+     * Whether the synthetic "Recently Watched" group is shown, per playlist.
+     * Off by default (Logan 2026-09-14): it sits in Manage Groups unchecked
+     * until the user checks it, and picking it as the Default Group checks it
+     * too. Scoped per playlist alongside [defaultGroupToken].
      */
-    fun recentlyWatchedGroupEnabled(playlistId: String): Flow<Boolean> =
-        store.data.map { it[keyRecentlyWatchedGroup(playlistId)] ?: false }
+    fun recentGroupVisible(playlistId: String): Flow<Boolean> =
+        store.data.map { it[keyRecentGroupVisible(playlistId)] ?: false }
 
-    suspend fun recentlyWatchedGroupEnabledOnce(playlistId: String): Boolean =
-        if (playlistId.isBlank()) false
-        else store.data.first()[keyRecentlyWatchedGroup(playlistId)] ?: false
-
-    suspend fun setRecentlyWatchedGroupEnabled(playlistId: String, enabled: Boolean) {
+    suspend fun setRecentGroupVisible(playlistId: String, visible: Boolean) {
         if (playlistId.isBlank()) return
         store.edit { prefs ->
-            if (enabled) prefs[keyRecentlyWatchedGroup(playlistId)] = true
-            else prefs.remove(keyRecentlyWatchedGroup(playlistId))
+            if (visible) prefs[keyRecentGroupVisible(playlistId)] = true
+            else prefs.remove(keyRecentGroupVisible(playlistId))
         }
     }
 
@@ -1679,8 +1674,8 @@ class AppPreferences @Inject constructor(
         /** GH #81: per-playlist Default Group setting (see [defaultGroupToken]). */
         private fun keyDefaultGroupToken(playlistId: String) = stringPreferencesKey("default_group_token_$playlistId")
 
-        /** Per-playlist "Recently Watched" default-group opt-in (see [recentlyWatchedGroupEnabled]). */
-        private fun keyRecentlyWatchedGroup(playlistId: String) = booleanPreferencesKey("recently_watched_group_$playlistId")
+        /** Per-playlist "Recently Watched" group visibility (see [recentGroupVisible]). */
+        private fun keyRecentGroupVisible(playlistId: String) = booleanPreferencesKey("recent_group_visible_$playlistId")
         private fun keyFeedValidators(url: String): androidx.datastore.preferences.core.Preferences.Key<String> {
             val d = java.security.MessageDigest.getInstance("SHA-1").digest(url.toByteArray())
             return stringPreferencesKey("feed_validators_" + d.joinToString("") { "%02x".format(it) })

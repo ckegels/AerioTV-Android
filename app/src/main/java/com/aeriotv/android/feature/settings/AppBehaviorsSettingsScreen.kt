@@ -105,7 +105,6 @@ fun AppBehaviorsSettingsScreen(
     // this screen, so one section covers both).
     val defaultGroupToken by viewModel.defaultGroupToken.collectAsStateWithLifecycle()
     val defaultGroupOptions by viewModel.defaultGroupOptions.collectAsStateWithLifecycle()
-    val recentlyWatchedGroup by viewModel.recentlyWatchedGroupEnabled.collectAsStateWithLifecycle()
     TvKeyboardOnOkHost {
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "App Behaviors", onBack = onBack)
@@ -205,44 +204,30 @@ fun AppBehaviorsSettingsScreen(
                 }
             }
 
-            // GH #81: Default Group (Apple parity naming). "Recently Watched"
-            // keeps the restore-last-selection behavior and is offered only
-            // when the Manage Groups toggle is on (Logan 2026-09-14); anything
-            // else pins the group Live TV opens on for the ACTIVE playlist.
+            // GH #81: Default Group (Apple parity naming). All Channels is the
+            // selection until the user picks one; internally an unset default
+            // reopens the last group the playlist was on (Logan 2026-09-14).
             SettingsSection(
                 header = "Default Group",
-                footer = if (recentlyWatchedGroup) {
-                    "The Live TV group the app opens on for this playlist. " +
-                        "Recently Watched reopens whichever group you were on. " +
-                        "A group that later disappears from the playlist falls " +
-                        "back automatically."
-                } else {
-                    "The Live TV group the app opens on for this playlist. Turn " +
-                        "on Recently Watched in Manage Groups to reopen whichever " +
-                        "group you were on instead. A group that later disappears " +
-                        "from the playlist falls back automatically."
-                },
+                footer = "The Live TV group the app opens on for this playlist. " +
+                    "Recently Watched is the last 25 channels you played, newest " +
+                    "first; picking it also shows it in Manage Groups. A group " +
+                    "that later disappears from the playlist falls back " +
+                    "automatically.",
             ) {
-                if (recentlyWatchedGroup) {
-                    SettingsSelectionRow(
-                        label = "Recently Watched",
-                        selected = defaultGroupToken.isBlank(),
-                        onClick = { viewModel.setDefaultGroupToken("") },
-                    )
-                }
                 val fixedTokens = listOf(
                     com.aeriotv.android.feature.playlist.PlaylistViewModel.ALL_GROUPS,
                     com.aeriotv.android.feature.playlist.PlaylistViewModel.FAVORITES_GROUP,
+                    com.aeriotv.android.feature.playlist.PlaylistViewModel.RECENT_GROUP,
                 )
                 (fixedTokens + defaultGroupOptions).forEach { token ->
                     val isAll = token == com.aeriotv.android.feature.playlist.PlaylistViewModel.ALL_GROUPS
                     SettingsSelectionRow(
                         label = com.aeriotv.android.feature.livetv.groupDisplayName(token),
-                        // With the toggle off, a stored Recently Watched
-                        // default (the empty token) reads as All Channels,
-                        // which is where launchGroupToken lands it.
+                        // Nothing stored reads as All Channels, which is where a
+                        // first launch lands.
                         selected = defaultGroupToken == token ||
-                            (isAll && !recentlyWatchedGroup && defaultGroupToken.isBlank()),
+                            (isAll && defaultGroupToken.isBlank()),
                         onClick = { viewModel.setDefaultGroupToken(token) },
                     )
                 }
