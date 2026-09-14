@@ -154,10 +154,14 @@ fun OnDemandTabContent(
     // flagged finished, and is not within 5 minutes of the end (the same
     // heuristic the old rails and iOS use).
     val recentProgress by watchVm.observeRecent(30).collectAsStateWithLifecycle(initialValue = emptyList())
-    val continueWatchingRows = remember(recentProgress) {
+    // Hidden titles leave Continue Watching with every other list.
+    val hiddenTitles by viewModel.hiddenTitles.collectAsStateWithLifecycle()
+    val continueWatchingRows = remember(recentProgress, hiddenTitles) {
         recentProgress.filter { row ->
+            val key = if (row.vodType == "episode") row.seriesId?.let { "s:" + it } else "m:" + row.videoId
             row.positionMs > 0L && !row.isFinished &&
-                (row.durationMs <= 0L || row.positionMs < row.durationMs - 5 * 60 * 1000L)
+                (row.durationMs <= 0L || row.positionMs < row.durationMs - 5 * 60 * 1000L) &&
+                (key == null || key !in hiddenTitles)
         }
     }
     val availableSections = remember(continueWatchingRows.isNotEmpty()) {
@@ -531,9 +535,14 @@ private fun MoviesSubScreen(
     // Apply the hide filter once at this point in the pipeline; everything
     // below renders from `visibleFiltered`. The total still reflects the
     // server count so the user can see how many they've hidden.
-    val visibleFiltered = remember(state.visible, hiddenMovieGroups) {
-        if (hiddenMovieGroups.isEmpty()) state.visible
-        else state.visible.filter { (it.categoryName ?: UNCATEGORIZED) !in hiddenMovieGroups }
+    // Hidden titles never appear in a list (Logan 2026-09-14); they are
+    // unhidden from the Hidden category on the Movies / TV Shows pages.
+    val hiddenTitles by viewModel.hiddenTitles.collectAsStateWithLifecycle()
+    val visibleFiltered = remember(state.visible, hiddenMovieGroups, hiddenTitles) {
+        state.visible.filter {
+            (hiddenMovieGroups.isEmpty() || (it.categoryName ?: UNCATEGORIZED) !in hiddenMovieGroups) &&
+                "m:" + it.uuid !in hiddenTitles
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -761,9 +770,12 @@ private fun SeriesSubScreen(
         return
     }
 
-    val visibleSeriesFiltered = remember(state.visibleSeries, hiddenSeriesGroups) {
-        if (hiddenSeriesGroups.isEmpty()) state.visibleSeries
-        else state.visibleSeries.filter { (it.categoryName ?: UNCATEGORIZED) !in hiddenSeriesGroups }
+    val hiddenTitles by viewModel.hiddenTitles.collectAsStateWithLifecycle()
+    val visibleSeriesFiltered = remember(state.visibleSeries, hiddenSeriesGroups, hiddenTitles) {
+        state.visibleSeries.filter {
+            (hiddenSeriesGroups.isEmpty() || (it.categoryName ?: UNCATEGORIZED) !in hiddenSeriesGroups) &&
+                "s:" + it.id !in hiddenTitles
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {

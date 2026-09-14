@@ -75,6 +75,10 @@ internal fun TvMediaTab(
     filterOpen: Boolean,
     watchlistKeys: Set<String>,
     onToggleWatchlist: (MediaItem) -> Unit,
+    /** Titles the user hid; a hidden title only appears under "Hidden". */
+    hiddenKeys: Set<String>,
+    /** Long-press Hide / Unhide (Logan 2026-09-14). */
+    onToggleHidden: (MediaItem) -> Unit,
     onRemoveWatchlist: (String) -> Unit,
     onRemoveProgress: (String) -> Unit,
     onPlay: (videoId: String, title: String) -> Unit,
@@ -146,6 +150,7 @@ internal fun TvMediaTab(
         }
         val longPress = buildList {
             if (item != null) add(TvMenuAction(if (item.key in watchlistKeys) "Remove from Watchlist" else "Add to Watchlist") { onToggleWatchlist(item) })
+            if (item != null) add(TvMenuAction(if (item.key in hiddenKeys) "Unhide" else "Hide") { onToggleHidden(item) })
             if (!watchlist) add(TvMenuAction("Remove from Continue Watching", destructive = true) { onRemoveProgress(videoId) })
             else if (item != null) add(TvMenuAction("Remove from Watchlist", destructive = true) { onRemoveWatchlist(item.key) })
         }
@@ -181,6 +186,7 @@ internal fun TvMediaTab(
                 ),
                 longPressActions = listOf(
                     TvMenuAction(if (first.key in watchlistKeys) "Remove from Watchlist" else "Add to Watchlist") { onToggleWatchlist(first) },
+                    TvMenuAction(if (first.key in hiddenKeys) "Unhide" else "Hide") { onToggleHidden(first) },
                 ),
             ),
         )
@@ -192,7 +198,7 @@ internal fun TvMediaTab(
     // loading and nothing has resolved, KEEP the pages already on screen
     // instead of swapping the carousel for a single static card.
     val heldHero = remember { mutableStateOf(emptyList<TvHeroPage>()) }
-    val tvHero = remember(heroPages, backdrops, library, watchlistKeys, isLoading) {
+    val tvHero = remember(heroPages, backdrops, library, watchlistKeys, hiddenKeys, isLoading) {
         if (!isLoading || heroPages.isNotEmpty() || heldHero.value.isEmpty()) {
             heldHero.value = if (heroPages.isNotEmpty()) {
                 heroPages.map { heroFor(it, watchlist = false) }
@@ -216,6 +222,7 @@ internal fun TvMediaTab(
             onClick = { item?.let(open) }, modifier = modifier,
             longPressActions = listOfNotNull(
                 item?.let { TvMenuAction("Details") { open(it) } },
+                item?.let { TvMenuAction(if (it.key in hiddenKeys) "Unhide" else "Hide") { onToggleHidden(it) } },
                 item?.let { TvMenuAction("Remove from Watchlist", destructive = true) { onRemoveWatchlist(it.key) } },
             ),
         )
@@ -278,6 +285,7 @@ internal fun TvMediaTab(
                 longPressActions = listOf(
                     TvMenuAction("Details") { open(item) },
                     TvMenuAction(if (item.key in watchlistKeys) "Remove from Watchlist" else "Add to Watchlist") { onToggleWatchlist(item) },
+                    TvMenuAction(if (item.key in hiddenKeys) "Unhide" else "Hide") { onToggleHidden(item) },
                 ),
             )
         },

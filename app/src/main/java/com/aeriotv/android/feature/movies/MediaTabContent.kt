@@ -97,12 +97,15 @@ fun MediaTabContent(
     watchlistVm: WatchlistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // Hidden titles (Logan 2026-09-14): long press hides a title everywhere,
+    // and the Filter list gains a "Hidden" category while anything is hidden.
+    val hiddenTitles by viewModel.hiddenTitles.collectAsStateWithLifecycle()
     // Watchlist (Apple parity): a second deck under Continue Watching, and
     // Add / Remove entries on every poster and hero menu.
     val watchlistEntries by watchlistVm.entries.collectAsStateWithLifecycle(initialValue = emptyList())
     val watchlistKeys = remember(watchlistEntries) { watchlistEntries.map { it.key }.toSet() }
-    val watchlistPages: List<MediaHeroPage> = remember(watchlistEntries, state.movies, state.series, kind) {
-        watchlistEntries.filter { it.isMovie == (kind == MediaKind.Movies) }.map { e ->
+    val watchlistPages: List<MediaHeroPage> = remember(watchlistEntries, state.movies, state.series, kind, hiddenTitles) {
+        watchlistEntries.filter { it.isMovie == (kind == MediaKind.Movies) && it.key !in hiddenTitles }.map { e ->
             // Indexed lookups (Logan 2026-09-11): the per-entry scan over the
             // whole library cost 185 ms on the main thread at every Movies open.
             val m = if (e.isMovie) viewModel.movieByUuid(e.key.removePrefix("m:")) else null
@@ -124,7 +127,7 @@ fun MediaTabContent(
     // newest first, movies for the Movies tab and one page per series for
     // TV Shows (the newest episode row wins), at most 12.
     val recentProgress by watchVm.observeRecent(40).collectAsStateWithLifecycle(initialValue = emptyList())
-    val heroPages: List<MediaHeroPage> = remember(recentProgress, state.movies, state.series, kind) {
+    val heroPages: List<MediaHeroPage> = remember(recentProgress, state.movies, state.series, kind, hiddenTitles) {
         val rows = recentProgress.filter { r ->
             r.positionMs > 0L && !r.isFinished && (r.durationMs <= 0L || r.positionMs < r.durationMs - 5 * 60_000L)
         }
@@ -143,7 +146,7 @@ fun MediaTabContent(
                         posterUrl = r.posterUrl, category = null, movieUuid = r.videoId),
                     tmdbId = m?.tmdbId, isMovie = true, plot = m?.plot,
                 )
-            }.take(12)
+            }.filter { it.item?.key !in hiddenTitles }.take(12)
         } else {
             rows.filter { it.vodType == "episode" && it.seriesId != null }
                 .distinctBy { it.seriesId }
@@ -158,7 +161,7 @@ fun MediaTabContent(
                         genre = series.genre, rating = series.rating, positionMs = r.positionMs, durationMs = r.durationMs,
                         item = series.toMediaItem(), tmdbId = series.tmdbId, isMovie = false, plot = series.plot,
                     )
-                }.take(12)
+                }.filter { it.item?.key !in hiddenTitles }.take(12)
         }
     }
     LaunchedEffect(Unit) { viewModel.ensureLoaded() }
@@ -178,7 +181,17 @@ fun MediaTabContent(
     var showManageGroups by remember { mutableStateOf(false) }
 
     val groupNames = if (kind == MediaKind.Movies) state.movieGroupNames else state.seriesGroupNames
-    val genrePills = remember(groupNames, hiddenGroups) { groupNames.filterNot { it in hiddenGroups } }
+    val genrePills = remember(groupNames, hiddenGroups, hiddenTitles) {
+        val groups = groupNames.filterNot { it in hiddenGroups }
+        if (hiddenTitles.isEmpty()) groups
+        else listOf(com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY) + groups
+    }
+    // Unhiding the last title takes the category away: drop the selection
+    // with it so the page does not sit on a pill that no longer exists.
+    val showingHidden = selectedGenre == com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY
+    LaunchedEffect(hiddenTitles.isEmpty(), showingHidden) {
+        if (showingHidden && hiddenTitles.isEmpty()) viewModel.setSelectedGenre(kind == MediaKind.Movies, null)
+    }
     val isLoading = if (kind == MediaKind.Movies) state.isLoading else state.isLoadingSeries
     val isSearching = query.isNotBlank()
 
@@ -226,11 +239,16 @@ fun MediaTabContent(
         val seen = HashSet<String>()
         (server + people).filter { seen.add(it.key) }.sortedBy(sortOrder)
     }
+    // Search never surfaces a hidden title; while the Hidden category is
+    // selected it searches the hidden titles instead.
+    val visibleResults = remember(results, hiddenTitles, showingHidden) {
+        if (showingHidden) results.filter { it.key in hiddenTitles } else results.filterNot { it.key in hiddenTitles }
+    }
     // Provider pills (iOS providerPills): Dispatcharr Direct Connect only,
     // shown while searching when the account list has two or more providers.
     val providerIds = remember(state.providerNames) { state.providerNames.keys.sorted() }
     val showProviderPills = isSearching && providerIds.size >= 2
-    val gridItems = if (isSearching) results else library
+    val gridItems = if (isSearching) visibleResults else library
     val available: Set<Char> = libraryBuilt.letters
 
     // Persistent TMDB art (Logan 2026-09-04: TMDB first when a key is set,
@@ -301,6 +319,8 @@ fun MediaTabContent(
             onRemove = { watchVm.delete(videoId) },
             isOnWatchlist = page.item?.key in watchlistKeys,
             onToggleWatchlist = page.item?.let { item -> { watchlistVm.toggle(item) } },
+            isHidden = page.item?.key in hiddenTitles,
+            onToggleHidden = page.item?.let { item -> { viewModel.toggleHidden(item.key) } },
         )
     }
     val wlCard: @Composable (MediaHeroPage) -> Unit = { page ->
@@ -314,6 +334,8 @@ fun MediaTabContent(
             onDetails = { item?.movieUuid?.let { u -> viewModel.noteMovieTitle(u, page.title); onMovieClick(u) } ?: item?.seriesId?.let(onSeriesClick) },
             onRemove = { item?.let { watchlistVm.remove(it.key) } },
             removeLabel = "Remove from Watchlist",
+            isHidden = item?.key in hiddenTitles,
+            onToggleHidden = item?.let { m -> { viewModel.toggleHidden(m.key) } },
         )
     }
     val searchExtras = buildList {
@@ -377,6 +399,7 @@ fun MediaTabContent(
             onFilter = { showManageGroups = true }, filterActive = hiddenGroups.isNotEmpty(),
             filterOpen = showManageGroups,
             watchlistKeys = watchlistKeys, onToggleWatchlist = { watchlistVm.toggle(it) }, onRemoveWatchlist = { watchlistVm.remove(it) },
+            hiddenKeys = hiddenTitles, onToggleHidden = { viewModel.toggleHidden(it.key) },
             onRemoveProgress = { watchVm.delete(it) },
             onPlay = { videoId, title ->
                 if (kind == MediaKind.Movies) { viewModel.noteMovieTitle(videoId, title); onPlayMovie(videoId) } else onEpisodeResume(videoId)
@@ -463,6 +486,10 @@ fun MediaTabContent(
                     DropdownMenuItem(
                         text = { Text(if (item.key in watchlistKeys) "Remove from Watchlist" else "Add to Watchlist") },
                         onClick = { close(); watchlistVm.toggle(item) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (item.key in hiddenTitles) "Unhide" else "Hide") },
+                        onClick = { close(); viewModel.toggleHidden(item.key) },
                     )
                 },
             )

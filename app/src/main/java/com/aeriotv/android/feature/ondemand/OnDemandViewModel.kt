@@ -49,6 +49,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,6 +84,7 @@ class OnDemandViewModel @Inject constructor(
     private val versionSelectionStore: VodVersionSelectionStore,
     private val snapshotStore: VodLibrarySnapshotStore,
     private val tmdbArtCache: TmdbArtCache,
+    private val hiddenTitlesStore: com.aeriotv.android.core.preferences.HiddenTitlesStore,
     private val settleGate: AppSettleGate,
 ) : ViewModel() {
 
@@ -225,11 +228,13 @@ class OnDemandViewModel @Inject constructor(
     private data class LibrarySpec(
         val source: List<Any>,
         val hidden: Set<String>,
+        val hiddenTitles: Set<String>,
         val genre: String?,
         val sort: com.aeriotv.android.feature.movies.MediaSortOrder,
     ) {
         fun sameAs(other: LibrarySpec?): Boolean = other != null &&
-            source === other.source && hidden == other.hidden && genre == other.genre && sort == other.sort
+            source === other.source && hidden == other.hidden && hiddenTitles == other.hiddenTitles &&
+            genre == other.genre && sort == other.sort
     }
 
     private val moviesGenre = MutableStateFlow<String?>(null)
@@ -301,6 +306,28 @@ class OnDemandViewModel @Inject constructor(
 
     fun heroBackdropResolved(key: String): Boolean = _heroBackdrops.value.containsKey(key)
 
+    // ---- Hidden titles (Logan 2026-09-14: long press a poster to hide it).
+    // Per playlist, in its own DataStore alongside the watchlist. The set
+    // feeds the library pipeline, so a hidden title leaves every grid, shelf
+    // and search result at once.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val hiddenTitles: StateFlow<Set<String>> =
+        playlistRepository.observeActiveId()
+            .flatMapLatest { hiddenTitlesStore.observe(hiddenScope()) }
+            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptySet())
+
+    private suspend fun hiddenScope(): String? = playlistRepository.activePlaylist()
+        ?.let(com.aeriotv.android.core.preferences.WatchlistStore::scopeFor)
+
+    /** Hide the title, or unhide it when it is already hidden. */
+    fun toggleHidden(key: String) {
+        viewModelScope.launch {
+            val scope = hiddenScope()
+            if (key in hiddenTitles.value) hiddenTitlesStore.unhide(key, scope)
+            else hiddenTitlesStore.hide(key, scope)
+        }
+    }
+
     private fun startLibraryPipeline(isMovie: Boolean) {
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(
@@ -308,8 +335,13 @@ class OnDemandViewModel @Inject constructor(
                 if (isMovie) appPreferences.hiddenMovieGroups else appPreferences.hiddenSeriesGroups,
                 if (isMovie) appPreferences.moviesSortOrder else appPreferences.seriesSortOrder,
                 if (isMovie) moviesGenre else seriesGenre,
-            ) { source, hidden, sortWire, genre ->
-                LibrarySpec(source, hidden, genre, com.aeriotv.android.feature.movies.MediaSortOrder.fromWire(sortWire))
+                hiddenTitles,
+            ) { source, hidden, sortWire, genre, hiddenKeys ->
+                @Suppress("UNCHECKED_CAST")
+                LibrarySpec(
+                    source as List<Any>, hidden as Set<String>, hiddenKeys as Set<String>, genre as String?,
+                    com.aeriotv.android.feature.movies.MediaSortOrder.fromWire(sortWire as String?),
+                )
             }.collectLatest { spec ->
                 if (spec.sameAs(if (isMovie) lastMoviesSpec else lastSeriesSpec)) return@collectLatest
                 val pending = if (isMovie) _moviesLibraryPending else _seriesLibraryPending
@@ -332,9 +364,11 @@ class OnDemandViewModel @Inject constructor(
             if (src !== seriesItemsSource) { seriesItems = src.map { it.toMediaItem() }; seriesItemsSource = src }
             seriesItems
         }
+        val onlyHidden = spec.genre == HIDDEN_CATEGORY
         val list = all.asSequence()
+            .filter { if (onlyHidden) it.key in spec.hiddenTitles else it.key !in spec.hiddenTitles }
             .filter { it.category == null || it.category !in spec.hidden }
-            .filter { spec.genre == null || it.category == spec.genre }
+            .filter { onlyHidden || spec.genre == null || it.category == spec.genre }
             .toList()
             .sortedByMediaOrder(spec.sort)
         return MediaLibrary(list, list.mapTo(HashSet()) { it.bucket })
@@ -2923,3 +2957,11 @@ class OnDemandViewModel @Inject constructor(
     }
 
 }
+
+/**
+ * The sentinel category pill for hidden titles, shown at the top of the
+ * Filter list only while something is hidden. The leading zero-width space
+ * keeps it from colliding with a provider group actually named "Hidden";
+ * it renders as plain "Hidden".
+ */
+const val HIDDEN_CATEGORY: String = "\u200BHidden"

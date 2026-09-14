@@ -90,6 +90,9 @@ fun MediaHeroCard(
     isOnWatchlist: Boolean = false,
     onToggleWatchlist: (() -> Unit)? = null,
     removeLabel: String = "Remove from Continue Watching",
+    /** Hide / Unhide the title (Logan 2026-09-14); null leaves the row out. */
+    isHidden: Boolean = false,
+    onToggleHidden: (() -> Unit)? = null,
 ) {
     val bg = MaterialTheme.colorScheme.background
     var menu by remember { mutableStateOf(false) }
@@ -156,7 +159,7 @@ fun MediaHeroCard(
                 HeroIconButton(Icons.Outlined.Info, "Details", onDetails)
                 // The hero menu is the right-most options circle, not a long
                 // press on Resume (Logan 2026-09-10, all platforms).
-                if (onRemove != null || onToggleWatchlist != null) Box {
+                if (onRemove != null || onToggleWatchlist != null || onToggleHidden != null) Box {
                     HeroIconButton(Icons.Filled.MoreHoriz, "Options") { menu = true }
                     run {
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -164,6 +167,12 @@ fun MediaHeroCard(
                                 DropdownMenuItem(
                                     text = { Text(if (isOnWatchlist) "Remove from Watchlist" else "Add to Watchlist") },
                                     onClick = { menu = false; onToggleWatchlist() },
+                                )
+                            }
+                            if (onToggleHidden != null) {
+                                DropdownMenuItem(
+                                    text = { Text(if (isHidden) "Unhide" else "Hide") },
+                                    onClick = { menu = false; onToggleHidden() },
                                 )
                             }
                             if (onRemove != null) {
