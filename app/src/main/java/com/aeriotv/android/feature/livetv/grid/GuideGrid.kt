@@ -318,11 +318,15 @@ fun GuideGrid(
                                 // Program actions fire on every press.
                                 action.columnIndependent -> runAction(action)
                                 // Live-gated (Logan 2026-09-14, as on Apple TV): a remapped Left
-                                // fires only on the program airing now; elsewhere it moves focus.
+                                // fires only on the program airing now AND with the timeline at
+                                // its live position; panned into history (a hold browsing earlier
+                                // programs can leave focus on the live cell) it keeps stepping.
                                 else -> {
-                                    val live = state.focusedCellIsAiringNow(nowMs)
-                                    android.util.Log.d("GuideGrid", "left gate: action=$action row=${state.focusRow} cellStart=${state.focusCellStartMs} now=$nowMs airingNow=$live -> ${if (live) "fire" else "step"}")
-                                    if (live) runAction(action) else state.stepLeft(nowMs)
+                                    val airingNow = state.focusedCellIsAiringNow(nowMs)
+                                    val atLive = state.isTimelineAtLive(nowMs)
+                                    val fire = airingNow && atLive
+                                    android.util.Log.d("GuideGrid", "left gate: action=$action row=${state.focusRow} cellStart=${state.focusCellStartMs} now=$nowMs viewportStart=${state.viewportStartMs} airingNow=$airingNow atLive=$atLive -> ${if (fire) "fire" else "step"}")
+                                    if (fire) runAction(action) else state.stepLeft(nowMs)
                                 }
                             }
                         }

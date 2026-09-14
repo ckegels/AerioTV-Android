@@ -159,6 +159,42 @@ class GuideGridStateTest {
         assertFalse(s.focusedCellIsAiringNow(now))
     }
 
+    /** GuideGrid's remapped short Left: fire only on the live program with the timeline at live, else the locked step. */
+    private fun remappedLeft(s: GuideGridState, now: Long): Boolean {
+        val fire = s.focusedCellIsAiringNow(now) && s.isTimelineAtLive(now)
+        if (!fire) s.stepLeft(now)
+        return fire
+    }
+
+    @Test
+    fun remappedLeftStepsWhileTheTimelineIsPannedIntoHistory() {
+        val now = 6 * h
+        val s = state(now)
+        s.installRows(rows(espn, programmes = listOf(p(espn, "Early", 0, 3 * h), p(espn, "Game", 3 * h, 9 * h), p(espn, "Late", 9 * h, 12 * h))))
+        assertEquals("Game", s.focusedCell()!!.title)
+        assertTrue(s.isTimelineAtLive(now))
+        // Left (Hold) = Browse earlier programs: the timeline pans back but
+        // focus stays on the long live program (the Streamer report).
+        assertTrue(s.panBy(-(s.viewportDurationMs * 0.85f).toLong()))
+        assertEquals("Game", s.focusedCell()!!.title)
+        assertTrue(s.focusedCellIsAiringNow(now))
+        assertFalse(s.isTimelineAtLive(now))
+        // A single remapped Left runs the locked step instead of firing.
+        assertFalse(remappedLeft(s, now))
+        assertEquals("Early", s.focusedCell()!!.title)
+        // Back to now: the live program with the timeline at live fires.
+        s.anchorToNow(now)
+        assertEquals("Game", s.focusedCell()!!.title)
+        assertTrue(s.isTimelineAtLive(now))
+        val before = s.viewportStartMs
+        assertTrue(remappedLeft(s, now))
+        assertEquals("Game", s.focusedCell()!!.title)
+        assertEquals(before, s.viewportStartMs)
+        // Panned later than now still counts as live.
+        s.pan(+1)
+        assertTrue(s.isTimelineAtLive(now))
+    }
+
     @Test
     fun atLastCellOnlyOnTheRowsFinalProgram() {
         val s = state()

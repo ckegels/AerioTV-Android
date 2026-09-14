@@ -169,6 +169,17 @@ class GuideGridState(
         return cell.startMillis <= nowMs && nowMs < cell.endMillis
     }
 
+    /**
+     * Second half of the remapped-Left gate (Logan 2026-09-14): true while
+     * the timeline sits at its live position, meaning it has not been panned
+     * earlier than now by more than the Back to Now slop ([slopMs], the same
+     * tolerance [isAwayFromNow] and [back] use). A hold that browses earlier
+     * programs can leave focus on the live cell; there a remapped Left must
+     * keep stepping back through history instead of firing. Panning later
+     * than now does not count. Read-only; the locked rule is untouched.
+     */
+    fun isTimelineAtLive(nowMs: Long): Boolean = anchorMs >= nowMs - slopMs
+
     /** True when the focused cell is the last one in its row (no later program to step onto). */
     fun atLastCell(): Boolean {
         if (focusRow !in 0 until rows.size) return false
