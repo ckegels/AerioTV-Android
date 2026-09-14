@@ -193,9 +193,14 @@ fun GuidePreviewBanner(
         // (Logan 2026-09-11; tvOS shares one baseline between the logo, the
         // copy and the mini). Published in root coordinates because the mini
         // is mounted at the activity root, outside this composition.
+        // Portrait art (2:3 XMLTV program icons) would lose its title text to a
+        // 16:9 center crop, so the slot itself turns poster-shaped: same height,
+        // width from the image aspect, and the text column takes the freed width.
+        var artAspect by remember(art) { androidx.compose.runtime.mutableStateOf(16f / 9f) }
+        val artWidth = if (artAspect < 1f) (101f * artAspect).dp else 180.dp
         Box(
             modifier = Modifier
-                .width(180.dp)
+                .width(artWidth)
                 .height(101.dp)
                 .onGloballyPositioned {
                     com.aeriotv.android.feature.player.MiniPlayerChrome
@@ -206,7 +211,12 @@ fun GuidePreviewBanner(
             when {
                 art != null -> AsyncImage(
                     model = art, contentDescription = null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.width(180.dp).height(101.dp).clip(RoundedCornerShape(6.dp)),
+                    modifier = Modifier.width(artWidth).height(101.dp).clip(RoundedCornerShape(6.dp)),
+                    onSuccess = { state ->
+                        val w = state.result.image.width.toFloat()
+                        val h = state.result.image.height.toFloat()
+                        if (w > 0f && h > 0f) artAspect = w / h
+                    },
                 )
                 artKnown && channel != null && channel.tvgLogo.isNotBlank() -> AsyncImage(
                     model = channel.tvgLogo, contentDescription = null, contentScale = ContentScale.Fit,
