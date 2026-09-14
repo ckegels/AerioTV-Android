@@ -782,6 +782,7 @@ fun PlayerScreen(
             // the user came from (tvOS parity: Menu on the catch-up player
             // returns to the guide). No mini for a replay - the mini is a
             // LIVE affordance. The native session revoke runs in onDispose.
+            PlayerDoubleBack.clear()
             exoHolder.stop()
             onClose()
         } else if (isTvForm) {
@@ -800,9 +801,26 @@ fun PlayerScreen(
             // expand / double-Back = top channel (see TvMiniPlayerOverlay);
             // playback only ever ends by playing something else (tvOS parity:
             // there is no explicit Stop in fullscreen or the mini).
-            exoWindowState.requestMini()
-            miniPlayerVm.showMiniPlayer()
-            onClose()
+            //
+            // Logan 2026-09-14: a SECOND Back within
+            // PlayerDoubleBack.WINDOW_MS ends playback completely instead of
+            // minimizing again - the same full stop the chrome's X runs
+            // (dismiss the mini session, hide the window, holder.stop(), drop
+            // the background service). The first press still minimizes
+            // immediately; only the follow-up press changes anything.
+            if (PlayerDoubleBack.isSecondPress()) {
+                miniPlayerVm.dismiss()
+                exoWindowState.hide()
+                exoHolder.stop()
+                com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                    .stop(context)
+                onClose()
+            } else {
+                PlayerDoubleBack.arm()
+                exoWindowState.requestMini()
+                miniPlayerVm.showMiniPlayer()
+                onClose()
+            }
         } else if (isRemote) {
             // GH #33: while casting / companion-controlling there is NO local
             // playback to keep alive (LaunchedEffect(isRemote) stopped the local
@@ -2551,6 +2569,7 @@ private fun LiveRewindChromeSection(
         // playFile on, leaving subsequent channels permanently
         // stuck.
         onClose = {
+            PlayerDoubleBack.clear()
             miniPlayerVm.dismiss()
             exoWindowState.hide()
             exoHolder.stop()

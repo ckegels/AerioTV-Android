@@ -883,6 +883,25 @@ fun VODPlayerScreen(
                 // There is nothing playing behind the card to transport anyway.
                 if (playbackErrorMessage != null) return@onPreviewKeyEvent false
                 if (dvrEndPromptVisible) return@onPreviewKeyEvent false
+                // Back twice = end playback (Logan 2026-09-14). The FIRST Back
+                // is never consumed, so this screen's existing exit path (the
+                // nav pop behind it) is untouched; it only arms the shared
+                // PlayerDoubleBack gate. A second Back inside the window - the
+                // pop is asynchronous, so it can still land here - stops the
+                // player outright and closes, rather than riding the exit
+                // animation with audio still running. The timing state lives
+                // in the process-level holder so this composable gains no
+                // locals or lambdas of its own.
+                if (event.key == Key.Back) {
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    if (PlayerDoubleBack.isSecondPress()) {
+                        exoPlayer?.stop()
+                        onClose()
+                        return@onPreviewKeyEvent true
+                    }
+                    PlayerDoubleBack.arm()
+                    return@onPreviewKeyEvent false
+                }
                 val handledKey = when (event.key) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
                     Key.DirectionLeft, Key.DirectionRight,

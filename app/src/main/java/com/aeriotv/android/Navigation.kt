@@ -1887,6 +1887,19 @@ fun AerioTVNavHost(
                 // Live TV tab) scrolls + focuses its top channel.
                 miniPlayerVm.session.requestGuideTop()
             },
+            // "Back twice" (Logan 2026-09-14): the press that minimized the
+            // player armed PlayerDoubleBack, and this one landed inside the
+            // window, so end playback completely - the same teardown the
+            // player chrome's X runs. The mini is already the top surface, so
+            // there is nothing to pop: dismissing the session removes it.
+            onStop = {
+                com.aeriotv.android.feature.player.PlayerDoubleBack.clear()
+                miniPlayerVm.dismiss()
+                miniExoWindowState.hide()
+                miniExoHolder.stop()
+                com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                    .stop(miniContext.applicationContext)
+            },
         )
         // Double-press D-pad Select event - MainActivity emits into the
         // session's resumeRequests flow; this collects and re-pushes the

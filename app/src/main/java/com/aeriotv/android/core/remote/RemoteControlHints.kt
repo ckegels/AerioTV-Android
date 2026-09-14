@@ -288,7 +288,14 @@ object RemoteControlHints {
         // old reveal-chrome-first rung was removed deliberately), and a
         // catch-up replay exits to where the user came from.
         add(RemoteHint("Back", if (catchupMode) "Exit" else "Mini player"))
-    }.take(MAX_PAIRS)
+        // Logan 2026-09-14: Back twice (within 700 ms) ends playback outright
+        // - no mini, stream stopped, back on the page the user came from. A
+        // catch-up replay already exits on the first Back, so it has no
+        // second rung to advertise.
+        if (!catchupMode) add(RemoteHint("Back twice", "Close"))
+        // The two Back rungs are the fixed tail of this strip, so it carries
+        // one pair more than the shared cap rather than dropping "Back twice".
+    }.take(MAX_PAIRS + 1)
 
     /**
      * VOD / recording player strip. VODPlayerScreen runs its OWN transport
