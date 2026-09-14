@@ -181,16 +181,38 @@ fun MediaTabContent(
     var showManageGroups by remember { mutableStateOf(false) }
 
     val groupNames = if (kind == MediaKind.Movies) state.movieGroupNames else state.seriesGroupNames
-    val genrePills = remember(groupNames, hiddenGroups, hiddenTitles) {
+    // The Hidden category is a normal Filter row: offered only while
+    // something is hidden, unchecked by default, and its pill (and its
+    // titles) appear only once the user checks it.
+    val hiddenCategoryOffered = hiddenTitles.isNotEmpty()
+    val hiddenCategoryShown by viewModel.hiddenCategoryShown(kind == MediaKind.Movies).collectAsStateWithLifecycle()
+    val genrePills = remember(groupNames, hiddenGroups, hiddenCategoryOffered, hiddenCategoryShown) {
         val groups = groupNames.filterNot { it in hiddenGroups }
-        if (hiddenTitles.isEmpty()) groups
-        else listOf(com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY) + groups
+        if (hiddenCategoryOffered && hiddenCategoryShown) listOf(com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY) + groups else groups
     }
     // Unhiding the last title takes the category away: drop the selection
     // with it so the page does not sit on a pill that no longer exists.
     val showingHidden = selectedGenre == com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY
-    LaunchedEffect(hiddenTitles.isEmpty(), showingHidden) {
-        if (showingHidden && hiddenTitles.isEmpty()) viewModel.setSelectedGenre(kind == MediaKind.Movies, null)
+    LaunchedEffect(hiddenCategoryOffered, hiddenCategoryShown, showingHidden) {
+        if (showingHidden && !(hiddenCategoryOffered && hiddenCategoryShown)) {
+            viewModel.setSelectedGenre(kind == MediaKind.Movies, null)
+        }
+    }
+    // The Filter list gets "Hidden" as its FIRST row; the dialogs speak in
+    // hidden groups, so an unchecked Hidden row is the category sitting in
+    // that set. Persisted separately (per playlist), never in the group set.
+    val filterGroups = remember(groupNames, hiddenCategoryOffered) {
+        if (hiddenCategoryOffered) listOf(com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY) + groupNames else groupNames
+    }
+    val filterHidden = remember(hiddenGroups, hiddenCategoryOffered, hiddenCategoryShown) {
+        if (hiddenCategoryOffered && !hiddenCategoryShown) hiddenGroups + com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY else hiddenGroups
+    }
+    val onFilterChange: (Set<String>) -> Unit = { next ->
+        if (hiddenCategoryOffered) {
+            viewModel.setHiddenCategoryShown(kind == MediaKind.Movies, com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY !in next)
+        }
+        val groupsOnly = next - com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY
+        if (kind == MediaKind.Movies) settingsVm.setHiddenMovieGroups(groupsOnly) else settingsVm.setHiddenSeriesGroups(groupsOnly)
     }
     val isLoading = if (kind == MediaKind.Movies) state.isLoading else state.isLoadingSeries
     val isSearching = query.isNotBlank()
@@ -423,10 +445,10 @@ fun MediaTabContent(
             // Native tvOS Filter page on TV (the phone branch below keeps the
             // bottom sheet).
             com.aeriotv.android.ui.tv.TvFilterPage(
-                groups = groupNames,
-                hiddenGroups = hiddenGroups,
+                groups = filterGroups,
+                hiddenGroups = filterHidden,
                 onChange = { next ->
-                    if (kind == MediaKind.Movies) settingsVm.setHiddenMovieGroups(next) else settingsVm.setHiddenSeriesGroups(next)
+                    onFilterChange(next)
                     // tvOS drops a genre selection once its group is hidden.
                     selectedGenre?.let { g -> if (g in next) viewModel.setSelectedGenre(kind == MediaKind.Movies, null) }
                 },
@@ -509,9 +531,9 @@ fun MediaTabContent(
 
     if (showManageGroups && groupNames.isNotEmpty()) {
         ManageGroupsSheet(
-            allGroups = groupNames,
-            hiddenGroups = hiddenGroups,
-            onSave = { if (kind == MediaKind.Movies) settingsVm.setHiddenMovieGroups(it) else settingsVm.setHiddenSeriesGroups(it) },
+            allGroups = filterGroups,
+            hiddenGroups = filterHidden,
+            onSave = onFilterChange,
             onDismiss = { showManageGroups = false },
         )
     }

@@ -779,6 +779,34 @@ class AppPreferences @Inject constructor(
             else prefs[KEY_HIDDEN_MOVIE_GROUPS] = groups.joinToString("\n")
         }
     }
+    /**
+     * Playlists (by [WatchlistStore.scopeFor] scope) whose Movies / TV Shows
+     * Filter list has the "Hidden" category checked. It sits with the other
+     * category visibility state but is per playlist, like the hidden titles
+     * themselves, and is UNCHECKED until the user turns it on.
+     */
+    val hiddenCategoryShownMovies: Flow<Set<String>> = store.data.map { prefs ->
+        decodeLines(prefs[KEY_HIDDEN_CATEGORY_SHOWN_MOVIES])
+    }
+    val hiddenCategoryShownSeries: Flow<Set<String>> = store.data.map { prefs ->
+        decodeLines(prefs[KEY_HIDDEN_CATEGORY_SHOWN_SERIES])
+    }
+
+    /** Check / uncheck the Hidden category for one playlist scope. */
+    suspend fun setHiddenCategoryShown(isMovie: Boolean, scope: String?, shown: Boolean) {
+        val key = if (isMovie) KEY_HIDDEN_CATEGORY_SHOWN_MOVIES else KEY_HIDDEN_CATEGORY_SHOWN_SERIES
+        val token = scope ?: HIDDEN_CATEGORY_ANY_PLAYLIST
+        store.edit { prefs ->
+            val current = decodeLines(prefs[key])
+            val next = if (shown) current + token else current - token
+            if (next.isEmpty()) prefs.remove(key) else prefs[key] = next.joinToString("\n")
+        }
+    }
+
+    private fun decodeLines(raw: String?): Set<String> =
+        if (raw.isNullOrBlank()) emptySet()
+        else raw.split('\n').mapNotNull { it.trim().takeIf(String::isNotBlank) }.toSet()
+
     val hiddenSeriesGroups: Flow<Set<String>> = store.data.map { prefs ->
         val raw = prefs[KEY_HIDDEN_SERIES_GROUPS] ?: ""
         if (raw.isBlank()) emptySet()
@@ -1739,6 +1767,11 @@ class AppPreferences @Inject constructor(
         /** DVR Filter (2026-09-10): channel names hidden from the recordings library. */
         val KEY_HIDDEN_DVR_CHANNELS = stringPreferencesKey("hidden_dvr_channels")
         val KEY_HIDDEN_SERIES_GROUPS = stringPreferencesKey("hidden_series_groups")
+        /** Hidden category checked, per playlist scope (Logan 2026-09-14). */
+        val KEY_HIDDEN_CATEGORY_SHOWN_MOVIES = stringPreferencesKey("hidden_category_shown_movies")
+        val KEY_HIDDEN_CATEGORY_SHOWN_SERIES = stringPreferencesKey("hidden_category_shown_series")
+        /** Scope token for a playlist whose URL carries no host. */
+        const val HIDDEN_CATEGORY_ANY_PLAYLIST = "*"
         val KEY_DISPLAY_SCALE_MOVIES = doublePreferencesKey("display_scale_movies")
         val KEY_DISPLAY_SCALE_LIVE_TV = doublePreferencesKey("display_scale_live_tv")
         val KEY_GUIDE_SCALE = doublePreferencesKey("guide_scale")

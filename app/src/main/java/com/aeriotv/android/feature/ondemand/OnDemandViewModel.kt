@@ -328,6 +328,34 @@ class OnDemandViewModel @Inject constructor(
         }
     }
 
+    // The Hidden category is a row in the Filter list like any other
+    // category: unchecked until the user checks it, and only offered while
+    // something is hidden. Its state is per playlist (AppPreferences).
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun hiddenCategoryShownFlow(isMovie: Boolean): StateFlow<Boolean> =
+        playlistRepository.observeActiveId()
+            .flatMapLatest { _ ->
+                // Same token AppPreferences stores for a playlist with no host.
+                val scope = hiddenScope() ?: ANY_PLAYLIST_SCOPE
+                (if (isMovie) appPreferences.hiddenCategoryShownMovies else appPreferences.hiddenCategoryShownSeries)
+                    .map { scope in it }
+            }
+            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
+
+    private val moviesHiddenCategoryShown by lazy { hiddenCategoryShownFlow(true) }
+    private val seriesHiddenCategoryShown by lazy { hiddenCategoryShownFlow(false) }
+
+    /** True when the Filter list's "Hidden" row is checked for this tab. */
+    fun hiddenCategoryShown(isMovie: Boolean): StateFlow<Boolean> =
+        if (isMovie) moviesHiddenCategoryShown else seriesHiddenCategoryShown
+
+    fun setHiddenCategoryShown(isMovie: Boolean, shown: Boolean) {
+        viewModelScope.launch {
+            appPreferences.setHiddenCategoryShown(isMovie, hiddenScope(), shown)
+            if (!shown && selectedGenre(isMovie).value == HIDDEN_CATEGORY) setSelectedGenre(isMovie, null)
+        }
+    }
+
     private fun startLibraryPipeline(isMovie: Boolean) {
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(
@@ -2965,3 +2993,6 @@ class OnDemandViewModel @Inject constructor(
  * it renders as plain "Hidden".
  */
 const val HIDDEN_CATEGORY: String = "\u200BHidden"
+
+/** Scope token for a playlist whose URL carries no host (AppPreferences). */
+private const val ANY_PLAYLIST_SCOPE: String = "*"
