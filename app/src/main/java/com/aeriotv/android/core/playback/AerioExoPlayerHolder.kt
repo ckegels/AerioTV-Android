@@ -554,6 +554,27 @@ class AerioExoPlayerHolder @Inject constructor(
     fun ingestAgeMs(): Long =
         if (lastBufferAdvanceAtMs == 0L) Long.MAX_VALUE
         else SystemClock.elapsedRealtime() - lastBufferAdvanceAtMs
+
+    /** Media the player still has ahead of the playhead, in ms. */
+    fun bufferAheadMs(): Long {
+        val p = player ?: return 0L
+        return (p.bufferedPosition - p.currentPosition).coerceAtLeast(0L)
+    }
+
+    /**
+     * The one live stall predicate, shared by the watchdog's "Reconnecting"
+     * status and the Dispatcharr follow-poller's dead-session rule: the PLAYER
+     * is starving, not merely the socket quiet. True when there is under
+     * [STALL_BUFFER_AHEAD_MS] of media ahead AND either ingest has been silent
+     * for [INGEST_STALL_STATUS_MS] or the player is sitting in BUFFERING while
+     * it wants to play. Must be called on the main thread.
+     */
+    fun isLiveIngestStalled(): Boolean {
+        val p = player ?: return false
+        if (bufferAheadMs() >= STALL_BUFFER_AHEAD_MS) return false
+        return ingestAgeMs() >= INGEST_STALL_STATUS_MS ||
+            (p.playWhenReady && p.playbackState == Player.STATE_BUFFERING)
+    }
     // When the watchdog tick itself arrives late, the MAIN THREAD was blocked
     // (the scope is Main.immediate) -- staleness accrued during that hang is
     // evidence of UI jank, not of a dead stream.
@@ -700,6 +721,10 @@ class AerioExoPlayerHolder @Inject constructor(
     /** Same-url retries already spent on a "Channel is stopping" 503 this tune.
      *  Reset by [resetWatchdogStateForNewStream] like every other heal budget. */
     private var stoppingRetries = 0
+    /** When the CURRENT run of "Channel is stopping" 503s began, so the wait is
+     *  capped by [Dispatcharr503.STOPPING_BUDGET_MS] of wall clock rather than
+     *  by a retry count. 0 = no run in progress. */
+    private var stoppingFirstAtMs = 0L
     /** The url whose 503 [handleLive503] most recently acted on, with when. A
      *  single 503 reaches us twice (the load error, then the terminal player
      *  error it becomes); the second arrival must not start a second retry or
@@ -1839,7 +1864,14 @@ class AerioExoPlayerHolder @Inject constructor(
         // destroy(), which clears currentChannelIdForRebuild, so an internal
         // re-prime (channelId == null) would otherwise lose the id the
         // terminal-error rebuild hook needs.
-        effectiveChannelId?.let { currentChannelIdForRebuild = it }
+        // Both ids: [STALL] and the other reporters read currentChannelId, and a
+        // failover / unavailable recovery re-primes through here after stop()
+        // nulled it, which is why every stall line after a recovery said
+        // ch=null (Streamer 2026-09-14, 13:54:43 onward).
+        effectiveChannelId?.let {
+            currentChannelIdForRebuild = it
+            currentChannelId = it
+        }
         clearPauseStamp("re-prime")
         resetWatchdogStateForNewStream()
         // watchdogReloadEnabled is kept current by the collector in init{}; the
@@ -2165,14 +2197,37 @@ class AerioExoPlayerHolder @Inject constructor(
                     p.playWhenReady && !isTimeshifting && !isCatchup &&
                     (hasReachedPlaybackRestart || videoFrameRendered) &&
                     !_streamUnavailable.value
-                if (stallWatchLive && ingestStaleNowMs >= INGEST_STALL_STATUS_MS) {
+                // "Stalled" is a starving DECODER, never a quiet socket. This
+                // proxy bursts (8 to 9.5 s gaps with 10 s buffered), so silence
+                // only counts while the buffer ahead of the playhead has drained
+                // under STALL_BUFFER_AHEAD_MS; leaving READY into BUFFERING with
+                // that same empty buffer counts too, since that is a real
+                // underrun. Clearing takes STALL_CLEAR_BUFFER_AHEAD_MS of media
+                // or a return to READY, so one burst cannot flicker the overlay.
+                val bufferAheadNowMs = (bufferedNow - p.currentPosition).coerceAtLeast(0L)
+                val starving = bufferAheadNowMs < STALL_BUFFER_AHEAD_MS
+                val ingestSilent = ingestStaleNowMs >= INGEST_STALL_STATUS_MS
+                val underrunBuffering =
+                    p.playWhenReady && p.playbackState == Player.STATE_BUFFERING
+                if (stallWatchLive && starving && (ingestSilent || underrunBuffering)) {
                     if (!ingestStallStatusShown) {
                         ingestStallStatusShown = true
-                        Log.i(TAG, "[STALL] ingest stalled ${ingestStaleNowMs}ms ch=$currentChannelId; showing Reconnecting")
+                        Log.i(
+                            TAG,
+                            "[STALL] starving: buffered ahead ${bufferAheadNowMs}ms, " +
+                                "ingest quiet ${ingestStaleNowMs}ms ch=$currentChannelId; showing Reconnecting",
+                        )
                         liveFailover.publishServerStatus("Reconnecting...")
                     }
-                } else if (ingestStallStatusShown) {
+                } else if (ingestStallStatusShown &&
+                    (!stallWatchLive || bufferAheadNowMs > STALL_CLEAR_BUFFER_AHEAD_MS ||
+                        p.playbackState == Player.STATE_READY)
+                ) {
                     ingestStallStatusShown = false
+                    Log.i(
+                        TAG,
+                        "[STALL] cleared: buffered ahead ${bufferAheadNowMs}ms ch=$currentChannelId",
+                    )
                     liveFailover.publishServerStatus(null)
                 }
 
@@ -2404,33 +2459,52 @@ class AerioExoPlayerHolder @Inject constructor(
         live503OwnedRecovery = false
         serverReason = info.reason
         if (info.kind == Dispatcharr503.Kind.STOPPING) {
-            if (stoppingRetries >= Dispatcharr503.MAX_STOPPING_RETRIES) {
+            // A teardown is the one case where waiting is the whole cure. The
+            // failover walk must NOT run here: on the Streamer 2026-09-14
+            // teardown it POSTed change_stream twice (both answered 504 "Stream
+            // switch was not confirmed by the channel owner"), walked every
+            // member stream, and recovered on the stream it started from, while
+            // the five 1.2 s retries per cycle turned one server stop into 60
+            // requests in 52 s. So: back off on the SAME url on the
+            // 2/4/8/16/30 s ladder, up to a 60 s budget, then the unavailable
+            // card with Retry.
+            if (stoppingFirstAtMs == 0L) stoppingFirstAtMs = now
+            val elapsedMs = now - stoppingFirstAtMs
+            if (stoppingRetryJob?.isActive == true) {
+                // One in-flight retry at a time: the duplicate copy of this same
+                // 503 (load error, then the terminal player error) and any later
+                // 503 arriving mid-wait must not double-schedule.
+                live503OwnedRecovery = true
+                return true
+            }
+            if (stoppingRetries >= Dispatcharr503.MAX_STOPPING_RETRIES ||
+                elapsedMs >= Dispatcharr503.STOPPING_BUDGET_MS
+            ) {
                 Log.w(
                     TAG,
-                    "[FAILOVER] 503 reason=\"${info.reason}\" retried " +
-                        "$stoppingRetries times on the same url; handing to the failover walk",
+                    "[RECOVER] 503 reason=\"${info.reason}\" still stopping after " +
+                        "${elapsedMs}ms / $stoppingRetries retries; surfacing unavailable",
                 )
-                // Nothing owned here: the failover walk may have nowhere to go
-                // (single stream, no admin rights), so the generic ladder stays
-                // the safety net, exactly as [LiveStreamFailover] assumes when
-                // it logs "staying on the retry path".
-                liveFailover.onServer503(info.reason)
-                return false
-            }
-            if (stoppingRetryJob?.isActive == true) {
+                markStreamUnavailable()
                 live503OwnedRecovery = true
                 return true
             }
             stoppingRetries += 1
             val attempt = stoppingRetries
+            val waitMs = Dispatcharr503.stoppingDelayMs(
+                attempt = attempt,
+                retryAfterMs = info.retryAfterMs,
+                elapsedMs = elapsedMs,
+            )
             liveFailover.publishServerStatus("Reconnecting...")
             Log.i(
                 TAG,
-                "[RECOVER] 503 reason=\"${info.reason}\" waiting ${info.retryAfterMs}ms " +
-                    "then retrying same url ($attempt/${Dispatcharr503.MAX_STOPPING_RETRIES})",
+                "[RECOVER] 503 reason=\"${info.reason}\" backing off ${waitMs}ms " +
+                    "then retrying same url ($attempt/${Dispatcharr503.MAX_STOPPING_RETRIES}, " +
+                    "${elapsedMs}ms of ${Dispatcharr503.STOPPING_BUDGET_MS}ms budget spent)",
             )
             stoppingRetryJob = watchdogScope.launch {
-                delay(info.retryAfterMs)
+                delay(waitMs)
                 // A channel flip / teardown since the wait started means this
                 // retry belongs to a stream nobody is watching any more.
                 if (lastPlayUrl != url) return@launch
@@ -2467,6 +2541,7 @@ class AerioExoPlayerHolder @Inject constructor(
         streamPrimedAtMs = now
         lastKnownBufferedPositionMs = 0L
         lastBufferAdvanceAtMs = now
+        LoggingPlayerListener.sawTracksChangedSincePrime = false
         val source = buildMediaSource(
             url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
             lastPlayDrmType, lastPlayDrmKey,
@@ -2555,6 +2630,8 @@ class AerioExoPlayerHolder @Inject constructor(
         noFrameHealAttempts = 0
         noDataHealAttempts = 0
         stoppingRetries = 0
+        stoppingFirstAtMs = 0L
+        LoggingPlayerListener.sawTracksChangedSincePrime = false
         live503HandledKey = null
         live503HandledAtMs = 0L
         live503OwnedRecovery = false
@@ -2572,6 +2649,12 @@ class AerioExoPlayerHolder @Inject constructor(
     }
 
     private object LoggingPlayerListener : Player.Listener {
+
+        /** Whether ANY tracks-changed callback has arrived for the current
+         *  prime. The first one can precede track discovery, so the "no audio
+         *  track group" warning waits for the second. */
+        @Volatile
+        var sawTracksChangedSincePrime = false
         override fun onPlayerError(error: PlaybackException) {
             Log.e(TAG, "ExoPlayer error: ${error.errorCodeName} (${error.errorCode})", error)
         }
@@ -2606,9 +2689,19 @@ class AerioExoPlayerHolder @Inject constructor(
         override fun onTracksChanged(tracks: Tracks) {
             val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
             if (audioGroups.isEmpty()) {
-                Log.w(TAG, "ExoPlayer audio: stream exposes NO audio track group")
+                // The FIRST callback after a prime routinely lands before track
+                // discovery finishes (Streamer 2026-09-14: this warning at
+                // 14:25:11.656, AC-3 selected 370 ms later), so it is never
+                // evidence of a demux problem. Warn only if a later callback
+                // still has no audio group.
+                if (sawTracksChangedSincePrime) {
+                    Log.w(TAG, "ExoPlayer audio: stream exposes NO audio track group")
+                } else {
+                    sawTracksChangedSincePrime = true
+                }
                 return
             }
+            sawTracksChangedSincePrime = true
             audioGroups.forEachIndexed { g, group ->
                 for (i in 0 until group.length) {
                     val f = group.getTrackFormat(i)
@@ -2790,9 +2883,21 @@ class AerioExoPlayerHolder @Inject constructor(
 
     companion object {
         private const val TAG = "AerioExoPlayer"
-        /** Live ingest stall that surfaces the "Reconnecting" status (and that
-         *  the follow-poller treats as corroboration for a 404 dead session). */
+        /** Ingest silence that COUNTS toward a stall, once the player is also
+         *  starving. Silence alone means nothing: the Dispatcharr proxy delivers
+         *  in bursts (Streamer 2026-09-14: routine 8 to 9.5 s gaps with 10 s
+         *  buffered and zero rebuffers), which produced ~200 false Reconnecting
+         *  overlays in 22 minutes of perfect playback and armed the dead-session
+         *  rule that turned one teardown into a 52 s request storm. */
         const val INGEST_STALL_STATUS_MS = 2_000L
+
+        /** Buffered-ahead (bufferedPosition - currentPosition) below which the
+         *  player is actually starving. THIS is what "stalled" means. */
+        const val STALL_BUFFER_AHEAD_MS = 1_500L
+
+        /** Buffered-ahead that clears the stall. Hysteresis against the burst
+         *  cadence: one burst must genuinely refill us before we say recovered. */
+        const val STALL_CLEAR_BUFFER_AHEAD_MS = 3_000L
         /** Baseline live start gate (bufferForPlaybackMs). See the LoadControl
          *  comment in [acquireOrCreate] for why 1_200 and not 500 or 2_000. */
         private const val LIVE_START_GATE_DEFAULT_MS = 1_200

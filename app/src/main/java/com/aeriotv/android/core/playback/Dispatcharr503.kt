@@ -47,14 +47,46 @@ object Dispatcharr503 {
         val retryAfterMs: Long,
     )
 
-    /** Default wait when a STOPPING 503 carries no usable Retry-After. */
-    const val DEFAULT_RETRY_AFTER_MS = 1_000L
+    /** No usable Retry-After on the response: the ladder below decides alone. */
+    const val DEFAULT_RETRY_AFTER_MS = 0L
 
-    /** Ceiling on the honored Retry-After: a live tune must not stall longer. */
-    const val MAX_RETRY_AFTER_MS = 3_000L
+    /**
+     * Backoff ladder for a STOPPING 503, in ms. Before 2026-09-14 the client
+     * retried the same url five times at the advertised ~1 s and then entered
+     * the failover walk, which on a teardown produced 60 requests in 52 s plus
+     * two change_stream POSTs the server answered 504 ("not confirmed by the
+     * channel owner"), and landed back on the stream it started from. Waiting
+     * is the only thing that helps while the server is stopping, so wait
+     * properly: the five steps sum to exactly [STOPPING_BUDGET_MS].
+     */
+    val STOPPING_BACKOFF_MS = longArrayOf(2_000L, 4_000L, 8_000L, 16_000L, 30_000L)
 
     /** Times the same url may be retried for a STOPPING 503 before anything else. */
     const val MAX_STOPPING_RETRIES = 5
+
+    /** Total time a STOPPING 503 may be waited out before the unavailable card
+     *  with Retry takes over. 2 + 4 + 8 + 16 + 30 = 60. */
+    const val STOPPING_BUDGET_MS = 60_000L
+
+    /** Ceiling on the honored Retry-After. A "Channel is stopping" teardown on a
+     *  provider-capped channel really does run for tens of seconds (Streamer
+     *  2026-09-14: 52 s), so a larger advertised wait is respected up to the
+     *  whole budget rather than clamped down to a hammering interval. */
+    const val MAX_RETRY_AFTER_MS = STOPPING_BUDGET_MS
+
+    /**
+     * Wait before same-url retry [attempt] (1-based) of a STOPPING 503: the
+     * ladder step, or the server's own Retry-After when it asks for longer,
+     * trimmed to whatever is left of [STOPPING_BUDGET_MS].
+     */
+    fun stoppingDelayMs(attempt: Int, retryAfterMs: Long, elapsedMs: Long): Long {
+        val step = STOPPING_BACKOFF_MS[
+            (attempt - 1).coerceIn(0, STOPPING_BACKOFF_MS.size - 1),
+        ]
+        val wanted = maxOf(step, retryAfterMs)
+        val remaining = (STOPPING_BUDGET_MS - elapsedMs).coerceAtLeast(0L)
+        return minOf(wanted, remaining)
+    }
 
     /**
      * Find the 503 inside whatever Media3 handed us (a load error arrives
@@ -126,6 +158,6 @@ object Dispatcharr503 {
             ?.trim()
         val seconds = raw?.toDoubleOrNull() ?: return DEFAULT_RETRY_AFTER_MS
         val ms = (seconds * 1000.0).toLong()
-        return ms.coerceIn(DEFAULT_RETRY_AFTER_MS, MAX_RETRY_AFTER_MS)
+        return ms.coerceIn(0L, MAX_RETRY_AFTER_MS)
     }
 }

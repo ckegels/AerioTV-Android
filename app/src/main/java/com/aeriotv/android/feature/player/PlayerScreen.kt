@@ -974,16 +974,20 @@ fun PlayerScreen(
                     // the follower reconnect every ~25s (a 3s freeze on every
                     // channel). A 404 only counts as a dead session when the
                     // live buffer has also stopped growing.
-                    val ingestAgeMs = withContext(Dispatchers.Main.immediate) { exoHolder.ingestAgeMs() }
-                    // 2026-09-14 (Streamer): stopping the stream from
-                    // Dispatcharr's UI froze the picture for ~30s because a
-                    // confirmed-dead 404 still waited for three polls on a
-                    // growing backoff. A 404 WITH the ingest stalled is not
-                    // ambiguous -- nothing is arriving and the server says
-                    // there is no session -- so act on the first poll. The
-                    // three-poll rule stays for the GH #82 case it was written
+                    // 2026-09-14 (Streamer): "stalled" here means the PLAYER is
+                    // starving, not that the socket went quiet -- this proxy
+                    // bursts every 8 to 9.5 s with 10 s buffered, so the old
+                    // silence-only test was true most of the time and made a
+                    // single 404 re-prime into a server teardown, producing a
+                    // 52 s 503 storm. Same predicate as the holder's stall
+                    // status (isLiveIngestStalled), and even a stalled 404 now
+                    // needs TWO consecutive polls, because this server's status
+                    // endpoint lagged real state by ~30 s in the same session.
+                    // Three polls stay for the GH #82 case the rule was written
                     // for: 404 while bytes are still flowing.
-                    val ingestStalled = ingestAgeMs >= com.aeriotv.android.core.playback.AerioExoPlayerHolder.INGEST_STALL_STATUS_MS
+                    val (ingestAgeMs, ingestStalled) = withContext(Dispatchers.Main.immediate) {
+                        exoHolder.ingestAgeMs() to exoHolder.isLiveIngestStalled()
+                    }
                     if (ingestAgeMs < 8_000L && !ingestStalled) {
                         if (deadStatusCount == 0) android.util.Log.i(
                             "DispatcharrSwitch",
@@ -992,10 +996,11 @@ fun PlayerScreen(
                         deadStatusCount = 0
                         continue
                     }
-                    val deadThreshold = if (ingestStalled) 1 else 3
-                    if (ingestStalled && stillPlaying) android.util.Log.w(
+                    val deadThreshold = if (ingestStalled) 2 else 3
+                    if (stillPlaying) android.util.Log.w(
                         "DispatcharrSwitch",
-                        "[FOLLOW] dead session: 404 with ingest stalled ${ingestAgeMs}ms ch=${ch.id}",
+                        "[FOLLOW] 404 poll ${deadStatusCount + 1}/$deadThreshold ch=${ch.id} " +
+                            "(stalled=$ingestStalled, ingest ${ingestAgeMs}ms)",
                     )
                     if (stillPlaying && ++deadStatusCount >= deadThreshold && currentChannel?.id == ch.id &&
                         switchStream == null && !exoHolder.isReprimeInFlight &&
