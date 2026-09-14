@@ -12,8 +12,9 @@ license.
 ## FFmpeg (LGPL-2.1-or-later)
 
 `app/libs/media3-decoder-ffmpeg.aar` bundles a build of FFmpeg. It is wired in as
-the fallback software audio renderer and supplies AC-3 and MP2 decoding on
-devices with no hardware MediaCodec for those codecs.
+the fallback software audio renderer and supplies AC-3, E-AC-3, DTS, TrueHD and
+MP2 decoding on devices with no hardware MediaCodec for those codecs, or whose
+platform decoder offers them only as a passthrough bitstream.
 
 | | |
 |---|---|
@@ -27,16 +28,22 @@ The library is configured through the Media3 `decoder_ffmpeg` extension's
 `build_ffmpeg.sh` **without** `--enable-gpl`, enabling only these decoders:
 
 ```
-ac3 mp2 mp3 flac alac
+ac3 eac3 dca truehd mlp mp2 mp3 flac alac
 ```
 
+Those nine cover, in order: AC-3, E-AC-3 (Dolby Digital Plus), DTS / DTS-HD core,
+TrueHD, MLP, MPEG audio layers II and III, FLAC and Apple Lossless.
+
 All of the above are LGPL-clean. No GPL-only component (x264, x265, libpostproc)
-is linked in. The decoder set was trimmed on 2026-09-11 to codecs whose
-essential patents have expired, and trimmed again on 2026-09-12 to drop `aac`.
-E-AC-3, DTS, TrueHD/MLP and AAC are no longer built, so those formats rely on
-the device's own hardware decoder; that includes HE-AAC (AAC+ / SBR) on-demand
-recordings, which the hardware AAC decoder now handles in every case. The
-complete, reproducible build steps are recorded in
+is linked in. `eac3`, `dca`, `truehd` and `mlp` were removed on 2026-09-11 and
+restored on 2026-09-14, matching the decoder set that VLC and Kodi ship: without
+them, a device whose platform decoder exposes E-AC-3 for bitstream only played
+those tracks silent whenever surround passthrough was off. `aac` was dropped on
+2026-09-12 and is still not built: every supported Android device has a hardware
+AAC decoder (AAC is mandatory in the CDD), so AAC, including HE-AAC (AAC+ / SBR)
+on-demand recordings, relies on the platform decoder in every case. See the
+Patents section of [README.md](README.md) for the patent notice that accompanies
+these decoders. The complete, reproducible build steps are recorded in
 [app/libs/README.md](app/libs/README.md).
 
 ### Relinking

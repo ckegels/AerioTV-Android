@@ -5,45 +5,53 @@
 The Media3 FFmpeg audio-decoder extension. Google does not publish a prebuilt
 artifact for it, so this AAR is built from source and vendored here. It provides
 software decoding for audio codecs that many devices have no hardware MediaCodec
-for, notably **AC-3 and MP2** carried by US ATSC broadcast channels. Without it,
+for, notably **AC-3, E-AC-3 and MP2** carried by US ATSC broadcast channels and
+by surround VOD titles. Without it,
 ExoPlayer reports "no audio tracks" and plays silent on boxes like the
 Chromecast with Google TV. It is wired in as the fallback audio renderer
 (`EXTENSION_RENDERER_MODE_ON`) in `core/playback/AerioRenderers.kt`.
 
-### Enabled decoders (2026-09-12)
+### Enabled decoders (2026-09-14)
 
 ```
-ac3 mp2 mp3 flac alac
+ac3 eac3 dca truehd mlp mp2 mp3 flac alac
 ```
 
-**Why this set.** Two trims got it here.
+**Why this set.** AerioTV matches what VLC and Kodi ship (Logan, 2026-09-14).
 
-2026-09-11 dropped `eac3`, `dca`, `mlp` and `truehd`: those four are the ones
-with live patent exposure (E-AC-3, DTS and TrueHD / MLP are all covered by
-patents that have NOT expired), and shipping a software decoder for them in a
-distributed binary is a licensing risk the app does not need to carry.
+2026-09-11 had dropped `eac3`, `dca`, `mlp` and `truehd` over patent exposure.
+That was reverted on 2026-09-14 after the regression it caused: on a Shield TV,
+a VOD title with E-AC-3 5.1 and **Surround Sound Passthrough OFF** played video
+normally with completely silent audio. The mechanism: with passthrough off,
+`aerioRenderersFactory` builds the sink with `DEFAULT_AUDIO_CAPABILITIES`
+(PCM only), and the Shield platform exposes E-AC-3 for **bitstream** only, so
+`MediaCodecAudioRenderer` declines the format; the track fell through to the
+FFmpeg renderer behind it, which no longer carried an `eac3` decoder and
+declined it too, leaving the track with NO renderer at all. The four are back
+and the patent position is handled by notice instead: see the **Patents**
+section of the repo `README.md`, `THIRD_PARTY_LICENSES.md`, and the in-app
+Settings > About > Open Source Licenses screen.
 
-2026-09-12 dropped `aac` as well (Logan's decision). AAC's essential patents
-have expired, but every Android device the app supports has a hardware AAC
-decoder: AAC is mandatory in the Android CDD, so a software AAC decoder in the
-binary was never reached on real hardware and only added size. The five that
-remain are the ones a device may genuinely lack: AC-3 and MP2 on US ATSC
-broadcast channels, and MP3 / FLAC / ALAC in on-demand files.
+2026-09-12 dropped `aac` and that still stands. AAC's essential patents have
+expired, but every Android device the app supports has a hardware AAC decoder
+(AAC is mandatory in the Android CDD), so a software AAC decoder in the binary
+was never reached on real hardware and only added size.
 
 Behavioral consequences:
 
-- E-AC-3, DTS and TrueHD have NO software decoder and fall through to the
-  platform MediaCodec only. Devices with a hardware decoder for them (most TVs,
-  most phones, Shield, Google TV Streamer) are unaffected. A device with
-  neither hardware nor software support logs the unsupported audio group from
-  the GH #8 diagnostic in `AerioExoPlayerHolder` and plays silent, which is the
-  same outcome as any other codec the device cannot decode.
-- AAC, including HE-AAC / AAC+ (SBR) on-demand recordings, now relies entirely
-  on the device's hardware decoder. This is the GH #45 path: the on-demand
+- AC-3, E-AC-3, DTS, TrueHD/MLP, MP2, MP3, FLAC and ALAC all have a software
+  fallback. The platform decoder still wins whenever it can actually produce
+  PCM (`EXTENSION_RENDERER_MODE_ON`); FFmpeg only picks up what the platform
+  refuses, which includes the bitstream-only case above.
+- AAC, including HE-AAC / AAC+ (SBR) on-demand recordings, relies entirely on
+  the device's hardware decoder. This is the GH #45 path: the on-demand
   renderer mode stays `EXTENSION_RENDERER_MODE_PREFER`, but with no software
   AAC in the build the FFmpeg renderer no longer advertises the MIME, so every
   AAC track falls through to MediaCodec. See the note in
   `core/playback/AerioRenderers.kt`.
+- Which renderer actually won is logged on every tune by the always-on
+  `audio renderer -> ...` line in `AerioExoPlayerHolder`, naming the decoder
+  (FFmpeg decoder names start with `ffmpeg`).
 
 `FfmpegLibrary.supportsFormat` is a runtime query against the native library,
 so nothing in the app needed a MIME allow-list change; the Cast on-phone
@@ -73,17 +81,19 @@ platform decoder.
 # in the media3 checkout, from libraries/decoder_ffmpeg/src/main/jni
 ./build_ffmpeg.sh "<repo>/libraries/decoder_ffmpeg/src/main" \
   "$ANDROID_SDK/ndk/25.1.8937393" darwin-x86_64 21 \
-  ac3 mp2 mp3 flac alac
-# then, from the media3 checkout root
+  ac3 mp2 mp3 flac alac eac3 dca truehd mlp
+# then, from the media3 checkout root (ANDROID_HOME must be set)
 ./gradlew :lib-decoder-ffmpeg:assembleRelease
 # output: libraries/decoder_ffmpeg/buildout/outputs/aar/lib-decoder-ffmpeg-release.aar
 ```
 
 The .so is stripped, so verify the codec set with `strings` rather than `nm`:
-`strings -a libffmpegJNI.so | grep -x ff_ac3_decoder` must hit, and
-`ff_aac_decoder`, `ff_eac3_decoder`, `ff_dca_decoder`, `ff_mlp_decoder`,
-`ff_truehd_decoder` must all miss, on each of the four ABIs.
+`ff_ac3_decoder`, `ff_eac3_decoder`, `ff_dca_decoder`, `ff_truehd_decoder`,
+`ff_mlp_decoder`, `ff_mp2_decoder`, `ff_mp3_decoder`, `ff_flac_decoder` and
+`ff_alac_decoder` must each hit, and `ff_aac_decoder` must miss, on each of the
+four ABIs. Verified on all four for the 2026-09-14 build (AAR 1.6 MB to 2.4 MB),
+alongside `llvm-readelf -l` showing align `0x4000` on every LOAD segment.
 
 Rebuild and replace this file when bumping the `media3` version so the extension
 stays binary-compatible with the maven media3 artifacts. Keep the decoder list
-above; do not re-add the patent-encumbered four, and do not re-add `aac`.
+above; do not re-add `aac`.

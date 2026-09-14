@@ -26,8 +26,8 @@ import androidx.media3.exoplayer.video.VideoRendererEventListener
  *
  * [audioPassthrough] false (the default preference) builds the audio sink
  * with PCM-only capabilities, so surround bitstreams (AC-3/E-AC-3) are decoded
- * in-app (AC-3 by MediaCodec or the bundled FFmpeg decoder, E-AC-3 by
- * MediaCodec only) and the display receives plain PCM on the standard
+ * in-app (AC-3 and E-AC-3 by MediaCodec or the bundled FFmpeg decoder)
+ * and the display receives plain PCM on the standard
  * latency-compensated path. Many TVs decode a passthrough bitstream with
  * latency Android reports as zero, which the player cannot compensate;
  * the visible symptom is lip-sync drift on live TV. True restores the
@@ -61,9 +61,10 @@ fun aerioRenderersFactory(
     // fatals + retries the same broken decoder. PREFER routes AAC (and AC-3,
     // which this path already PCM-decodes with passthrough off) to FFmpeg
     // first. E-AC-3/DTS/TrueHD are NOT in the bundled FFmpeg build any more
-    // (patent exposure decision 2026-09-11), so the FFmpeg renderer declines
-    // them and they go to the platform decoder behind it, which is exactly
-    // what PREFER's ordering-not-membership semantics give us.
+    // back in the bundled FFmpeg build since 2026-09-14, so on this path the
+    // FFmpeg renderer claims them first; that is what fixes the Shield E-AC-3
+    // VOD silence, where the platform decoder offers bitstream only and the
+    // forced-PCM sink cannot use it.
     // Scoped to on-demand so live TV's 24/7 hardware-first audio
     // is untouched; a single finite VOD stream is a few % of one core, video
     // stays hardware-decoded. MUST stay false for the live holder + multiview.
@@ -190,14 +191,25 @@ fun aerioRenderersFactory(
         // hardware decoders stay primary and FFmpeg is used only as a fallback
         // for formats the device can't decode in hardware -- notably AC-3 and
         // MP2 on broadcast (ATSC) channels, which cheaper boxes like the
-        // Chromecast with Google TV have no MediaCodec decoder for. E-AC-3, DTS
-        // and TrueHD are deliberately NOT in the bundled FFmpeg build (patent
-        // exposure decision 2026-09-11), and AAC is not either (dropped
-        // 2026-09-12; every supported device has a hardware AAC decoder). For
-        // those there is no software
-        // fallback at all, so a device without a hardware decoder plays them
-        // silent and logs the unsupported audio group (GH #8 diagnostic in
-        // AerioExoPlayerHolder). Routing ALL
+        // Chromecast with Google TV have no MediaCodec decoder for.
+        //
+        // E-AC-3, DTS and TrueHD are back in the bundled FFmpeg build as of
+        // 2026-09-14, matching what VLC and Kodi ship. They had been removed on
+        // 2026-09-11; the regression that brought them back: Shield TV, VOD
+        // with E-AC-3 5.1 and Surround Sound Passthrough OFF played video with
+        // silent audio. With passthrough off the sink is forced to PCM-only
+        // capabilities, and the Shield platform decoder exposes E-AC-3 for
+        // BITSTREAM only, so MediaCodecAudioRenderer declines the format and it
+        // falls through to the FFmpeg renderer behind it -- which no longer had
+        // an eac3 decoder and declined it too, leaving the track with NO
+        // renderer. Hardware still wins whenever it can actually produce PCM;
+        // FFmpeg only picks up what the platform refuses. AAC stays out of the
+        // build (dropped 2026-09-12; every supported device has a hardware AAC
+        // decoder). Anything with neither a hardware nor a bundled software
+        // decoder plays silent and logs the unsupported audio group (GH #8
+        // diagnostic in AerioExoPlayerHolder), alongside the always-on
+        // "audio renderer -> ..." line that names the renderer that won.
+        // Routing ALL
         // audio through the software decoder 24/7 would waste CPU on formats the
         // hardware handles fine, so live stays hardware-first.
         //
@@ -209,7 +221,8 @@ fun aerioRenderersFactory(
         //
         // The 2026-09-12 codec trim dropped `aac` from the FFmpeg build, so
         // that no longer applies: HE-AAC on-demand recordings now rely on the
-        // device's HARDWARE AAC decoder in every case. Every Android device the
+        // device's HARDWARE AAC decoder in every case (the 2026-09-14 rebuild
+        // restored E-AC-3/DTS/TrueHD but did NOT restore aac). Every Android device the
         // app supports has one (AAC is mandatory in the CDD), and the GH #45
         // hardware failures have not recurred since, so this is the accepted
         // trade. PREFER is kept rather than reverted to ON because it is now
@@ -218,9 +231,9 @@ fun aerioRenderersFactory(
         // hardware either way. What PREFER still buys is first claim on the
         // codecs FFmpeg DOES carry (ac3, mp2, mp3, flac, alac) for on-demand
         // files, where a software decode is cheap and more predictable than a
-        // marginal hardware one. Everything else FFmpeg does not advertise
-        // (AAC, Opus/Vorbis, and E-AC-3/DTS/TrueHD since the 2026-09-11 trim)
-        // falls through to hardware. No passthrough regression because the
+        // marginal hardware one. Since 2026-09-14 that set also includes eac3,
+        // dca, truehd and mlp. Everything else FFmpeg does not advertise (AAC,
+        // Opus/Vorbis) falls through to hardware. No passthrough regression because the
         // on-demand path already forces a PCM sink (audioPassthrough=false); if
         // a "bitstream to receiver" option is ever added to VOD, revisit this.
         .setExtensionRendererMode(

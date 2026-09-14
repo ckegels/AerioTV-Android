@@ -215,12 +215,20 @@ private fun LicenseIndex(
         item("ffmpeg-body") {
             LicenseBlurb(
                 "This app includes FFmpeg (release/6.0, libavcodec 60.3.100), used " +
-                    "unmodified as the software audio decoder for AC-3 and MP2 " +
-                    "on devices with no hardware decoder for them.\n\n" +
+                    "unmodified as the software audio decoder for AC-3, E-AC-3, DTS, " +
+                    "TrueHD and MP2 on devices with no hardware decoder for them.\n\n" +
                     "FFmpeg is licensed under the GNU Lesser General Public License, " +
                     "version 2.1 or later. It is built WITHOUT --enable-gpl, enabling " +
-                    "only these decoders: ac3, mp2, mp3, flac, alac. No GPL-only " +
-                    "component is linked in.\n\n" +
+                    "only these decoders: ac3, eac3, dca, truehd, mlp, mp2, mp3, flac, " +
+                    "alac. No GPL-only component is linked in.\n\n" +
+                    "AerioTV includes independent implementations of audio and video " +
+                    "codecs, supplied by FFmpeg, that may be covered by patents in " +
+                    "some countries. AerioTV is free software under GPL-3.0-or-later " +
+                    "and grants no patent license; users are responsible for " +
+                    "compliance where they live.\n\n" +
+                    "Dolby, DTS and other names are trademarks of their respective " +
+                    "owners, used only to identify the audio formats concerned. " +
+                    "AerioTV is not affiliated with or certified by them.\n\n" +
                     "FFmpeg is loaded as a dynamically linked JNI shared object " +
                     "(libffmpegJNI.so) and can be replaced with a modified build, as " +
                     "section 6 of the LGPL requires. Build steps are in app/libs/README.md " +

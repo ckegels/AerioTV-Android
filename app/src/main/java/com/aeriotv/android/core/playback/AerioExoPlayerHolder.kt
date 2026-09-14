@@ -2517,9 +2517,10 @@ class AerioExoPlayerHolder @Inject constructor(
         // debug log): "No Sound / no audio track" on some devices (e.g.
         // Chromecast with Google TV). When the stream carries an audio track
         // the device can decode in neither hardware nor the bundled FFmpeg
-        // software decoder (which since 2026-09-11 covers only ac3/aac/mp2/
-        // mp3/flac/alac, so E-AC-3, DTS and TrueHD reach this path whenever
-        // the device has no hardware decoder for them), ExoPlayer exposes the
+        // software decoder (since 2026-09-14 the bundled build covers ac3,
+        // eac3, dca, truehd, mlp, mp2, mp3, flac and alac, so this path is now
+        // reached only by codecs outside that set, e.g. AAC or Opus on a
+        // device with no hardware decoder for them), ExoPlayer exposes the
         // group but marks it
         // unsupported, and the track selector offers nothing -- silent
         // playback with "no audio track available". Logging every audio group
@@ -2572,6 +2573,28 @@ class AerioExoPlayerHolder @Inject constructor(
      *  network cause. URIs are redacted for embedded credentials by
      *  LogSanitizer before the log is shared. */
     private inner class LoadErrorDiagnosticsListener : AnalyticsListener {
+        /** Always-on: which audio renderer actually claimed the track on this
+         *  tune. The decoder name distinguishes the platform MediaCodec
+         *  renderer (e.g. c2.android.ac3.decoder, OMX.google.raw.decoder) from
+         *  the bundled FFmpeg fallback renderer (names starting "ffmpeg"). The
+         *  2026-09-14 Shield E-AC-3 silence was exactly this gap: with
+         *  passthrough off the platform exposed E-AC-3 for bitstream only, so
+         *  the track fell through to the FFmpeg renderer, which at the time no
+         *  longer carried an eac3 decoder and refused it as well. Debug builds
+         *  log the same name under AerioPlayerDiag; this copy is release-safe
+         *  so a user's shared log answers "which renderer took the audio". */
+        override fun onAudioDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long,
+        ) {
+            val renderer =
+                if (decoderName.startsWith("ffmpeg", ignoreCase = true)) "FFmpeg extension renderer"
+                else "platform MediaCodec renderer"
+            Log.i(TAG, "audio renderer -> $renderer (decoder=$decoderName)")
+        }
+
         override fun onLoadError(
             eventTime: AnalyticsListener.EventTime,
             loadEventInfo: LoadEventInfo,

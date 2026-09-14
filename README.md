@@ -360,10 +360,10 @@ GPL-3.0-or-later.
 
 AerioTV bundles an FFmpeg build (LGPL-2.1-or-later) and depends on a number of
 Apache-2.0 libraries. The FFmpeg build is configured without `--enable-gpl` and
-enables exactly five audio decoders: `ac3`, `mp2`, `mp3`, `flac` and `alac`.
-Anything outside that set, E-AC-3, DTS, TrueHD and AAC included, relies on the
-device's own hardware decoder; HE-AAC on-demand recordings are handled by the
-hardware AAC decoder. See
+enables exactly nine audio decoders: `ac3`, `eac3`, `dca`, `truehd`, `mlp`,
+`mp2`, `mp3`, `flac` and `alac`. Anything outside that set, AAC included, relies
+on the device's own hardware decoder; HE-AAC on-demand recordings are handled by
+the hardware AAC decoder. See
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the full list, the exact
 FFmpeg build configuration, and where to obtain the corresponding source. The
 same information is in the app under Settings > About > Open Source Licenses.
@@ -391,6 +391,18 @@ additional permission under GPL section 7; see
 The four-color Google "G" on the Sign in with Google button
 (`res/drawable/ic_google_g.xml`) is a trademark of Google LLC, used per the
 Google Sign-In branding guidelines.
+
+### Patents
+
+AerioTV includes independent implementations of audio and video codecs, supplied
+by FFmpeg, that may be covered by patents in some countries. AerioTV is free
+software under GPL-3.0-or-later and grants no patent license of any kind; users
+and redistributors are responsible for compliance with the patent law that
+applies where they live.
+
+Dolby, DTS and other names that appear in this project are trademarks of their
+respective owners, used only to identify the audio formats concerned. AerioTV is
+not affiliated with, endorsed by, or certified by any of them.
 
 ### TMDB attribution
 
