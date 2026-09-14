@@ -456,6 +456,29 @@ fun <T> TvMediaPage(
             if (gridItems.isEmpty()) add("empty")
         }
     }
+    /** Design-height fallbacks for leading rows that can be INSERTED while the
+     *  page is already scrolled away from the top (Logan 2026-09-13: Movies,
+     *  Continue Watching empty, open a title, play, scrub, Back, Back; the
+     *  hero row appears above a grid that is parked deep, so the lazy grid
+     *  never composes it, its layout pass never runs, no height is ever
+     *  recorded and the rest-top chain below stopped dead at "hero": every
+     *  anchor target was null and D-pad Up/Down scrolled nothing at all).
+     *  An estimate keeps the chain whole; it is replaced by the real measured
+     *  height the moment the row is composed, and the current offset is read
+     *  from the SAME table, so a small error cancels out of every relative
+     *  move in the meantime. */
+    val leadingEstimateByKey: Map<Any, Int> = remember(hasHero, heroPages.size, heroSectionTitle, density, gridRowSpacingPx) {
+        buildMap {
+            if (hasHero) {
+                val h = with(density) {
+                    (if (!heroSectionTitle.isNullOrBlank()) 24.dp + 4.dp else 0.dp).roundToPx() +
+                        (TvPage.heroHeight + if (heroPages.size > 1) 11.dp else 0.dp).roundToPx() -
+                        (gridRowSpacing + 10.dp).roundToPx()
+                }
+                put("hero", h.coerceAtLeast(1))
+            }
+        }
+    }
     // ONE geometry snapshot, published as a single State so every consumer
     // sees a consistent set. Heights are keyed by the row's own key and are
     // never cleared: a key survives a structure change (a shelf arriving
@@ -506,9 +529,15 @@ fun <T> TvMediaPage(
         if (viewport <= 0) return null
         return (content + gridBottomPaddingPx - viewport).coerceAtLeast(0)
     }
+    // Cell height and the at-rest viewport survive a STRUCTURE change: the
+    // collector below is keyed on leadingKeys, so inserting the hero used to
+    // restart it with both back at 0 and the page could not compute a target
+    // until it happened to sit at the very top again (Logan 2026-09-13).
+    val measuredCellHeight = remember { mutableIntStateOf(0) }
+    val measuredViewportAtTop = remember { mutableIntStateOf(0) }
     LaunchedEffect(gridState, leadingKeys, columns, gridRowSpacingPx) {
-        var cellHeight = 0
-        var viewportAtTop = 0
+        var cellHeight = measuredCellHeight.value
+        var viewportAtTop = measuredViewportAtTop.value
         var dirty = true
         var seenEpoch = -1
         // The epoch is part of the flow so an off-screen row reporting its
@@ -521,6 +550,7 @@ fun <T> TvMediaPage(
                     if (leadingHeightByKey.put(item.key, item.size.height) != item.size.height) dirty = true
                 } else if (cellHeight != item.size.height) {
                     cellHeight = item.size.height
+                    measuredCellHeight.value = cellHeight
                     dirty = true
                 }
             }
@@ -530,6 +560,7 @@ fun <T> TvMediaPage(
                 info.viewportSize.height > 0 && viewportAtTop != info.viewportSize.height
             ) {
                 viewportAtTop = info.viewportSize.height
+                measuredViewportAtTop.value = viewportAtTop
                 dirty = true
             }
             if (dirty) {
@@ -541,7 +572,10 @@ fun <T> TvMediaPage(
                 while (i <= leadingCount) {
                     tops[i] = top
                     if (i == leadingCount) break
-                    val h = leadingKeys.getOrNull(i)?.let { leadingHeightByKey[it] } ?: break
+                    val rowKey = leadingKeys.getOrNull(i) ?: break
+                    // Measured first; a row that has never been composed falls
+                    // back to its design height so the chain stays whole.
+                    val h = leadingHeightByKey[rowKey] ?: leadingEstimateByKey[rowKey] ?: break
                     heights[i] = h
                     top += h + gridRowSpacingPx
                     i++
