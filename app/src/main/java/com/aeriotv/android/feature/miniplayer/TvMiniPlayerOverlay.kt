@@ -11,7 +11,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
-import com.aeriotv.android.feature.player.PlayerDoubleBack
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -29,19 +28,15 @@ import kotlinx.coroutines.launch
  *   - SINGLE Back  -> expand the mini back to fullscreen ([onResume]).
  *   - DOUBLE Back  -> jump the guide to the top channel ([onJumpToTop]); the
  *                     mini stays Active and keeps playing.
- * The one exception (Logan 2026-09-14): a Back that lands within
- * [PlayerDoubleBack.WINDOW_MS] of the Back that minimized the player is the
- * second half of a "Back twice" and ends playback completely ([onStop]) - no
- * mini, stream stopped, back on the page the user came from. Any later Back
- * follows the resume / jump-to-top model above. Play/Pause = resume is
- * handled in MainActivity (KEYCODE_MEDIA_PLAY_PAUSE).
+ * Back NEVER stops playback here (tvOS only stops via the player's explicit
+ * Close/X control, which Android keeps in the fullscreen chrome). Play/Pause
+ * = resume is handled in MainActivity (KEYCODE_MEDIA_PLAY_PAUSE).
  */
 @Composable
 fun BoxScope.TvMiniPlayerOverlay(
     state: MiniPlayerSession.State,
     onResume: () -> Unit,
     onJumpToTop: () -> Unit,
-    onStop: () -> Unit,
 ) {
     if (state !is MiniPlayerSession.State.Active) return
     val isTv = (LocalConfiguration.current.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
@@ -57,15 +52,6 @@ fun BoxScope.TvMiniPlayerOverlay(
     var pressCount by remember { mutableIntStateOf(0) }
     var debounce by remember { mutableStateOf<Job?>(null) }
     BackHandler {
-        // "Back twice" close: this press followed the minimizing Back inside
-        // the window, so end playback outright instead of expanding.
-        if (PlayerDoubleBack.isSecondPress()) {
-            debounce?.cancel()
-            debounce = null
-            pressCount = 0
-            onStop()
-            return@BackHandler
-        }
         pressCount++
         debounce?.cancel()
         debounce = scope.launch {

@@ -802,13 +802,15 @@ fun PlayerScreen(
             // playback only ever ends by playing something else (tvOS parity:
             // there is no explicit Stop in fullscreen or the mini).
             //
-            // Logan 2026-09-14: a SECOND Back within
-            // PlayerDoubleBack.WINDOW_MS ends playback completely instead of
-            // minimizing again - the same full stop the chrome's X runs
-            // (dismiss the mini session, hide the window, holder.stop(), drop
-            // the background service). The first press still minimizes
-            // immediately; only the follow-up press changes anything.
-            if (PlayerDoubleBack.isSecondPress()) {
+            // Logan 2026-09-14: "Back twice = Close". The first Back does not
+            // minimize immediately any more - it schedules the minimize
+            // PlayerDoubleBack.WINDOW_MS later while the fullscreen player
+            // stays up. A second Back inside that window cancels the timer and
+            // runs the full stop the chrome's X runs (dismiss the mini
+            // session, hide the window, holder.stop(), drop the background
+            // service), so the mini player is never shown at all. If no second
+            // press arrives, the timer fires and minimizes exactly as before.
+            if (PlayerDoubleBack.consumePending()) {
                 miniPlayerVm.dismiss()
                 exoWindowState.hide()
                 exoHolder.stop()
@@ -816,10 +818,11 @@ fun PlayerScreen(
                     .stop(context)
                 onClose()
             } else {
-                PlayerDoubleBack.arm()
-                exoWindowState.requestMini()
-                miniPlayerVm.showMiniPlayer()
-                onClose()
+                PlayerDoubleBack.schedule {
+                    exoWindowState.requestMini()
+                    miniPlayerVm.showMiniPlayer()
+                    onClose()
+                }
             }
         } else if (isRemote) {
             // GH #33: while casting / companion-controlling there is NO local

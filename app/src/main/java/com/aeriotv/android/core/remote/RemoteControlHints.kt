@@ -288,7 +288,7 @@ object RemoteControlHints {
         // old reveal-chrome-first rung was removed deliberately), and a
         // catch-up replay exits to where the user came from.
         add(RemoteHint("Back", if (catchupMode) "Exit" else "Mini player"))
-        // Logan 2026-09-14: Back twice (within 700 ms) ends playback outright
+        // Logan 2026-09-14: Back twice (within 400 ms) ends playback outright
         // - no mini, stream stopped, back on the page the user came from. A
         // catch-up replay already exits on the first Back, so it has no
         // second rung to advertise.
