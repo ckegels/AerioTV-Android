@@ -344,7 +344,9 @@ fun VODPlayerScreen(
     val audioPassthrough by settingsVm.audioPassthroughEnabled
         .collectAsStateWithLifecycle(initialValue = false)
     val streamBufferSize by settingsVm.streamBufferSize.collectAsStateWithLifecycle(initialValue = "default")
-    val aspectMode by settingsVm.playerAspectMode.collectAsStateWithLifecycle(initialValue = "fit")
+    val videoScaleMode by settingsVm.videoScaleMode.collectAsStateWithLifecycle(
+        initialValue = VIDEO_SCALE_FIT,
+    )
     // Settings > Remote Control > Show remote hints.
     val showRemoteHints by settingsVm.showRemoteHints
         .collectAsStateWithLifecycle(initialValue = true)
@@ -1312,12 +1314,8 @@ fun VODPlayerScreen(
                 }
             },
             update = { view ->
-                // iOS Issue #26: live aspect-ratio toggle (Fit / Zoom / Fill).
-                view.resizeMode = when (aspectMode) {
-                    "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
+                // Video Scale (Fit / Fill); PiP always stays Fit. See VideoScale.kt.
+                view.resizeMode = videoScaleResizeMode(videoScaleMode, inPip)
             },
             onRelease = { view ->
                 Log.i(TAG, "Releasing VOD ExoPlayer")
@@ -1331,6 +1329,11 @@ fun VODPlayerScreen(
                 view.player = null
             },
         )
+
+        // Pinch to switch Fit <-> Fill on touch devices. One line: all of the
+        // gesture + label state lives in VideoScale.kt, since this composable
+        // is at the ART verifier's register limit.
+        VideoScalePinchLayer(settingsVm, enabled = !isTvForm && !inPip)
 
         // 1 s heartbeat poll for the tracer (parity with the live holder's
         // watchdog cadence). The tracer itself rate-limits to one [PERF] +
@@ -2098,6 +2101,9 @@ fun VODPlayerScreen(
                         showOptionsSheet = false
                         showSubtitlesSheet = true
                     }
+                    // Fit / Fill, cycled in place (all state in VideoScale.kt:
+                    // this composable is at the JVM verifier register limit).
+                    VideoScaleOptionRow(settingsVm)
                     Spacer(Modifier.height(12.dp))
                 }
             }

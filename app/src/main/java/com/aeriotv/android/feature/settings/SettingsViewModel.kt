@@ -107,6 +107,17 @@ class SettingsViewModel @Inject constructor(
         setPlayerAspectMode(next)
     }
 
+    /** Video scale: "fit" (default) or "fill" (crop to fill, aspect kept). */
+    val videoScaleMode: Flow<String> = prefs.videoScaleMode
+    fun setVideoScaleMode(value: String) {
+        viewModelScope.launch { prefs.setVideoScaleMode(value) }
+    }
+
+    /** Player options row / pinch toggle: Fit <-> Fill. */
+    fun cycleVideoScaleMode(current: String) {
+        setVideoScaleMode(if (current == "fill") "fit" else "fill")
+    }
+
     val customAccentHex: Flow<String> = prefs.customAccentHex
     fun setCustomAccentHex(value: String) {
         viewModelScope.launch { prefs.setCustomAccentHex(value) }

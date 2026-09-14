@@ -168,7 +168,9 @@ fun PlayerScreen(
         initialValue = com.aeriotv.android.core.remote.RemoteControlMap.DEFAULT,
     )
     val streamBufferSize by settingsVm.streamBufferSize.collectAsStateWithLifecycle(initialValue = "default")
-    val aspectMode by settingsVm.playerAspectMode.collectAsStateWithLifecycle(initialValue = "fit")
+    val videoScaleMode by settingsVm.videoScaleMode.collectAsStateWithLifecycle(
+        initialValue = VIDEO_SCALE_FIT,
+    )
     // Live Rewind pref, to hint (below) that pause/rewind needs it turned on.
     val liveRewindEnabled by settingsVm.liveRewindEnabled.collectAsStateWithLifecycle(initialValue = true)
     val playerEntry = remember {
@@ -1572,6 +1574,11 @@ fun PlayerScreen(
                 },
         )
 
+        // Pinch to switch Fit <-> Fill on touch devices (no-op on TV). All of
+        // the gesture + label state lives in VideoScale.kt: this composable is
+        // register-pressure sensitive.
+        VideoScalePinchLayer(settingsVm, enabled = !isTvForm)
+
         // Dead-upstream net: the holder's no-data watchdog reconnected once and
         // still got zero bytes, so it flagged the channel unavailable + stopped.
         // Task #150 (iOS parity): show WHAT failed, keep auto-retrying on an
@@ -1620,7 +1627,7 @@ fun PlayerScreen(
             remoteMap = remoteMap,
             appleTVChannelFlip = appleTVChannelFlip,
             liveRewindEnabled = liveRewindEnabled,
-            aspectMode = aspectMode,
+            videoScaleMode = videoScaleMode,
             isTvForm = isTvForm,
             isCatchupMode = isCatchupMode,
             catchupTitle = catchupTitle,
@@ -2301,7 +2308,7 @@ private fun LiveRewindChromeSection(
     remoteMap: com.aeriotv.android.core.remote.RemoteControlMap,
     appleTVChannelFlip: Boolean,
     liveRewindEnabled: Boolean,
-    aspectMode: String,
+    videoScaleMode: String,
     isTvForm: Boolean,
     isCatchupMode: Boolean,
     catchupTitle: String,
@@ -2591,12 +2598,8 @@ private fun LiveRewindChromeSection(
             val player = exoHolder.player ?: return@PlayerChromeOverlay
             playbackSpeedSheet = player.readSpeed()
         },
-        aspectModeLabel = when (aspectMode) {
-            "zoom" -> "Zoom"
-            "fill" -> "Fill"
-            else -> "Fit"
-        },
-        onCycleAspect = { settingsVm.cyclePlayerAspectMode(aspectMode) },
+        videoScaleLabel = videoScaleLabel(videoScaleMode),
+        onCycleVideoScale = { settingsVm.cycleVideoScaleMode(videoScaleMode) },
         onToggleAudioOnly = {
             audioOnly = !audioOnly
             val player = exoHolder.player

@@ -89,6 +89,10 @@ fun BoxScope.PersistentExoWindow(
     val context = LocalContext.current
     val settingsVm: SettingsViewModel = hiltViewModel()
     val aspectMode by settingsVm.playerAspectMode.collectAsStateWithLifecycle(initialValue = "fit")
+    val videoScaleMode by settingsVm.videoScaleMode.collectAsStateWithLifecycle(
+        initialValue = VIDEO_SCALE_FIT,
+    )
+    val inPip by com.aeriotv.android.core.pip.PipState.inPictureInPicture
 
     // Minimize / expand is ONE spring on size AND position (tvOS
     // .spring(response: 0.35), HomeView.swift:4920), not a hard cut. The
@@ -437,12 +441,9 @@ fun BoxScope.PersistentExoWindow(
                 }
             },
             update = { view ->
-                // iOS Issue #26: live aspect-ratio toggle (Fit / Zoom / Fill).
-                view.resizeMode = when (aspectMode) {
-                    "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
+                // Video Scale (Fit / Fill) with the legacy Cast aspect command
+                // folded in; PiP always stays Fit. See VideoScale.kt.
+                view.resizeMode = videoScaleResizeMode(videoScaleMode, inPip, aspectMode)
                 // Rebind when the holder recreated the player (post-X-close
                 // re-create, media-service acquire, passthrough rebuild).
                 // The factory's one-time setPlayer covered only the original

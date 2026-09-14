@@ -166,8 +166,8 @@ fun PlayerChromeOverlay(
     onShowSubtitles: () -> Unit,
     onShowAudioTracks: () -> Unit,
     onShowPlaybackSpeed: () -> Unit,
-    aspectModeLabel: String,
-    onCycleAspect: () -> Unit,
+    videoScaleLabel: String,
+    onCycleVideoScale: () -> Unit,
     onToggleAudioOnly: () -> Unit,
     audioOnly: Boolean,
     onSetSleepMinutes: (Int) -> Unit,
@@ -495,8 +495,8 @@ fun PlayerChromeOverlay(
                         canRecord = canRecord,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
-                        aspectLabel = aspectModeLabel,
-                        onCycleAspect = onCycleAspect,
+                        scaleLabel = videoScaleLabel,
+                        onCycleScale = onCycleVideoScale,
                         onSubtitles = {
                             moreOpen = false
                             onShowSubtitles()
@@ -638,8 +638,8 @@ fun PlayerChromeOverlay(
                         canRecord = canRecord,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
-                        aspectLabel = aspectModeLabel,
-                        onCycleAspect = onCycleAspect,
+                        scaleLabel = videoScaleLabel,
+                        onCycleScale = onCycleVideoScale,
                         onSubtitles = {
                             moreOpen = false
                             onShowSubtitles()
@@ -1058,8 +1058,8 @@ private fun PlayerMoreMenu(
     canRecord: Boolean,
     audioOnly: Boolean,
     sleepActive: Boolean,
-    aspectLabel: String,
-    onCycleAspect: () -> Unit,
+    scaleLabel: String,
+    onCycleScale: () -> Unit,
     onSubtitles: () -> Unit,
     onAudioTracks: () -> Unit,
     onPlaybackSpeed: () -> Unit,
@@ -1138,8 +1138,8 @@ private fun PlayerMoreMenu(
             text = { Text("Playback Speed") },
             onClick = onPlaybackSpeed,
         )
-        // iOS Issue #26: cycle Fit -> Zoom -> Fill. Stays open so repeated
-        // presses cycle; the label reflects the current mode.
+        // Video Scale: cycle Fit <-> Fill. Stays open so repeated presses
+        // cycle; the label reflects the current mode.
         DropdownMenuItem(
             leadingIcon = {
                 Icon(
@@ -1148,8 +1148,8 @@ private fun PlayerMoreMenu(
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
             },
-            text = { Text("Aspect Ratio: $aspectLabel") },
-            onClick = onCycleAspect,
+            text = { Text("Video Scale: $scaleLabel") },
+            onClick = onCycleScale,
         )
         if (canRecord) {
             DropdownMenuItem(
