@@ -25,8 +25,8 @@ import kotlinx.coroutines.launch
  * VODPlayerScreen's top-level composable free of new locals / lambdas.
  */
 object PlayerDoubleBack {
-    /** Logan's spec: a second Back inside 400 ms is "Back twice". */
-    const val WINDOW_MS = 400L
+    /** Logan's spec: a second Back inside 300 ms is "Back twice". */
+    const val WINDOW_MS = 300L
 
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
 
