@@ -203,6 +203,10 @@ fun GuideScreen(
     val stagedMultiview by multiviewStore.selected.collectAsStateWithLifecycle(initialValue = emptyList())
     val groupSelector by settingsVm.guideGroupSelector.collectAsStateWithLifecycle()
     val sidebarGroupMode = isTv && groupSelector == "sidebar" && !favoritesOnly
+    // Sidebar layout (Logan 2026-09-14): "shift" docks the pane beside the
+    // grid, which narrows instead of being covered; "overlay" keeps the scrim.
+    val guideSidebarLayout by settingsVm.guideSidebarLayout.collectAsStateWithLifecycle()
+    val sidebarShiftMode = isTv && guideSidebarLayout == "shift"
     // Phone group selector (Logan 2026-09-05, Apple parity): drawer by
     // default, pills on request. Separate preference from the TV's.
     val phoneGroupSelector by settingsVm.phoneGroupSelector.collectAsStateWithLifecycle()
@@ -681,6 +685,33 @@ fun GuideScreen(
         androidx.compose.runtime.DisposableEffect(reserveMiniSlot) {
             onDispose { if (reserveMiniSlot) MiniPlayerChrome.timelineTopPx.value = 0f }
         }
+        // Shift guide: the pane docks at the grid's top edge and only the
+        // grid (time header + rows) narrows; the banner, pills and mini slot
+        // above keep the full width. The pane slides in over its own slot, so
+        // the grid width changes once instead of re-laying rows every frame.
+        Row(modifier = Modifier.fillMaxSize()) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = sidebarShiftMode && groupSidebarOpen,
+            enter = androidx.compose.animation.slideInHorizontally(
+                animationSpec = androidx.compose.animation.core.tween(180),
+            ) { -it },
+            exit = androidx.compose.animation.ExitTransition.None,
+        ) {
+            GuideGroupSidebarPane(
+                groups = groups,
+                selectedToken = state.selectedGroup,
+                topOffset = 0.dp,
+                onPreview = { token -> viewModel.onGroupSelected(token) },
+                onCommit = { token ->
+                    if (token != state.selectedGroup) viewModel.onGroupSelected(token)
+                    groupSidebarOpen = false
+                    runCatching { gridFocus.requestFocus() }
+                },
+                onManageGroups = { showManageGroups = true },
+                hiddenGroupCount = hiddenGroups.size,
+            )
+        }
+        Box(modifier = Modifier.weight(1f).fillMaxSize()) {
         if (rows.isEmpty && favoritesOnly && favoritesOrNull == null) {
             // Favorites not loaded yet: draw nothing rather than flash the
             // empty-group notice for a frame (Streamer 2026-09-03).
@@ -733,6 +764,11 @@ fun GuideScreen(
                 remoteAction = { slot -> remoteMap.guideAction(slot, sidebarGroupMode) },
                 onHostAction = hostAction,
                 focusRequester = gridFocus,
+                // Shift guide: the docked pane owns focus; the grid rejoins on
+                // close. Disabled only once focus has left the grid, so turning
+                // it off never clears focus onto the shell (the nav bar selects
+                // on focus) before the pane's rows claim it.
+                focusEnabled = !(sidebarShiftMode && groupSidebarOpen && !gridHasFocus),
                 onGridFocusChanged = { gridHasFocus = it },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -743,11 +779,14 @@ fun GuideScreen(
                 modifier = Modifier.fillMaxSize(),
             ) { gridContent() }
         }
+        }
+        }
     }
     }
     // tvOS drawer (ChannelListView 2026-09-05): the rail overlays the guide
     // under the time header, the rest of the tab dims 45%, the grid does not
-    // shift. Right or OK commit, Back reverts (handlers unchanged).
+    // shift. Right or OK commit, Back reverts (handlers unchanged). The Shift
+    // guide sidebar layout docks the pane in the guide Column instead.
     if (isTv) {
         // Under the time header wherever it sits: below the Channel Preview
         // banner (lifted 14 dp under the bar) when that layout is on. Drawn
@@ -773,9 +812,12 @@ fun GuideScreen(
                 hiddenGroupCount = hiddenGroups.size,
             )
         }
-        if (drawerSlot != null) {
+        if (drawerSlot != null || sidebarShiftMode) {
             // As with Jump To: the shell reseats focus (Refresh circle) once
-            // the overlay is gone, after the commit asked for the grid.
+            // the overlay is gone, after the commit asked for the grid. Shift
+            // guide needs the same retry: the grid turns focusable again only
+            // on the next composition, and its width settles (re-clamping the
+            // viewport) before focus lands.
             var drawerWasOpen by remember { mutableStateOf(false) }
             LaunchedEffect(groupSidebarOpen) {
                 if (groupSidebarOpen) { drawerWasOpen = true; return@LaunchedEffect }
@@ -784,6 +826,10 @@ fun GuideScreen(
                 repeat(3) { androidx.compose.runtime.withFrameNanos { } }
                 runCatching { gridFocus.requestFocus() }
             }
+        }
+        if (sidebarShiftMode) {
+            // Docked beside the grid in the guide Column above; nothing here.
+        } else if (drawerSlot != null) {
             androidx.compose.runtime.DisposableEffect(groupSidebarOpen) {
                 if (groupSidebarOpen) drawerSlot.value = drawerOverlay
                 else if (drawerSlot.value === drawerOverlay) drawerSlot.value = null
@@ -870,6 +916,9 @@ fun GuideScreen(
                 onDismiss = { showManageGroups = false; groupSidebarOpen = false; runCatching { gridFocus.requestFocus() } },
                 reorderEnabled = true, sortMode = groupSortMode,
                 onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
+                // Only meaningful with the Sidebar Menu group selector.
+                sidebarLayout = if (groupSelector == "sidebar") guideSidebarLayout else null,
+                onSidebarLayoutChange = { settingsVm.setGuideSidebarLayout(it) },
                 onCommit = { hidden, order ->
                     com.aeriotv.android.feature.livetv.applyManagedGroups(
                         hidden, hiddenGroups, recentGroupVisible,

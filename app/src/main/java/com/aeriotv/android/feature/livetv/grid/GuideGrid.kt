@@ -118,6 +118,8 @@ fun GuideGrid(
     /** Host-level actions (group pills, mini player, program info, search). Return true if handled. */
     onHostAction: (GuideRemoteAction) -> Boolean,
     focusRequester: FocusRequester,
+    /** False while the TV sidebar's Shift guide pane owns focus beside the grid. */
+    focusEnabled: Boolean = true,
     /** Reports whether the grid node holds focus, so the host can settle launch focus. */
     onGridFocusChanged: (Boolean) -> Unit = {},
     listState: LazyListState = rememberLazyListState(),
@@ -392,7 +394,7 @@ fun GuideGrid(
                 right = FocusRequester.Cancel
             }
             .onFocusChanged { gridFocused = it.isFocused; onGridFocusChanged(it.isFocused) }
-            .focusable()
+            .focusable(enabled = focusEnabled)
             .onPreviewKeyEvent(keyHandler),
     ) {
         TimeHeader(state, nowMs, railWidth, headerHeight, pxPerMs, textMeasurer,
@@ -405,7 +407,7 @@ fun GuideGrid(
                 .fillMaxSize()
                 .onSizeChanged { size ->
                     val stripPx = (size.width - railPx).coerceAtLeast(1f)
-                    state.viewportDurationMs = (stripPx / pxPerMs).toLong()
+                    state.resizeViewport((stripPx / pxPerMs).toLong())
                 },
         ) {
             val rows = state.rows

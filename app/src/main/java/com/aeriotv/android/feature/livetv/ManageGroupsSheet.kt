@@ -438,6 +438,9 @@ fun ManageGroupsSheet(
  * / Manual). In Manual mode a row enters "move mode" on a long-press of the
  * D-pad center; while moving, Up/Down reposition the group and OK/Back commit
  * the new order via [onReorder] (Multiview Move-Tile parity).
+ *
+ * When [sidebarLayout] is non-null (the guide uses the Sidebar Menu group
+ * selector), a second chip row picks the sidebar layout: "overlay" or "shift".
  */
 @Composable
 fun TvGroupPicker(
@@ -447,6 +450,9 @@ fun TvGroupPicker(
     reorderEnabled: Boolean = false,
     sortMode: GroupSortMode = GroupSortMode.Default,
     onSortModeChange: (GroupSortMode) -> Unit = {},
+    /** TV guide sidebar layout ("overlay" / "shift"); null hides the row. */
+    sidebarLayout: String? = null,
+    onSidebarLayoutChange: (String) -> Unit = {},
     /** E-4 (perf campaign 2026-08-19): one commit per dialog SESSION, fired at
      *  dismissal, replacing the per-press onToggle / per-drop onReorder
      *  callbacks. Each of those was a synchronous DataStore write plus a
@@ -525,6 +531,54 @@ fun TvGroupPicker(
                             }
                         }
                     }
+                }
+                if (sidebarLayout != null) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Sidebar layout",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, end = 14.dp),
+                        )
+                        listOf("overlay" to "Overlay", "shift" to "Shift guide").forEach { (mode, label) ->
+                            val selected = mode == sidebarLayout
+                            var chipFocused by remember { mutableStateOf(false) }
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 10.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                                        else Color.Transparent,
+                                    )
+                                    .border(
+                                        width = if (chipFocused) 2.dp else 0.dp,
+                                        color = if (chipFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                        shape = RoundedCornerShape(10.dp),
+                                    )
+                                    .onFocusChanged { chipFocused = it.isFocused }
+                                    .clickable { onSidebarLayoutChange(mode) }
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (selected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = "Shift guide moves the TV Guide over so the sidebar never covers programs.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 2.dp),
+                    )
                 }
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),

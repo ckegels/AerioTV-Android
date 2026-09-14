@@ -375,6 +375,18 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * TV guide sidebar layout (Logan 2026-09-14), only meaningful while
+     * [guideGroupSelector] is "sidebar": "overlay" (default) = the pane sits
+     * over the guide with a dimming scrim, "shift" = the guide grid narrows
+     * beside the pane so no program is covered. Synced with the selector.
+     */
+    val guideSidebarLayout: Flow<String> =
+        store.data.map { it[KEY_GUIDE_SIDEBAR_LAYOUT] ?: "overlay" }
+    suspend fun setGuideSidebarLayout(mode: String) {
+        store.edit { it[KEY_GUIDE_SIDEBAR_LAYOUT] = mode }
+    }
+
+    /**
      * Phone / tablet Live TV group selector (Logan 2026-09-05, Apple parity
      * with `phoneGroupSelectorKey`): "sidebar" (default) = a slide-in group
      * drawer opened from the header's groups button, "pills" = the group pill
@@ -1258,6 +1270,7 @@ class AppPreferences @Inject constructor(
             data[KEY_REMOTE_CONTROL_MAP]?.takeIf { it.isNotBlank() }?.let { out["remoteControlMap"] = it }
         }
         data[KEY_GUIDE_GROUP_SELECTOR]?.let { out["guideGroupSelector"] = it }
+        data[KEY_GUIDE_SIDEBAR_LAYOUT]?.let { out["guideSidebarLayout"] = it }
         data[KEY_PHONE_GROUP_SELECTOR]?.let { out["phoneGroupSelector"] = it }
         data[KEY_GUIDE_TUNE_IN_MINI]?.let { out["guideTuneInMini"] = it.toString() }
         data[KEY_SHOW_REMOTE_HINTS]?.let { out["showRemoteHints"] = it.toString() }
@@ -1310,6 +1323,7 @@ class AppPreferences @Inject constructor(
                 keys["remoteControlMap"]?.let { prefs[KEY_REMOTE_CONTROL_MAP] = it }
             }
             keys["guideGroupSelector"]?.let { prefs[KEY_GUIDE_GROUP_SELECTOR] = it }
+            keys["guideSidebarLayout"]?.let { prefs[KEY_GUIDE_SIDEBAR_LAYOUT] = it }
             keys["phoneGroupSelector"]?.let { prefs[KEY_PHONE_GROUP_SELECTOR] = it }
             keys["guideTuneInMini"]?.toBooleanStrictOrNull()?.let { prefs[KEY_GUIDE_TUNE_IN_MINI] = it }
             keys["showRemoteHints"]?.toBooleanStrictOrNull()?.let { prefs[KEY_SHOW_REMOTE_HINTS] = it }
@@ -1730,6 +1744,7 @@ class AppPreferences @Inject constructor(
         val KEY_REMOTE_CONTROL_MAP = stringPreferencesKey("remote_control_map")
         val KEY_SYNC_REMOTE_CONTROL_MAP = booleanPreferencesKey("sync_remote_control_map")
         val KEY_GUIDE_GROUP_SELECTOR = stringPreferencesKey("guide_group_selector")
+        val KEY_GUIDE_SIDEBAR_LAYOUT = stringPreferencesKey("guide_sidebar_layout")
         val KEY_PHONE_GROUP_SELECTOR = stringPreferencesKey("phone_group_selector")
         val KEY_GUIDE_TUNE_IN_MINI = booleanPreferencesKey("guide_tune_in_mini")
         val KEY_SHOW_REMOTE_HINTS = booleanPreferencesKey("show_remote_hints")

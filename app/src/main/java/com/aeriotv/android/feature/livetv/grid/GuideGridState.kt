@@ -215,6 +215,24 @@ class GuideGridState(
         return true
     }
 
+    /**
+     * Layout reports a new strip width (first layout, or the TV sidebar's
+     * Shift guide layout narrowing / widening the grid). Re-clamps the
+     * viewport against the window end without easing. Focus is left alone:
+     * the pane owns it while the grid is narrow, and the width it returns to
+     * on close shows the same cell again.
+     */
+    fun resizeViewport(durationMs: Long) {
+        if (durationMs == viewportDurationMs) return
+        viewportDurationMs = durationMs
+        if (rows.isEmpty) return
+        val clamped = viewportStartMs.coerceIn(minViewportStart(), maxViewportStart())
+        if (clamped != viewportStartMs) {
+            viewportChangeAnimated = false
+            viewportStartMs = clamped
+        }
+    }
+
     /** Timeline jump by [ms] (remote-mapped page). */
     fun panBy(ms: Long): Boolean {
         if (rows.isEmpty) return false

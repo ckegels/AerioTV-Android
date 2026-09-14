@@ -291,6 +291,12 @@ class SettingsViewModel @Inject constructor(
     fun setGuideGroupSelector(mode: String) {
         viewModelScope.launch { prefs.setGuideGroupSelector(mode) }
     }
+    /** TV guide sidebar layout: "overlay" (default, scrim) or "shift" (grid narrows). */
+    val guideSidebarLayout: StateFlow<String> = prefs.guideSidebarLayout
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "overlay")
+    fun setGuideSidebarLayout(mode: String) {
+        viewModelScope.launch { prefs.setGuideSidebarLayout(mode) }
+    }
     /** Phone / tablet Live TV group selector: "sidebar" (default drawer) or "pills". */
     val phoneGroupSelector: StateFlow<String> = prefs.phoneGroupSelector
         .stateIn(viewModelScope, SharingStarted.Eagerly, "sidebar")
