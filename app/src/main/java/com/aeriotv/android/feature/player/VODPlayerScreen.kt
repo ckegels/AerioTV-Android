@@ -962,7 +962,14 @@ fun VODPlayerScreen(
                     }
 
                     Key.DirectionLeft -> {
-                        if (!chromeVisible) { reveal() }
+                        // A long press that STARTS with the chrome hidden scrubs
+                        // exactly as it does with the chrome showing, revealing the
+                        // chrome and the scrub position as it goes.
+                        if (VodHiddenChromeScrub.shouldScrub(isRepeat, chromeVisible)) {
+                            reveal()
+                            tvFocusZone = TvVodFocusZone.Scrubber
+                            scrubStep(-1, true)
+                        } else if (!chromeVisible) { reveal() }
                         else when (tvFocusZone) {
                             TvVodFocusZone.Scrubber -> scrubStep(-1, isRepeat)
                             TvVodFocusZone.PlayPause -> { tvFocusZone = TvVodFocusZone.Rewind; lastInteractionAt = now }
@@ -973,7 +980,14 @@ fun VODPlayerScreen(
                         chromeVisible = true
                     }
                     Key.DirectionRight -> {
-                        if (!chromeVisible) { reveal() }
+                        // A long press that STARTS with the chrome hidden scrubs
+                        // exactly as it does with the chrome showing, revealing the
+                        // chrome and the scrub position as it goes.
+                        if (VodHiddenChromeScrub.shouldScrub(isRepeat, chromeVisible)) {
+                            reveal()
+                            tvFocusZone = TvVodFocusZone.Scrubber
+                            scrubStep(+1, true)
+                        } else if (!chromeVisible) { reveal() }
                         else when (tvFocusZone) {
                             TvVodFocusZone.Scrubber -> scrubStep(+1, isRepeat)
                             TvVodFocusZone.PlayPause -> { tvFocusZone = TvVodFocusZone.Forward; lastInteractionAt = now }
