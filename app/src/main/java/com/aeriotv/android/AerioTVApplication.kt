@@ -147,6 +147,19 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
                     com.aeriotv.android.core.ui.ClockFormat.fromPref(it)
             }
         }
+        // Skip Intervals: keep the process-wide pair on the synced prefs so
+        // player composables, the media session, and the remote sheets read
+        // the current values synchronously.
+        appScope.launch {
+            appPreferences.skipBackSeconds.distinctUntilChanged().collect {
+                com.aeriotv.android.core.ui.SkipIntervals.backSeconds.value = it
+            }
+        }
+        appScope.launch {
+            appPreferences.skipForwardSeconds.distinctUntilChanged().collect {
+                com.aeriotv.android.core.ui.SkipIntervals.forwardSeconds.value = it
+            }
+        }
         dispatcharrWarmup.bind()
         // Track foreground state so reminders that fire while the app is open
         // surface as an in-app banner instead of a system notification.

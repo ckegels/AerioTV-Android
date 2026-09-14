@@ -1109,12 +1109,12 @@ class AerioCastSender @Inject constructor(
 
     // GH #33 live-rewind controls: drive the receiver's timeshift buffer. The
     // receiver clamps to its own rewind window and echoes a fresh state snapshot.
-    /** Skip the TV's live-rewind playhead by a signed delta (e.g. -30000/+30000). */
+    /** Skip the TV's live-rewind playhead by a signed delta (the Skip Intervals ms). */
     fun seekBy(deltaMs: Long) =
         sendControl(CastControl.command(CastControl.CMD_SEEK_BY) { put(CastControl.KEY_DELTA_MS, deltaMs) })
 
     /**
-     * The remote sheet's 30 s skip, for whichever receiver is live.
+     * The remote sheet's Skip Intervals skip, for whichever receiver is live.
      *
      *  - Cast Connect (native Android TV app): the existing [CMD_SEEK_BY] control
      *    command, which drives the TV's own Live Rewind timeshift buffer.

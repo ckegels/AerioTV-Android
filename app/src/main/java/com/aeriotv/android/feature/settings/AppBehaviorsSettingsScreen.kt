@@ -52,6 +52,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aeriotv.android.core.ui.SkipIntervals
 import com.aeriotv.android.feature.main.AppTab
 import com.aeriotv.android.ui.TmdbAttribution
 import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
@@ -306,6 +307,41 @@ fun AppBehaviorsSettingsScreen(
                         )
                     }
                 }
+            }
+
+            // Skip Intervals (Logan 2026-09-14): one global pair for every
+            // skip control outside multiview. Shown whatever the Live Rewind
+            // toggle says, since VOD and DVR use it too.
+            val skipBackSeconds by viewModel.skipBackSeconds
+                .collectAsStateWithLifecycle(initialValue = SkipIntervals.DEFAULT_BACK_SECONDS)
+            val skipForwardSeconds by viewModel.skipForwardSeconds
+                .collectAsStateWithLifecycle(initialValue = SkipIntervals.DEFAULT_FORWARD_SECONDS)
+            SettingsSection(
+                header = "Skip Intervals",
+                footer = if (isTv) {
+                    "How far the skip buttons and a single left or right press move " +
+                        "in live rewind, catch-up, recordings, movies, and TV shows. " +
+                        "Holding left or right still scrubs faster the longer you hold."
+                } else {
+                    "How far the skip buttons move in live rewind, catch-up, " +
+                        "recordings, movies, and TV shows, including the cast remote " +
+                        "and the playback notification."
+                },
+            ) {
+                SteppedSliderRow(
+                    label = "Skip back",
+                    values = SkipIntervals.CHOICES,
+                    selected = skipBackSeconds,
+                    format = ::formatSkipSeconds,
+                    onSelect = viewModel::setSkipBackSeconds,
+                )
+                SteppedSliderRow(
+                    label = "Skip forward",
+                    values = SkipIntervals.CHOICES,
+                    selected = skipForwardSeconds,
+                    format = ::formatSkipSeconds,
+                    onSelect = viewModel::setSkipForwardSeconds,
+                )
             }
 
             // Live Rewind (task #145 P2): full surface. Storage location
@@ -598,6 +634,9 @@ private fun formatDepthMinutes(mins: Int): String = when {
     mins % 60 == 0 -> "${mins / 60} hours"
     else -> "${mins / 60}h ${mins % 60}m"
 }
+
+/** Skip Intervals value readout: "10 seconds". */
+private fun formatSkipSeconds(seconds: Int): String = "$seconds seconds"
 
 /**
  * Storage estimate under the Keep Available slider: scales with the

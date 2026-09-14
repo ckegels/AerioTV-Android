@@ -1300,6 +1300,9 @@ class AppPreferences @Inject constructor(
         data[KEY_GROUP_SORT_MODE]?.let { out["groupSortMode.v1"] = it }
         data[KEY_USE_CUSTOM_ACCENT]?.let { out["useCustomAccent"] = it.toString() }
         data[KEY_CUSTOM_ACCENT_HEX]?.let { out["customAccentHex"] = it }
+        // Skip Intervals: one global pair that follows the user everywhere.
+        data[KEY_SKIP_BACK_SECONDS]?.let { out["skipBackSeconds"] = it.toString() }
+        data[KEY_SKIP_FORWARD_SECONDS]?.let { out["skipForwardSeconds"] = it.toString() }
         ProgramCategory.entries.forEach { bucket ->
             data[stringPreferencesKey(bucket.hexStorageKey)]?.let { out[bucket.hexStorageKey] = it }
             data[booleanPreferencesKey(bucket.enabledStorageKey)]?.let { out[bucket.enabledStorageKey] = it.toString() }
@@ -1341,6 +1344,12 @@ class AppPreferences @Inject constructor(
             keys["groupSortMode.v1"]?.let { prefs[KEY_GROUP_SORT_MODE] = it }
             keys["useCustomAccent"]?.toBooleanStrictOrNull()?.let { prefs[KEY_USE_CUSTOM_ACCENT] = it }
             keys["customAccentHex"]?.let { prefs[KEY_CUSTOM_ACCENT_HEX] = it }
+            keys["skipBackSeconds"]?.toIntOrNull()
+                ?.takeIf { it in com.aeriotv.android.core.ui.SkipIntervals.CHOICES }
+                ?.let { prefs[KEY_SKIP_BACK_SECONDS] = it }
+            keys["skipForwardSeconds"]?.toIntOrNull()
+                ?.takeIf { it in com.aeriotv.android.core.ui.SkipIntervals.CHOICES }
+                ?.let { prefs[KEY_SKIP_FORWARD_SECONDS] = it }
             ProgramCategory.entries.forEach { bucket ->
                 keys[bucket.hexStorageKey]?.let { prefs[stringPreferencesKey(bucket.hexStorageKey)] = it }
                 keys[bucket.enabledStorageKey]?.toBooleanStrictOrNull()?.let {
@@ -1447,6 +1456,30 @@ class AppPreferences @Inject constructor(
         }
     suspend fun setFeedValidators(url: String, etag: String?, lastModified: String?) {
         store.edit { it[keyFeedValidators(url)] = (etag ?: "") + "\n" + (lastModified ?: "") }
+    }
+
+    /** Skip Intervals (Logan 2026-09-14): seconds a skip-back control moves
+     *  (5/10/15/30/60, default 10). Synced; mirrored into
+     *  [com.aeriotv.android.core.ui.SkipIntervals] by the Application. */
+    val skipBackSeconds: Flow<Int> = store.data.map {
+        com.aeriotv.android.core.ui.SkipIntervals.sanitize(
+            it[KEY_SKIP_BACK_SECONDS],
+            com.aeriotv.android.core.ui.SkipIntervals.DEFAULT_BACK_SECONDS,
+        )
+    }
+    suspend fun setSkipBackSeconds(value: Int) {
+        store.edit { it[KEY_SKIP_BACK_SECONDS] = value }
+    }
+
+    /** Skip Intervals: seconds a skip-forward control moves (default 30). */
+    val skipForwardSeconds: Flow<Int> = store.data.map {
+        com.aeriotv.android.core.ui.SkipIntervals.sanitize(
+            it[KEY_SKIP_FORWARD_SECONDS],
+            com.aeriotv.android.core.ui.SkipIntervals.DEFAULT_FORWARD_SECONDS,
+        )
+    }
+    suspend fun setSkipForwardSeconds(value: Int) {
+        store.edit { it[KEY_SKIP_FORWARD_SECONDS] = value }
     }
 
     /** How many recent channels stay live (1-5, default 2). */
@@ -1813,6 +1846,8 @@ class AppPreferences @Inject constructor(
         val KEY_LIVE_REWIND_RETENTION_HOURS = intPreferencesKey("live_rewind_retention_hours")
         val KEY_LIVE_REWIND_KEEP_RECENT = booleanPreferencesKey("live_rewind_keep_recent")
         val KEY_LIVE_REWIND_KEEP_COUNT = intPreferencesKey("live_rewind_keep_count")
+        val KEY_SKIP_BACK_SECONDS = intPreferencesKey("skip_back_seconds")
+        val KEY_SKIP_FORWARD_SECONDS = intPreferencesKey("skip_forward_seconds")
         val KEY_LIVE_REWIND_BUDGET_GB = intPreferencesKey("live_rewind_budget_gb")
         val KEY_DVR_CUSTOM_FOLDER_URI = stringPreferencesKey("dvr_custom_folder_uri")
         val KEY_DVR_KEEP_AWAKE = booleanPreferencesKey("dvr_keep_awake_during_recording")

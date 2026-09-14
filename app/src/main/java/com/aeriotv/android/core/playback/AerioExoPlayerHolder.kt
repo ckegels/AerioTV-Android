@@ -1318,6 +1318,12 @@ class AerioExoPlayerHolder @Inject constructor(
         val fresh = ExoPlayer.Builder(context)
             .setRenderersFactory(renderersFactory)
             .setLoadControl(loadControl)
+            // Skip Intervals at build time. The media session wraps this
+            // player in SkipIntervalsPlayer, which reads the live setting, so
+            // a change between builds still reaches lock screen and Bluetooth
+            // seek commands.
+            .setSeekBackIncrementMs(com.aeriotv.android.core.ui.SkipIntervals.backMs)
+            .setSeekForwardIncrementMs(com.aeriotv.android.core.ui.SkipIntervals.forwardMs)
             // Header-aware + TS-aware MediaSource factory for the Android Auto
             // path (a controller's setMediaItems(uri) -> the player resolves the
             // source itself). The foreground path bypasses this with

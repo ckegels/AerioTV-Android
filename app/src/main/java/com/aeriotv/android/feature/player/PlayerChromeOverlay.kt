@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -48,7 +47,6 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Replay30
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.Bedtime
@@ -122,6 +120,9 @@ import java.text.DateFormat
 import java.util.Date
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import com.aeriotv.android.core.ui.SkipIntervals
+import com.aeriotv.android.core.ui.rememberSkipBackSeconds
+import com.aeriotv.android.core.ui.rememberSkipForwardSeconds
 
 /**
  * Player chrome overlay matching iOS canon (PlaybackChromeOverlay.swift).
@@ -194,8 +195,8 @@ fun PlayerChromeOverlay(
     onGoLive: () -> Unit = {},
     // Task #148 milestone B (tvOS unified-player parity): catch-up
     // transport. catchupMode renders the SAME transport row with a
-    // programme-domain timeline instead of the rewind band; the +/-30s
-    // pills commit through onCatchupSeekTo.
+    // programme-domain timeline instead of the rewind band; the Skip
+    // Intervals pills commit through onCatchupSeekTo.
     catchupMode: Boolean = false,
     catchupTitle: String = "",
     catchupPositionMs: Long = 0L,
@@ -439,27 +440,32 @@ fun PlayerChromeOverlay(
                         onInteraction = onInteraction,
                         )
                 }
+                // Skip Intervals setting (read live so a change re-renders).
+                val backSeconds = rememberSkipBackSeconds()
                 PlayerControlCircle(
-                    icon = Icons.Filled.Replay30,
+                    icon = SkipIntervals.backIcon(backSeconds),
                     title = "Rewind",
+                    contentDescription = SkipIntervals.backLabel(backSeconds),
                     enabled = seekEnabled,
                     disabledCaption = seekDisabledCaption,
                     onClick = {
-                        if (catchupMode) onCatchupSeekTo(catchupPositionMs - 30_000)
-                        else onRewindSeekWall(tvCurrentWall - 30_000)
+                        if (catchupMode) onCatchupSeekTo(catchupPositionMs - backSeconds * 1_000L)
+                        else onRewindSeekWall(tvCurrentWall - backSeconds * 1_000L)
                     },
                     onInteraction = onInteraction,
                 )
             }
             val rightPills: @Composable () -> Unit = {
+                val forwardSeconds = rememberSkipForwardSeconds()
                 PlayerControlCircle(
-                    icon = Icons.Filled.Forward30,
+                    icon = SkipIntervals.forwardIcon(forwardSeconds),
                     title = "Forward",
+                    contentDescription = SkipIntervals.forwardLabel(forwardSeconds),
                     enabled = seekEnabled,
                     disabledCaption = seekDisabledCaption,
                     onClick = {
-                        if (catchupMode) onCatchupSeekTo(catchupPositionMs + 30_000)
-                        else onRewindSeekWall(tvCurrentWall + 30_000)
+                        if (catchupMode) onCatchupSeekTo(catchupPositionMs + forwardSeconds * 1_000L)
+                        else onRewindSeekWall(tvCurrentWall + forwardSeconds * 1_000L)
                     },
                     onInteraction = onInteraction,
                 )
@@ -1452,10 +1458,12 @@ private fun RewindTransportBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
             ) {
+                val backSeconds = rememberSkipBackSeconds()
+                val forwardSeconds = rememberSkipForwardSeconds()
                 CircleIconButton(
-                    icon = Icons.Filled.Replay30,
-                    contentDescription = "Back 30 seconds",
-                    onClick = { onSeekWall(current - 30_000) },
+                    icon = SkipIntervals.backIcon(backSeconds),
+                    contentDescription = SkipIntervals.backLabel(backSeconds),
+                    onClick = { onSeekWall(current - backSeconds * 1_000L) },
                 )
                 CircleIconButton(
                     icon = if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
@@ -1463,9 +1471,9 @@ private fun RewindTransportBar(
                     onClick = onTogglePause,
                 )
                 CircleIconButton(
-                    icon = Icons.Filled.Forward30,
-                    contentDescription = "Forward 30 seconds",
-                    onClick = { onSeekWall(current + 30_000) },
+                    icon = SkipIntervals.forwardIcon(forwardSeconds),
+                    contentDescription = SkipIntervals.forwardLabel(forwardSeconds),
+                    onClick = { onSeekWall(current + forwardSeconds * 1_000L) },
                 )
             }
             // Hide the Go Live pill once we're at the live edge (matches the LIVE

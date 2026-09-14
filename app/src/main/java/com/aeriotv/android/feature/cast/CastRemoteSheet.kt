@@ -22,9 +22,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.Replay30
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.LinkOff
@@ -59,6 +57,9 @@ import com.aeriotv.android.feature.player.AudioTracksSheet
 import com.aeriotv.android.feature.player.PlaybackSpeedSheet
 import com.aeriotv.android.feature.player.SubtitleTrack
 import com.aeriotv.android.feature.player.SubtitlesSheet
+import com.aeriotv.android.core.ui.SkipIntervals
+import com.aeriotv.android.core.ui.rememberSkipBackSeconds
+import com.aeriotv.android.core.ui.rememberSkipForwardSeconds
 
 /**
  * The phone's remote controls for whatever is playing on another screen
@@ -181,7 +182,10 @@ fun CastRemoteSheet(
             )
             Spacer(Modifier.height(14.dp))
 
-            // Live-rewind controls: a draggable scrubber + 30s FF/RW + LIVE pill.
+            // Skip Intervals setting, read live so a change re-renders.
+            val backSeconds = rememberSkipBackSeconds()
+            val forwardSeconds = rememberSkipForwardSeconds()
+            // Live-rewind controls: a draggable scrubber + skip FF/RW + LIVE pill.
             // Shown as soon as the receiver reports a rewind buffer via EITHER the
             // getState echo's canSeek or the ~1Hz position tick, so the buttons
             // never wait a tick to appear; the draggable scrubber needs the tick's
@@ -243,11 +247,19 @@ fun CastRemoteSheet(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
                 ) {
-                    RemoteButton(Icons.Filled.Replay30, "Back 30 seconds", { onSeekBy(-30_000L) })
+                    RemoteButton(
+                        SkipIntervals.backIcon(backSeconds),
+                        SkipIntervals.backLabel(backSeconds),
+                        { onSeekBy(-backSeconds * 1_000L) },
+                    )
                     if (!atLive) {
                         GoLivePill(onClick = onGoLive)
                     }
-                    RemoteButton(Icons.Filled.Forward30, "Forward 30 seconds", { onSeekBy(30_000L) })
+                    RemoteButton(
+                        SkipIntervals.forwardIcon(forwardSeconds),
+                        SkipIntervals.forwardLabel(forwardSeconds),
+                        { onSeekBy(forwardSeconds * 1_000L) },
+                    )
                 }
             }
             Row(
@@ -263,9 +275,9 @@ fun CastRemoteSheet(
                 val inlineSkip = showInlineSkip && !rewindActive
                 if (inlineSkip) {
                     RemoteButton(
-                        Icons.Filled.Replay30,
-                        "Back 30 seconds",
-                        { onSeekBy(-30_000L) },
+                        SkipIntervals.backIcon(backSeconds),
+                        SkipIntervals.backLabel(backSeconds),
+                        { onSeekBy(-backSeconds * 1_000L) },
                         enabled = inlineSkipEnabled,
                     )
                 }
@@ -277,9 +289,9 @@ fun CastRemoteSheet(
                 )
                 if (inlineSkip) {
                     RemoteButton(
-                        Icons.Filled.Forward30,
-                        "Forward 30 seconds",
-                        { onSeekBy(30_000L) },
+                        SkipIntervals.forwardIcon(forwardSeconds),
+                        SkipIntervals.forwardLabel(forwardSeconds),
+                        { onSeekBy(forwardSeconds * 1_000L) },
                         enabled = inlineSkipEnabled,
                     )
                 }

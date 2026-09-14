@@ -68,6 +68,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import com.aeriotv.android.core.ui.SkipIntervals
 
 private const val TAG = "PlayerScreen"
 /**
@@ -1215,8 +1216,9 @@ fun PlayerScreen(
     // #148, tvOS parity; catch-up joins when it unifies into this
     // player). Each press/repeat steps a PREVIEW position - no seek per
     // press, because a seek is a whole buffer re-open - and the single
-    // seek commits 650ms after the presses stop. Holding accelerates
-    // 1x..12x on native key repeats (10s base step). Active with the
+    // seek commits 650ms after the presses stop. A single press moves by
+    // the Skip Intervals setting; holding accelerates 1x..12x on native
+    // key repeats (10s base step). Active with the
     // chrome hidden (band-only HUD renders) or with the timeline band
     // focused (UP from the pill row).
     val scrubTargetWallMsState = remember { mutableStateOf<Long?>(null) }
@@ -1378,14 +1380,14 @@ fun PlayerScreen(
         if (isCatchupMode) {
             // Catch-up domain: PROGRAMME-relative ms in [0, duration].
             val base = scrubTargetWallMs ?: catchupPositionMs
-            scrubTargetWallMs = (base + dir * 10_000L * mult).coerceIn(0L, catchupDurationMs)
+            scrubTargetWallMs = (base + SkipIntervals.scrubDeltaMs(dir, isRepeat, mult)).coerceIn(0L, catchupDurationMs)
         } else {
             val w = timeshiftController.activeWriter
             val head = w?.headWallMs ?: tsState.headWallMs
             val tail = w?.tailWallMs ?: tsState.tailWallMs
             val base = scrubTargetWallMs
                 ?: if (tsState.timeshifting) tsPositionWallMs else head
-            scrubTargetWallMs = (base + dir * 10_000L * mult).coerceIn(tail, head)
+            scrubTargetWallMs = (base + SkipIntervals.scrubDeltaMs(dir, isRepeat, mult)).coerceIn(tail, head)
         }
         scrubStepSerial += 1
         scrubHudVisible = true

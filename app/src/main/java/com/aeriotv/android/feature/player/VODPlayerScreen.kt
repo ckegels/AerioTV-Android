@@ -36,13 +36,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
@@ -120,6 +118,9 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.aeriotv.android.core.ui.SkipIntervals
+import com.aeriotv.android.core.ui.rememberSkipBackSeconds
+import com.aeriotv.android.core.ui.rememberSkipForwardSeconds
 
 private const val TAG = "VODPlayerScreen"
 
@@ -582,7 +583,8 @@ fun VODPlayerScreen(
     }
 
     // Step the scrub preview one increment. Mirrors iOS PlayerView.scrubStep
-    // (10_000ms base, accelerating to 12x). Autorepeat events are throttled
+    // (a single press moves by the Skip Intervals setting; key repeats use
+    // the 10_000ms base, accelerating to 12x). Autorepeat events are throttled
     // to one step per 250ms so holding LEFT/RIGHT sweeps smoothly instead of
     // rocketing at the raw ~50ms system key-repeat rate.
     val scrubStep: (Int, Boolean) -> Unit = step@{ dir, isRepeat ->
@@ -605,7 +607,7 @@ fun VODPlayerScreen(
         } else {
             Long.MAX_VALUE
         }
-        scrubTargetMs = (base + dir * 10_000L * mult).coerceIn(0L, maxPos)
+        scrubTargetMs = (base + SkipIntervals.scrubDeltaMs(dir, isRepeat, mult)).coerceIn(0L, maxPos)
         chromeVisible = true
         lastInteractionAt = now
     }
@@ -940,7 +942,7 @@ fun VODPlayerScreen(
                                 scrubTargetMs = null
                                 scrubAccelCount = 0
                                 scrubLastDirection = 0
-                                val target = max(0L, positionMs - 10_000L)
+                                val target = max(0L, positionMs - SkipIntervals.backMs)
                                 seekPlayer(target); reveal()
                             }
                             TvVodFocusZone.Forward -> {
@@ -950,7 +952,7 @@ fun VODPlayerScreen(
                                 val maxPos = if (durationMs > 0L) {
                                     if (dvrActive) (durationMs - 5_000L).coerceAtLeast(0L) else durationMs
                                 } else Long.MAX_VALUE
-                                val target = min(maxPos, positionMs + 10_000L)
+                                val target = min(maxPos, positionMs + SkipIntervals.forwardMs)
                                 seekPlayer(target); reveal()
                             }
                             TvVodFocusZone.Options -> {
@@ -1816,7 +1818,7 @@ fun VODPlayerScreen(
                         isPaused = !nowPaused
                     },
                     onSkipBack = {
-                        seekPlayer(max(0L, positionMs - 10_000L))
+                        seekPlayer(max(0L, positionMs - SkipIntervals.backMs))
                     },
                     onSkipForward = {
                         val maxPos = if (durationMs > 0) {
@@ -1824,7 +1826,7 @@ fun VODPlayerScreen(
                         } else {
                             Long.MAX_VALUE
                         }
-                        seekPlayer(min(maxPos, positionMs + 10_000L))
+                        seekPlayer(min(maxPos, positionMs + SkipIntervals.forwardMs))
                     },
                     isDvr = dvrActive,
                     onSeekToLive = {
@@ -2286,9 +2288,12 @@ private fun BottomChrome(
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+            // Skip Intervals setting, read live so a change re-renders.
+            val backSeconds = rememberSkipBackSeconds()
+            val forwardSeconds = rememberSkipForwardSeconds()
             TransportIconButton(
-                icon = Icons.Filled.Replay10,
-                contentDescription = "Back 10 seconds",
+                icon = SkipIntervals.backIcon(backSeconds),
+                contentDescription = SkipIntervals.backLabel(backSeconds),
                 onClick = onSkipBack,
                 focused = isTvForm && tvFocusZone == TvVodFocusZone.Rewind,
                 isTvForm = isTvForm,
@@ -2317,8 +2322,8 @@ private fun BottomChrome(
             }
             Spacer(Modifier.width(8.dp))
             TransportIconButton(
-                icon = Icons.Filled.Forward10,
-                contentDescription = "Forward 10 seconds",
+                icon = SkipIntervals.forwardIcon(forwardSeconds),
+                contentDescription = SkipIntervals.forwardLabel(forwardSeconds),
                 onClick = onSkipForward,
                 focused = isTvForm && tvFocusZone == TvVodFocusZone.Forward,
                 isTvForm = isTvForm,

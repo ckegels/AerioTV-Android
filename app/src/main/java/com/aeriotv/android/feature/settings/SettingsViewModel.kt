@@ -249,6 +249,17 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setLiveRewindKeepCount(value) }
     }
 
+    // Skip Intervals (Logan 2026-09-14): global skip back / forward seconds.
+    val skipBackSeconds: Flow<Int> = prefs.skipBackSeconds
+    fun setSkipBackSeconds(value: Int) {
+        viewModelScope.launch { prefs.setSkipBackSeconds(value) }
+    }
+
+    val skipForwardSeconds: Flow<Int> = prefs.skipForwardSeconds
+    fun setSkipForwardSeconds(value: Int) {
+        viewModelScope.launch { prefs.setSkipForwardSeconds(value) }
+    }
+
     val liveRewindRetentionHours: Flow<Int> = prefs.liveRewindRetentionHours
     fun setLiveRewindRetentionHours(value: Int) {
         viewModelScope.launch { prefs.setLiveRewindRetentionHours(value) }

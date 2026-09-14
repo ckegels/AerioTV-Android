@@ -7,6 +7,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
+import com.aeriotv.android.core.ui.SkipIntervals
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +33,7 @@ class CompanionRemotePlayer(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var watch: Job? = null
+    private var skipWatch: Job? = null
 
     init {
         watch = combine(
@@ -40,11 +42,17 @@ class CompanionRemotePlayer(
         ) { _, _, _, _, _ -> Unit }
             .onEach { invalidateState() }
             .launchIn(scope)
+        // Skip Intervals changes re-publish the seek increments.
+        skipWatch = combine(SkipIntervals.backSeconds, SkipIntervals.forwardSeconds) { _, _ -> Unit }
+            .onEach { invalidateState() }
+            .launchIn(scope)
     }
 
     fun close() {
         watch?.cancel()
         watch = null
+        skipWatch?.cancel()
+        skipWatch = null
     }
 
     override fun getState(): State {
@@ -95,8 +103,10 @@ class CompanionRemotePlayer(
             .setAvailableCommands(commands)
             .setPlaybackState(Player.STATE_READY)
             .setPlayWhenReady(playing, Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE)
-            .setSeekBackIncrementMs(SEEK_STEP_MS)
-            .setSeekForwardIncrementMs(SEEK_STEP_MS)
+            // Skip Intervals setting; getState() re-runs on every
+            // invalidateState, so a changed setting lands on the next one.
+            .setSeekBackIncrementMs(SkipIntervals.backMs)
+            .setSeekForwardIncrementMs(SkipIntervals.forwardMs)
             .setPlaylist(
                 listOf(
                     MediaItemData.Builder(item.mediaId)
@@ -120,8 +130,8 @@ class CompanionRemotePlayer(
     override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
         val pos = controller.position.value
         when (seekCommand) {
-            Player.COMMAND_SEEK_BACK -> controller.seekBy(-SEEK_STEP_MS)
-            Player.COMMAND_SEEK_FORWARD -> controller.seekBy(SEEK_STEP_MS)
+            Player.COMMAND_SEEK_BACK -> controller.seekBy(-SkipIntervals.backMs)
+            Player.COMMAND_SEEK_FORWARD -> controller.seekBy(SkipIntervals.forwardMs)
             else -> if (pos.canSeek) controller.seekToWall(pos.windowStartMs + positionMs)
         }
         return Futures.immediateVoidFuture()
@@ -135,9 +145,5 @@ class CompanionRemotePlayer(
     override fun handleRelease(): ListenableFuture<*> {
         close()
         return Futures.immediateVoidFuture()
-    }
-
-    private companion object {
-        const val SEEK_STEP_MS = 30_000L
     }
 }

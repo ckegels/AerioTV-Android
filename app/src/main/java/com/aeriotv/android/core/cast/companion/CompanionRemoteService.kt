@@ -31,12 +31,15 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aeriotv.android.MainActivity
 import com.aeriotv.android.R
+import com.aeriotv.android.core.ui.SkipIntervals
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 
@@ -65,20 +68,11 @@ class CompanionRemoteService : MediaSessionService() {
         // Rewind/forward are custom session buttons: the stock notification
         // layout only knows previous / play-pause / next, and Player seek
         // commands are not rendered as buttons.
-        val back = CommandButton.Builder(CommandButton.ICON_SKIP_BACK_30)
-            .setSessionCommand(SessionCommand(CMD_SEEK_BACK, Bundle.EMPTY))
-            .setDisplayName("Back 30 seconds")
-            .setExtras(Bundle().apply { putInt(DefaultMediaNotificationProvider.COMMAND_KEY_COMPACT_VIEW_INDEX, 0) })
-            .build()
-        val forward = CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD_30)
-            .setSessionCommand(SessionCommand(CMD_SEEK_FORWARD, Bundle.EMPTY))
-            .setDisplayName("Forward 30 seconds")
-            .setExtras(Bundle().apply { putInt(DefaultMediaNotificationProvider.COMMAND_KEY_COMPACT_VIEW_INDEX, 2) })
-            .build()
+        // The buttons follow Settings > Skip Intervals; see skipButtons().
         session = MediaSession.Builder(this, p)
             .setId("aeriotv_companion_remote")
             .setSessionActivity(remoteActivityIntent())
-            .setCustomLayout(listOf(back, forward))
+            .setCustomLayout(skipButtons())
             .setBitmapLoader(CacheBitmapLoader(PaddedLogoLoader(DataSourceBitmapLoader(this))))
             .setCallback(object : MediaSession.Callback {
                 override fun onConnect(
@@ -101,8 +95,8 @@ class CompanionRemoteService : MediaSessionService() {
                     args: Bundle,
                 ): ListenableFuture<SessionResult> {
                     when (customCommand.customAction) {
-                        CMD_SEEK_BACK -> this@CompanionRemoteService.controller.seekBy(-SEEK_STEP_MS)
-                        CMD_SEEK_FORWARD -> this@CompanionRemoteService.controller.seekBy(SEEK_STEP_MS)
+                        CMD_SEEK_BACK -> this@CompanionRemoteService.controller.seekBy(-SkipIntervals.backMs)
+                        CMD_SEEK_FORWARD -> this@CompanionRemoteService.controller.seekBy(SkipIntervals.forwardMs)
                         else -> return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
                     }
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -136,6 +130,11 @@ class CompanionRemoteService : MediaSessionService() {
         // The tap target follows the channel the TV is on; leaving the
         // session ends the notification.
         controller.currentChannelId.onEach { session?.setSessionActivity(remoteActivityIntent()) }.launchIn(scope)
+        // A changed Skip Intervals setting relabels the notification buttons.
+        combine(SkipIntervals.backSeconds, SkipIntervals.forwardSeconds) { _, _ -> Unit }
+            .drop(1)
+            .onEach { session?.setCustomLayout(skipButtons()) }
+            .launchIn(scope)
         controller.connection.onEach { conn ->
             if (conn is CompanionRemoteController.Conn.Idle || conn is CompanionRemoteController.Conn.Failed) {
                 stopSelf()
@@ -175,6 +174,43 @@ class CompanionRemoteService : MediaSessionService() {
         player?.release()
         player = null
         super.onDestroy()
+    }
+
+    /**
+     * Rewind / forward notification buttons for the current Skip Intervals.
+     * Media3 has numbered icons for 5, 10, 15 and 30 seconds; 60 falls back
+     * to the plain skip icon, and the display name always says the seconds.
+     */
+    private fun skipButtons(): List<CommandButton> {
+        val backSeconds = SkipIntervals.backSeconds.value
+        val forwardSeconds = SkipIntervals.forwardSeconds.value
+        val back = CommandButton.Builder(
+            when (backSeconds) {
+                5 -> CommandButton.ICON_SKIP_BACK_5
+                10 -> CommandButton.ICON_SKIP_BACK_10
+                15 -> CommandButton.ICON_SKIP_BACK_15
+                30 -> CommandButton.ICON_SKIP_BACK_30
+                else -> CommandButton.ICON_SKIP_BACK
+            },
+        )
+            .setSessionCommand(SessionCommand(CMD_SEEK_BACK, Bundle.EMPTY))
+            .setDisplayName(SkipIntervals.backLabel(backSeconds))
+            .setExtras(Bundle().apply { putInt(DefaultMediaNotificationProvider.COMMAND_KEY_COMPACT_VIEW_INDEX, 0) })
+            .build()
+        val forward = CommandButton.Builder(
+            when (forwardSeconds) {
+                5 -> CommandButton.ICON_SKIP_FORWARD_5
+                10 -> CommandButton.ICON_SKIP_FORWARD_10
+                15 -> CommandButton.ICON_SKIP_FORWARD_15
+                30 -> CommandButton.ICON_SKIP_FORWARD_30
+                else -> CommandButton.ICON_SKIP_FORWARD
+            },
+        )
+            .setSessionCommand(SessionCommand(CMD_SEEK_FORWARD, Bundle.EMPTY))
+            .setDisplayName(SkipIntervals.forwardLabel(forwardSeconds))
+            .setExtras(Bundle().apply { putInt(DefaultMediaNotificationProvider.COMMAND_KEY_COMPACT_VIEW_INDEX, 2) })
+            .build()
+        return listOf(back, forward)
     }
 
     private fun remoteActivityIntent(): PendingIntent {
@@ -245,7 +281,6 @@ class CompanionRemoteService : MediaSessionService() {
         private const val NOTIF_ID = 0xC0
         private const val CMD_SEEK_BACK = "app.aeriotv.companion.SEEK_BACK"
         private const val CMD_SEEK_FORWARD = "app.aeriotv.companion.SEEK_FORWARD"
-        private const val SEEK_STEP_MS = 30_000L
 
         fun start(context: Context) {
             val intent = Intent(context, CompanionRemoteService::class.java)
