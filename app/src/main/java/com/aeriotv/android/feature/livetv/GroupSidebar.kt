@@ -406,8 +406,8 @@ private const val SidebarPreviewDebounceMs = 150L
 private const val GroupSidebarLogTag = "GroupSidebar"
 
 /**
- * Debounced focus preview for the player's channel-list overlay (the guide
- * drawer stopped previewing 2026-09-14): moving D-pad focus onto a row applies
+ * Debounced focus preview shared by BOTH sidebar hosts (the guide drawer and
+ * the player's channel-list overlay): moving D-pad focus onto a row applies
  * that group [SidebarPreviewDebounceMs] later, through the SAME callback
  * Select uses, so persistence, the guide window, the channel-list rebuild and
  * the focus model all follow one code path. Focus stays in the sidebar.
@@ -436,9 +436,12 @@ internal fun GroupFocusPreview(
  * the guide content sits in the same Row and shifts right while it is open,
  * so the channel rail stays fully readable (no scrim, no overlay).
  *
- * NO FOCUS PREVIEW (Logan 2026-09-14, Apple TV parity): moving focus across
- * rows never changes the guide's group. Only OK or Right COMMIT the focused
- * group (persisted) and close; Back (GuideScreen's handler) just closes.
+ * LIVE PREVIEW (Apple TV parity, 2026-09-14): focusing a row applies its
+ * group after [SidebarPreviewDebounceMs] WITHOUT persisting, so the guide
+ * behind shows the channels before the user leaves the menu. OK or Right
+ * COMMIT (persist) the focused group and close; any other close (GuideScreen)
+ * restores the group the sidebar opened with. Null [onPreview] = no preview
+ * (the phone drawer, which is touch driven).
  *
  * [topOffset] drops the pane so its top edge lines up with the guide's
  * TIME-HEADER row instead of the sort/search controls row (Logan 2026-08-06);
@@ -451,6 +454,8 @@ internal fun GroupFocusPreview(
 internal fun GuideGroupSidebarPane(
     groups: List<String>,
     selectedToken: String,
+    /** Debounced focus preview: apply this group NOW (not persisted), sidebar stays open. */
+    onPreview: ((String) -> Unit)? = null,
     /** OK or Right: keep this group and close the sidebar. */
     onCommit: (String) -> Unit,
     topOffset: Dp = 0.dp,
@@ -459,8 +464,14 @@ internal fun GuideGroupSidebarPane(
     hiddenGroupCount: Int = 0,
 ) {
     val focus = remember { FocusRequester() }
-    // The row focus currently rests on; OK and Right commit it directly.
+    // The row focus currently rests on; commits use it directly so a Right
+    // that lands inside the debounce window still keeps what the user sees
+    // highlighted, not the last previewed group.
     var focusedToken by remember { mutableStateOf(selectedToken) }
+    // Leaving composition (close or commit) cancels a pending debounce.
+    if (onPreview != null) {
+        GroupFocusPreview(focusedToken = focusedToken, activeToken = selectedToken, onPreview = onPreview)
+    }
     val tv = rememberIsTvDevice()
     // Fit the drawer to the longest group name instead of the fixed tvOS 180dp
     // (Logan 2026-09-13: names like "Auto | Football | N..." were truncated).
