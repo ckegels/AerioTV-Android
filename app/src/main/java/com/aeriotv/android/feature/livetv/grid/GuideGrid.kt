@@ -286,9 +286,17 @@ fun GuideGrid(
                     } else if (up) {
                         if (rightDownSeen && !rightHoldLatched) {
                             val action = remoteAction(RemoteSlot.RIGHT_SHORT)
-                            // Edge-gated: a remapped Right still steps until the row runs out of programs.
-                            if (action == GuideRemoteAction.NAVIGATE || (!action.columnIndependent && !state.atLastCell())) state.stepRight()
-                            else runAction(action)
+                            when {
+                                action == GuideRemoteAction.NAVIGATE -> state.stepRight()
+                                // Program actions fire on every press.
+                                action.columnIndependent -> runAction(action)
+                                // Edge-gated: a remapped Right fires only on the row's last program.
+                                else -> {
+                                    val last = state.atLastCell()
+                                    android.util.Log.d("GuideGrid", "right gate: action=$action row=${state.focusRow} cellStart=${state.focusCellStartMs} lastCell=$last -> ${if (last) "fire" else "step"}")
+                                    if (last) runAction(action) else state.stepRight()
+                                }
+                            }
                         }
                         rightDownSeen = false
                     }
@@ -305,10 +313,18 @@ fun GuideGrid(
                     } else if (up) {
                         if (leftDownSeen && !leftHoldLatched) {
                             val action = remoteAction(RemoteSlot.LEFT_SHORT)
-                            // Edge-gated: a remapped Left still moves the ring until focus is in
-                            // the first program column (where the locked rule would pan).
-                            if (action == GuideRemoteAction.NAVIGATE || (!action.columnIndependent && !state.leftStepWouldPan(nowMs))) state.stepLeft(nowMs)
-                            else runAction(action)
+                            when {
+                                action == GuideRemoteAction.NAVIGATE -> state.stepLeft(nowMs)
+                                // Program actions fire on every press.
+                                action.columnIndependent -> runAction(action)
+                                // Live-gated (Logan 2026-09-14, as on Apple TV): a remapped Left
+                                // fires only on the program airing now; elsewhere it moves focus.
+                                else -> {
+                                    val live = state.focusedCellIsAiringNow(nowMs)
+                                    android.util.Log.d("GuideGrid", "left gate: action=$action row=${state.focusRow} cellStart=${state.focusCellStartMs} now=$nowMs airingNow=$live -> ${if (live) "fire" else "step"}")
+                                    if (live) runAction(action) else state.stepLeft(nowMs)
+                                }
+                            }
                         }
                         leftDownSeen = false
                     }
@@ -883,8 +899,8 @@ private const val OK_LONG_REPEATS = 1
 /**
  * Actions about the focused program itself. Mapped to a short Left/Right
  * they fire on every press; every other action (group menu, timeline,
- * paging, Nothing, ...) fires only at the timeline edge and the arrow
- * navigates elsewhere, so focus can always leave the first column.
+ * paging, Nothing, ...) fires only on the live program (Left) or the row's
+ * last program (Right), and the arrow moves focus everywhere else.
  */
 private val GuideRemoteAction.columnIndependent: Boolean
     get() = this == GuideRemoteAction.PLAY || this == GuideRemoteAction.PROGRAM_MENU ||

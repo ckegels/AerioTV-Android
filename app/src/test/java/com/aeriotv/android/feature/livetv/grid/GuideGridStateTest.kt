@@ -134,4 +134,39 @@ class GuideGridStateTest {
         s.pan(+1)
         assertFalse(s.isAwayFromNow(now))
     }
+
+    @Test
+    fun remappedLeftGateIsOnlyTheProgramAiringNow() {
+        val now = 6 * h
+        val s = state(now)
+        val halfHours = (0 until 24).map { i -> p(espn, "P$i", i * 30 * m, (i + 1) * 30 * m) }
+        s.installRows(rows(espn, programmes = halfHours))
+        assertEquals("P12", s.focusedCell()!!.title)
+        assertTrue(s.focusedCellIsAiringNow(now))
+        // Two Rights: the previous program starts off screen, which the old
+        // pan-based gate misread as the edge. Not live, so Left must step.
+        s.stepRight(); s.stepRight()
+        assertEquals("P14", s.focusedCell()!!.title)
+        assertFalse(s.focusedCellIsAiringNow(now))
+        s.stepLeft(now)
+        assertFalse(s.focusedCellIsAiringNow(now))
+        s.stepLeft(now)
+        assertEquals("P12", s.focusedCell()!!.title)
+        assertTrue(s.focusedCellIsAiringNow(now))
+        // An earlier program is not live either.
+        s.stepLeft(now)
+        assertEquals("P11", s.focusedCell()!!.title)
+        assertFalse(s.focusedCellIsAiringNow(now))
+    }
+
+    @Test
+    fun atLastCellOnlyOnTheRowsFinalProgram() {
+        val s = state()
+        s.installRows(rows(espn, programmes = listOf(p(espn, "A", 0, 6 * h + 10 * m), p(espn, "B", 6 * h + 10 * m, 12 * h))))
+        assertEquals("A", s.focusedCell()!!.title)
+        assertFalse(s.atLastCell())
+        s.stepRight()
+        assertEquals("B", s.focusedCell()!!.title)
+        assertTrue(s.atLastCell())
+    }
 }
