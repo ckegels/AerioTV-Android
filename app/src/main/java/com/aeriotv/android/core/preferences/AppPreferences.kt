@@ -209,20 +209,11 @@ class AppPreferences @Inject constructor(
     }
 
     /**
-     * iOS Issue #26 player aspect mode: "fit" (letterbox, default), "zoom"
-     * (crop to fill while preserving aspect), or "fill" (stretch). Maps to
-     * Media3 AspectRatioFrameLayout RESIZE_MODE_FIT / ZOOM / FILL in the player.
-     */
-    val playerAspectMode: Flow<String> = store.data.map { it[KEY_PLAYER_ASPECT_MODE] ?: "fit" }
-    suspend fun setPlayerAspectMode(value: String) {
-        store.edit { it[KEY_PLAYER_ASPECT_MODE] = value }
-    }
-
-    /**
      * Video scale mode for the live and on-demand players: "fit" (default,
      * letterbox or pillarbox) or "fill" (scale up preserving aspect so the
-     * shorter dimension fills the screen, cropping the overflow). Maps to
-     * Media3 AspectRatioFrameLayout RESIZE_MODE_FIT / RESIZE_MODE_ZOOM.
+     * shorter dimension fills the screen, cropping the overflow) or "stretch"
+     * (aspect ignored). Maps to Media3 AspectRatioFrameLayout
+     * RESIZE_MODE_FIT / RESIZE_MODE_ZOOM / RESIZE_MODE_FILL.
      */
     val videoScaleMode: Flow<String> = store.data.map { it[KEY_VIDEO_SCALE_MODE] ?: "fit" }
     suspend fun setVideoScaleMode(value: String) {
@@ -1655,7 +1646,6 @@ class AppPreferences @Inject constructor(
         val KEY_HIDDEN_EPG_BADGES = stringPreferencesKey("ui_hidden_epg_badges")
         val KEY_SHOW_EPG_BADGES_TV = booleanPreferencesKey("ui_show_epg_badges_tv")
         val KEY_SHOW_EPG_BADGES_MOBILE = booleanPreferencesKey("ui_show_epg_badges_mobile")
-        val KEY_PLAYER_ASPECT_MODE = stringPreferencesKey("player_aspect_mode")
         val KEY_VIDEO_SCALE_MODE = stringPreferencesKey("video_scale_mode")
         val KEY_CUSTOM_ACCENT_HEX = stringPreferencesKey("custom_accent_hex")
         val KEY_DEFAULT_LIVE_TV_VIEW = stringPreferencesKey("default_live_tv_view")

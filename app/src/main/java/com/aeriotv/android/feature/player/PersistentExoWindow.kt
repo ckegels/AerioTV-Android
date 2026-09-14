@@ -88,7 +88,6 @@ fun BoxScope.PersistentExoWindow(
     val boundPlayer by holder.playerInstance.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val settingsVm: SettingsViewModel = hiltViewModel()
-    val aspectMode by settingsVm.playerAspectMode.collectAsStateWithLifecycle(initialValue = "fit")
     val videoScaleMode by settingsVm.videoScaleMode.collectAsStateWithLifecycle(
         initialValue = VIDEO_SCALE_FIT,
     )
@@ -441,9 +440,9 @@ fun BoxScope.PersistentExoWindow(
                 }
             },
             update = { view ->
-                // Video Scale (Fit / Fill) with the legacy Cast aspect command
-                // folded in; PiP always stays Fit. See VideoScale.kt.
-                view.resizeMode = videoScaleResizeMode(videoScaleMode, inPip, aspectMode)
+                // Video Scale (Fit / Fill / Stretch); PiP always stays Fit.
+                // See VideoScale.kt.
+                view.resizeMode = videoScaleResizeMode(videoScaleMode, inPip)
                 // Rebind when the holder recreated the player (post-X-close
                 // re-create, media-service acquire, passthrough rebuild).
                 // The factory's one-time setPlayer covered only the original

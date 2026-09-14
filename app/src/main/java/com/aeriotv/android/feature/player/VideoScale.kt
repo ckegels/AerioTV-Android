@@ -43,6 +43,9 @@ const val VIDEO_SCALE_FIT = "fit"
  */
 const val VIDEO_SCALE_FILL = "fill"
 
+/** Stretch the stream to the surface, ignoring the source aspect ratio. */
+const val VIDEO_SCALE_STRETCH = "stretch"
+
 /** Pinch-out ratio that commits to Fill. */
 private const val PINCH_OUT_RATIO = 1.15f
 
@@ -52,28 +55,52 @@ private const val PINCH_IN_RATIO = 0.85f
 /** How long the centered "Fit" / "Fill" label stays up after a pinch. */
 private const val SCALE_LABEL_MS = 1_000L
 
-fun videoScaleLabel(mode: String): String =
-    if (mode == VIDEO_SCALE_FILL) "Fill" else "Fit"
+fun videoScaleLabel(mode: String): String = when (mode) {
+    VIDEO_SCALE_FILL -> "Fill"
+    VIDEO_SCALE_STRETCH -> "Stretch"
+    else -> "Fit"
+}
+
+/** Options row order: Fit -> Fill -> Stretch -> Fit. */
+fun nextVideoScaleMode(current: String): String = when (current) {
+    VIDEO_SCALE_FIT -> VIDEO_SCALE_FILL
+    VIDEO_SCALE_FILL -> VIDEO_SCALE_STRETCH
+    else -> VIDEO_SCALE_FIT
+}
+
+/**
+ * Map a Cast / companion CMD_SET_ASPECT key onto a video scale mode. The wire
+ * protocol predates this setting: its "zoom" is our Fill (crop, aspect kept)
+ * and its "fill" is our Stretch.
+ */
+fun videoScaleFromCastAspectKey(key: String?): String = when (key) {
+    "zoom" -> VIDEO_SCALE_FILL
+    "fill" -> VIDEO_SCALE_STRETCH
+    else -> VIDEO_SCALE_FIT
+}
+
+/** Inverse of [videoScaleFromCastAspectKey], for the receiver's state reply. */
+fun castAspectKeyFromVideoScale(mode: String): String = when (mode) {
+    VIDEO_SCALE_FILL -> "zoom"
+    VIDEO_SCALE_STRETCH -> "fill"
+    else -> "fit"
+}
 
 /**
  * Resolve the Media3 resize mode for a player surface.
  *
- * Fill maps to RESIZE_MODE_ZOOM (aspect preserved, overflow cropped), never
- * RESIZE_MODE_FILL (which stretches). Picture in Picture always stays Fit:
- * the PiP window is already letterboxed to the source aspect, so cropping
- * there only loses picture. [aspectMode] is the legacy Cast / companion
- * aspect command (fit / zoom / fill) and applies only while the video scale
- * is Fit, so the local control always wins.
+ * Fill maps to RESIZE_MODE_ZOOM (aspect preserved, overflow cropped) and
+ * Stretch to RESIZE_MODE_FILL (aspect ignored). Picture in Picture always
+ * stays Fit: the PiP window is already letterboxed to the source aspect, so
+ * cropping or stretching there only hurts.
  */
 fun videoScaleResizeMode(
     scaleMode: String,
     inPip: Boolean = false,
-    aspectMode: String = VIDEO_SCALE_FIT,
 ): Int = when {
     inPip -> AspectRatioFrameLayout.RESIZE_MODE_FIT
     scaleMode == VIDEO_SCALE_FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-    aspectMode == "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-    aspectMode == "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+    scaleMode == VIDEO_SCALE_STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
     else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
 }
 
@@ -163,7 +190,7 @@ private fun pinchSpan(
 ): Float = hypot((a.x - b.x), (a.y - b.y))
 
 /**
- * "Video Scale: Fit / Fill" row for the on-demand options sheet. Takes the
+ * "Video Scale: Fit / Fill / Stretch" row for the on-demand options sheet. Takes the
  * view model rather than a callback so the caller adds no lambda of its own
  * (VODPlayerScreen register pressure). Tapping cycles in place; the sheet
  * stays open so the change is visible behind it.

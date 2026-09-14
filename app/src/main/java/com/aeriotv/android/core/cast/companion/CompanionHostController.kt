@@ -623,8 +623,12 @@ class CompanionHostController @Inject constructor(
                     controlPlayer()?.applySpeed(json.optDouble(CastControl.KEY_SPEED, 1.0).toFloat())
                 }
                 CastControl.CMD_SET_ASPECT -> runCatching {
-                    appPrefs.setPlayerAspectMode(
-                        CastControl.AspectMode.fromKey(json.optString(CastControl.KEY_ASPECT)).key,
+                    appPrefs.setVideoScaleMode(
+                        com.aeriotv.android.feature.player.videoScaleFromCastAspectKey(
+                            CastControl.AspectMode.fromKey(
+                                json.optString(CastControl.KEY_ASPECT),
+                            ).key,
+                        ),
                     )
                 }
                 // CMD_GET_STATE: no action; the state reply below answers it.

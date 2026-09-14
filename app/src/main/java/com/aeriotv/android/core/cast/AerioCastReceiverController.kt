@@ -426,8 +426,12 @@ class AerioCastReceiverController @Inject constructor(
                         }
                     CastControl.CMD_SET_ASPECT ->
                         runCatching {
-                            prefs.setPlayerAspectMode(
-                                CastControl.AspectMode.fromKey(json.optString(CastControl.KEY_ASPECT)).key,
+                            prefs.setVideoScaleMode(
+                                com.aeriotv.android.feature.player.videoScaleFromCastAspectKey(
+                                    CastControl.AspectMode.fromKey(
+                                        json.optString(CastControl.KEY_ASPECT),
+                                    ).key,
+                                ),
                             )
                         }
                     CastControl.CMD_SET_CHANNEL -> {
@@ -506,7 +510,11 @@ class AerioCastReceiverController @Inject constructor(
         val curSid = runCatching { p?.readCurrentSid() }.getOrNull()
         val speed = runCatching { p?.readSpeed() }.getOrNull() ?: 1f
         val aspect = CastControl.AspectMode.fromKey(
-            runCatching { prefs.playerAspectMode.first() }.getOrNull(),
+            runCatching {
+                com.aeriotv.android.feature.player.castAspectKeyFromVideoScale(
+                    prefs.videoScaleMode.first(),
+                )
+            }.getOrNull(),
         )
         // Live-rewind window only applies to the shared live player. For a VOD/
         // recording player the seek axis is media position (window [0,duration]),

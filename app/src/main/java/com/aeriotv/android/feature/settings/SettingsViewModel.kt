@@ -92,30 +92,20 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setShowEpgBadges(isTv, value) }
     }
 
-    val playerAspectMode: Flow<String> = prefs.playerAspectMode
-    fun setPlayerAspectMode(value: String) {
-        viewModelScope.launch { prefs.setPlayerAspectMode(value) }
-    }
-
-    /** Cycle Fit -> Zoom -> Fill -> Fit (iOS Issue #26 aspect toggle). */
-    fun cyclePlayerAspectMode(current: String) {
-        val next = when (current) {
-            "fit" -> "zoom"
-            "zoom" -> "fill"
-            else -> "fit"
-        }
-        setPlayerAspectMode(next)
-    }
-
-    /** Video scale: "fit" (default) or "fill" (crop to fill, aspect kept). */
+    /**
+     * Video scale: "fit" (default), "fill" (crop to fill, aspect kept) or
+     * "stretch" (aspect ignored).
+     */
     val videoScaleMode: Flow<String> = prefs.videoScaleMode
     fun setVideoScaleMode(value: String) {
         viewModelScope.launch { prefs.setVideoScaleMode(value) }
     }
 
-    /** Player options row / pinch toggle: Fit <-> Fill. */
+    /** Player options row: Fit -> Fill -> Stretch -> Fit. */
     fun cycleVideoScaleMode(current: String) {
-        setVideoScaleMode(if (current == "fill") "fit" else "fill")
+        setVideoScaleMode(
+            com.aeriotv.android.feature.player.nextVideoScaleMode(current),
+        )
     }
 
     val customAccentHex: Flow<String> = prefs.customAccentHex
