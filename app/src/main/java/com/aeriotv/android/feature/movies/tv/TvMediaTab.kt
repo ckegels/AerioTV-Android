@@ -161,50 +161,15 @@ internal fun TvMediaTab(
         )
     }
 
-    fun libraryFallbackHero(): List<TvHeroPage> {
-        val first = library.firstOrNull() ?: return emptyList()
-        // A series hero plays its target episode; "Loading…" until the
-        // episode list lands, exactly like the tvOS series action row.
-        val isSeries = first.movieUuid == null && first.seriesId != null
-        val seriesLabel = if (isSeries) seriesPlayLabel(first) else null
-        return listOf(
-            TvHeroPage(
-                key = "lib:" + first.key, title = first.title, artUrl = first.posterUrl,
-                meta = listOfNotNull(first.year?.toString()), rating = formatRating(first.rating).ifEmpty { null },
-                buttons = listOf(
-                    TvHeroButton(
-                        if (isSeries) seriesLabel ?: "Loading…" else "Play",
-                        Icons.Filled.PlayArrow,
-                        primary = true,
-                        id = "Primary",
-                    ) {
-                        armHero()
-                        first.movieUuid?.let { onPlay(it, first.title) }
-                            ?: if (isSeries) onPlaySeries(first) else open(first)
-                    },
-                    TvHeroButton("Details", Icons.Outlined.Info, id = "Details") { open(first) },
-                ),
-                longPressActions = listOf(
-                    TvMenuAction(if (first.key in watchlistKeys) "Remove from Watchlist" else "Add to Watchlist") { onToggleWatchlist(first) },
-                    TvMenuAction(if (first.key in hiddenKeys) "Unhide" else "Hide") { onToggleHidden(first) },
-                ),
-            ),
-        )
-    }
-
-    // tvOS: with nothing in progress the hero shows the first library title
-    // (Android has no addedAt yet, so it is library.first, not the newest).
-    // Mid-sweep hold (MoviesView.swift:1042-1046): while the library is still
-    // loading and nothing has resolved, KEEP the pages already on screen
-    // instead of swapping the carousel for a single static card.
+    // The hero exists ONLY for Continue Watching (Logan 2026-09-14): with
+    // nothing resumable there is no fallback hero and no reserved space, the
+    // page starts at the first shelf. The mid-sweep hold stays: while the
+    // library is still loading, KEEP the pages already on screen instead of
+    // swapping the carousel while the progress rows are still resolving.
     val heldHero = remember { mutableStateOf(emptyList<TvHeroPage>()) }
-    val tvHero = remember(heroPages, backdrops, library, watchlistKeys, hiddenKeys, isLoading) {
+    val tvHero = remember(heroPages, backdrops, watchlistKeys, hiddenKeys, isLoading) {
         if (!isLoading || heroPages.isNotEmpty() || heldHero.value.isEmpty()) {
-            heldHero.value = if (heroPages.isNotEmpty()) {
-                heroPages.map { heroFor(it, watchlist = false) }
-            } else {
-                libraryFallbackHero()
-            }
+            heldHero.value = heroPages.map { heroFor(it, watchlist = false) }
         }
         heldHero.value
     }
@@ -251,8 +216,7 @@ internal fun TvMediaTab(
     TvMediaPage(
         gridState = gridState,
         heroPages = tvHero,
-        // Only the real Continue Watching carousel gets the section title; the
-        // library fallback hero (nothing in progress) is not continue watching.
+        // The hero is always the Continue Watching carousel.
         heroSectionTitle = if (heroPages.isNotEmpty()) "Continue Watching" else null,
         shelves = listOf(watchlistShelf),
         headerTitle = if (isSearching) "Results" else kind.libraryTitle,

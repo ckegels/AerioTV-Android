@@ -1640,6 +1640,9 @@ private fun TvHeroCard(
     val bg = MaterialTheme.colorScheme.background
     var menuOpen by remember { mutableStateOf(false) }
     val guard = rememberTvMenuGuard()
+    // Measured aspect of the loaded hero art; 0 until it lands (16:9 slot).
+    var artAspect by remember(page.artUrl) { mutableStateOf(0f) }
+    val artPortrait = artAspect > 0f && artAspect < 1f
     Box(
         modifier = Modifier
             .semantics(mergeDescendants = true) {}
@@ -1655,7 +1658,27 @@ private fun TvHeroCard(
             modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface),
         ) {
             if (!page.artUrl.isNullOrBlank()) {
-                AsyncImage(model = sizedArt(page.artUrl, width - TvPage.heroInset * 2, TvPage.heroHeight), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                // A real landscape backdrop fills the wide slot with a center
+                // crop. A portrait poster must NOT be cropped into that slot
+                // (Logan 2026-09-14): it takes a poster-shaped slot at the
+                // hero's full height on the trailing edge and the copy column
+                // keeps the width it frees, the Live TV banner treatment
+                // (d40f9ab5).
+                AsyncImage(
+                    model = sizedArt(page.artUrl, width - TvPage.heroInset * 2, TvPage.heroHeight),
+                    contentDescription = null,
+                    contentScale = if (artPortrait) ContentScale.Fit else ContentScale.Crop,
+                    modifier = if (artPortrait) {
+                        Modifier.align(Alignment.CenterEnd).fillMaxHeight().aspectRatio(artAspect)
+                    } else {
+                        Modifier.fillMaxSize()
+                    },
+                    onSuccess = { state ->
+                        val w = state.result.image.width.toFloat()
+                        val h = state.result.image.height.toFloat()
+                        if (w > 0f && h > 0f) artAspect = w / h
+                    },
+                )
             } else if (!page.logoUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = page.logoUrl, contentDescription = null, contentScale = ContentScale.Fit,
@@ -1686,7 +1709,10 @@ private fun TvHeroCard(
         Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .fillMaxWidth()
+                // A poster-shaped slot is meant to be seen whole, so the
+                // bottom fade stops short of it instead of shading its lower
+                // third (Logan 2026-09-14).
+                .fillMaxWidth(if (artPortrait) 0.72f else 1f)
                 .fillMaxHeight(0.45f)
                 .background(Brush.verticalGradient(0.0f to Color.Transparent, 1.0f to bg)),
         )

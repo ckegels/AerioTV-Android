@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -103,19 +104,45 @@ fun MediaHeroCard(
             .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surface),
     ) {
+        // A real landscape backdrop fills the wide slot with a center crop. A
+        // portrait poster must NOT be cropped into it (Logan 2026-09-14): it
+        // takes a poster-shaped slot at the hero's full height on the trailing
+        // edge and the copy sits beside it, the Live TV banner treatment
+        // (d40f9ab5). artAspect is 0 until the image lands.
+        var artAspect by remember(page.artUrl) { mutableStateOf(0f) }
+        val artPortrait = artAspect > 0f && artAspect < 1f
+        val posterWidth = 220.dp * artAspect
         if (!page.artUrl.isNullOrBlank()) {
             AsyncImage(
                 model = page.artUrl, contentDescription = null,
-                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                contentScale = if (artPortrait) ContentScale.Fit else ContentScale.Crop,
+                modifier = if (artPortrait) {
+                    Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(posterWidth)
+                } else {
+                    Modifier.fillMaxSize()
+                },
+                onSuccess = { state ->
+                    val w = state.result.image.width.toFloat()
+                    val h = state.result.image.height.toFloat()
+                    if (w > 0f && h > 0f) artAspect = w / h
+                },
             )
         }
         Box(
-            modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(bg.copy(alpha = 0.05f), bg.copy(alpha = 0.92f))),
-            ),
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth()
+                // The poster slot keeps its own width clear of the scrim.
+                .padding(end = if (artPortrait) posterWidth else 0.dp)
+                .background(
+                    Brush.verticalGradient(listOf(bg.copy(alpha = 0.05f), bg.copy(alpha = 0.92f))),
+                ),
         )
         Column(
-            modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(16.dp)
+                .padding(end = if (artPortrait) posterWidth else 0.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
