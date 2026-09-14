@@ -47,6 +47,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -611,6 +612,28 @@ class AerioExoPlayerHolder @Inject constructor(
     /** True while a keepalive re-prime is mid-flight; the follow-poller parks on it. */
     val isReprimeInFlight: Boolean get() = reprimeInFlight
 
+    /** The re-prime's second connection, while it is open. Cancelled by a
+     *  re-prime's own finally and by [playUrl] (different url), [stop] and
+     *  [destroy]: the read loop is blocking, so cancelling the coroutine alone
+     *  kept reading the old channel for as long as the feed stayed steady. */
+    private class KeepaliveConn(
+        val url: String,
+        val job: Job,
+        val conn: java.util.concurrent.atomic.AtomicReference<java.net.HttpURLConnection?>,
+    )
+    @Volatile private var activeKeepalive: KeepaliveConn? = null
+
+    /** Cancel the keepalive job AND disconnect its socket (off the main
+     *  thread; disconnect can do I/O). [exceptUrl] spares the keepalive of an
+     *  in-flight re-prime of that same url, whose own playUrl lands here. */
+    private fun cancelKeepalive(exceptUrl: String? = null) {
+        val k = activeKeepalive ?: return
+        if (exceptUrl != null && k.url == exceptUrl) return
+        activeKeepalive = null
+        k.job.cancel()
+        watchdogScope.launch(Dispatchers.IO) { runCatching { k.conn.get()?.disconnect() } }
+    }
+
     /**
      * Re-prime the SAME proxy [url], holding a SECOND bare AllowAny GET to it open
      * across the flush so the channel's client count never hits 0. The server's
@@ -641,6 +664,7 @@ class AerioExoPlayerHolder @Inject constructor(
         }
         lastForcedReloadAtMs = now
         reprimeInFlight = true
+        var keepAliveConn: KeepaliveConn? = null
         try {
             val connHolder = java.util.concurrent.atomic.AtomicReference<java.net.HttpURLConnection?>(null)
             val connected = CompletableDeferred<Boolean>()
@@ -654,6 +678,8 @@ class AerioExoPlayerHolder @Inject constructor(
                         setRequestProperty("User-Agent", "AerioTV-switch-keepalive")
                     }
                     connHolder.set(c)
+                    // Cancelled before connecting: never open the socket.
+                    ensureActive()
                     c.inputStream.use { ins ->
                         val buf = ByteArray(32 * 1024)
                         if (ins.read(buf) >= 0 && !connected.isCompleted) connected.complete(true)
@@ -666,16 +692,20 @@ class AerioExoPlayerHolder @Inject constructor(
                     runCatching { connHolder.get()?.disconnect() }
                 }
             }
+            keepAliveConn = KeepaliveConn(url, keepAlive, connHolder)
+            cancelKeepalive()
+            activeKeepalive = keepAliveConn
             // Attach (or definitively fail) the keepalive before dropping the player's connection.
             withTimeoutOrNull(4_000L) { connected.await() }
             tracer.recover("keepalive re-prime (stream follow / manual switch)")
             withContext(Dispatchers.Main) { playUrl(url, title, subtitle, artworkUri) }
             // Hold until ExoPlayer's reconnect is established (client count back >= 2).
             delay(keepaliveHoldMs)
-            keepAlive.cancel()
-            runCatching { connHolder.get()?.disconnect() }
             true
         } finally {
+            // Also on cancellation (the caller's LaunchedEffect dies on a
+            // channel change or player close during the waits above).
+            if (keepAliveConn != null && activeKeepalive === keepAliveConn) cancelKeepalive()
             reprimeInFlight = false
         }
     }
@@ -1777,11 +1807,13 @@ class AerioExoPlayerHolder @Inject constructor(
             .setMediaMetadata(mediaMetadata)
             .build()
         tracer.markTuneStart(title, "catchup")
+        val staleCalls = takeLiveCallTrackers()
         val source = ProgressiveMediaSource.Factory(
             tracer.wrapDataSourceFactory(httpDataSourceFactory(isLive = true)),
             tsOnlyExtractorsFactory(),
         ).createMediaSource(mediaItem)
         p.setMediaSource(source)
+        retireLiveCalls(p, staleCalls)
         p.prepare()
         p.playWhenReady = true
         Log.i(TAG, "[CATCHUP] tuned archive replay")
@@ -1893,8 +1925,11 @@ class AerioExoPlayerHolder @Inject constructor(
         // watchdog/poller re-prime must not undo.
         setVideoTrackEnabled(!remoteAudioOnly)
         tracer.markTuneStart(title, kind)
+        cancelKeepalive(exceptUrl = url)
+        val staleCalls = takeLiveCallTrackers()
         val source = buildMediaSource(url, title, subtitle, artworkUri, drmLicenseType, drmLicenseKey)
         p.setMediaSource(source)
+        retireLiveCalls(p, staleCalls)
         p.prepare()
         p.playWhenReady = true
         // Arm the 12 s first-byte deadline for live only. A caller-supplied
@@ -1951,13 +1986,73 @@ class AerioExoPlayerHolder @Inject constructor(
         val headerUa = httpHeaders.entries
             .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
             ?.value
-        val factory = OkHttpDataSource.Factory(liveHttpClient)
+        val calls = LiveCallTracker(liveHttpClient).also { liveCallTrackers.add(it) }
+        val factory = OkHttpDataSource.Factory(calls)
             .setUserAgent(okHttpSafeUserAgent(headerUa ?: DEFAULT_PLAYBACK_USER_AGENT))
         val nonUaHeaders = okHttpSafeHeaders(
             httpHeaders.filterKeys { !it.equals("User-Agent", ignoreCase = true) },
         )
         if (nonUaHeaders.isNotEmpty()) factory.setDefaultRequestProperties(nonUaHeaders)
         return factory
+    }
+
+    /**
+     * Call.Factory for ONE live media source that remembers its recent Calls
+     * so a superseded source's socket can be closed. ExoPlayer cancels the
+     * loader on stop / a new source, but the loading thread sits in a blocking
+     * OkHttp read that neither the cancel flag nor a thread interrupt breaks,
+     * so the old Dispatcharr connection stayed open until the next burst
+     * (~10 s) or the read timeout. Same discipline as TimeshiftController's
+     * fill: cancel the CALL. A cancel after [cancelAll] applies to any late
+     * retry the dying source still makes.
+     */
+    private class LiveCallTracker(private val client: OkHttpClient) : okhttp3.Call.Factory {
+        private val calls = ArrayDeque<okhttp3.Call>()
+        private var cancelled = false
+
+        override fun newCall(request: okhttp3.Request): okhttp3.Call {
+            val call = client.newCall(request)
+            synchronized(this) {
+                if (cancelled) {
+                    call.cancel()
+                } else {
+                    // A source opens one connection at a time; older entries
+                    // are finished, so a short history is enough.
+                    calls.addLast(call)
+                    while (calls.size > 4) calls.removeFirst()
+                }
+            }
+            return call
+        }
+
+        fun cancelAll() {
+            val snapshot = synchronized(this) {
+                cancelled = true
+                calls.toList().also { calls.clear() }
+            }
+            snapshot.forEach { it.cancel() }
+        }
+    }
+
+    /** Live sources built so far whose connections have not been retired. */
+    private val liveCallTrackers = java.util.concurrent.CopyOnWriteArrayList<LiveCallTracker>()
+
+    /** Detach every live source's tracker. Take this BEFORE building the next
+     *  source so the new one is never in the set that gets cancelled. */
+    private fun takeLiveCallTrackers(): List<LiveCallTracker> {
+        val stale = liveCallTrackers.toList()
+        liveCallTrackers.removeAll(stale.toSet())
+        return stale
+    }
+
+    /** Cancel [stale] Calls once ExoPlayer has released the old period.
+     *  Posted to the playback looper, so it runs after the stop /
+     *  setMediaSource already queued there has cancelled the loader: the
+     *  resulting read failure then reports as a canceled load, never as a
+     *  load error the reconnect / 503 / stall paths would act on. */
+    private fun retireLiveCalls(p: ExoPlayer, stale: List<LiveCallTracker>) {
+        if (stale.isEmpty()) return
+        android.os.Handler(p.playbackLooper).post { stale.forEach { it.cancelAll() } }
     }
 
     /**
@@ -2070,7 +2165,10 @@ class AerioExoPlayerHolder @Inject constructor(
         // Disarm the first-byte deadline with the pipeline but KEEP the tried
         // set: an internal retry is the same tune on the same channel.
         liveFailover.disarm()
+        cancelKeepalive()
+        val staleCalls = takeLiveCallTrackers()
         p.stop()
+        retireLiveCalls(p, staleCalls)
         p.clearMediaItems()
     }
 
@@ -2135,6 +2233,10 @@ class AerioExoPlayerHolder @Inject constructor(
         watchdogJob?.cancel()
         watchdogJob = null
         lastPlayUrl = null
+        // An in-flight re-prime's own playUrl can rebuild the player through
+        // here (start gate change); its finally retires that keepalive.
+        if (!reprimeInFlight) cancelKeepalive()
+        val staleCalls = takeLiveCallTrackers()
         try {
             tracer.tracedPlayer = null
             p.removeAnalyticsListener(tracer.analyticsListener)
@@ -2144,6 +2246,9 @@ class AerioExoPlayerHolder @Inject constructor(
         } catch (t: Throwable) {
             Log.w(TAG, "ExoPlayer release failed", t)
         } finally {
+            // release() blocks until the playback thread let go of the
+            // loaders, so the stale Calls can be cancelled right here.
+            staleCalls.forEach { it.cancelAll() }
             PlaybackActivityTracker.playerReleased()
         }
     }
@@ -2421,11 +2526,13 @@ class AerioExoPlayerHolder @Inject constructor(
         streamPrimedAtMs = now
         lastKnownBufferedPositionMs = 0L
         lastBufferAdvanceAtMs = now
+        val staleCalls = takeLiveCallTrackers()
         val source = buildMediaSource(
             url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
             lastPlayDrmType, lastPlayDrmKey,
         )
         p.setMediaSource(source)
+        retireLiveCalls(p, staleCalls)
         p.prepare()
         p.playWhenReady = true
         return true
@@ -2553,11 +2660,13 @@ class AerioExoPlayerHolder @Inject constructor(
         lastKnownBufferedPositionMs = 0L
         lastBufferAdvanceAtMs = now
         LoggingPlayerListener.sawTracksChangedSincePrime = false
+        val staleCalls = takeLiveCallTrackers()
         val source = buildMediaSource(
             url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
             lastPlayDrmType, lastPlayDrmKey,
         )
         p.setMediaSource(source)
+        retireLiveCalls(p, staleCalls)
         p.prepare()
         p.playWhenReady = true
     }
