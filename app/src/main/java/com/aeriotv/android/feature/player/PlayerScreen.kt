@@ -834,16 +834,15 @@ fun PlayerScreen(
             // phone-side background audio AND stack a second card.
             onClose()
         } else {
-            // Phone Back: promote to bottom-bar audio-only mini chip,
-            // hide the persistent video window, keep playback going
-            // via the AerioMediaPlaybackService. The MediaItem metadata
-            // already carries title / subtitle / logo (set in the
-            // channel-switch LaunchedEffect above) so the service's
-            // notification renders correctly the moment we
-            // foreground it.
+            // Phone Back (Logan 2026-09-14, TV parity): minimize to the
+            // floating in-app mini window (PhoneMiniPlayer.kt) instead of the
+            // old audio-only chip. The persistent PlayerView only moves into
+            // the corner, so the stream keeps playing with its video, and the
+            // AerioMediaPlaybackService keeps the notification alive. The
+            // top-strip swipe-down dispatches this same Back.
             miniPlayerVm.showMiniPlayer()
             currentChannel?.let { _ ->
-                exoWindowState.hide()
+                exoWindowState.requestMini()
                 com.aeriotv.android.core.playback.AerioMediaPlaybackService
                     .startBackground(context)
             }
@@ -1617,7 +1616,12 @@ fun PlayerScreen(
                 // Pinch to switch Fit <-> Fill on touch devices (no-op on TV).
                 // Lives in the SAME chain as the tap / drag handlers: a sibling
                 // overlay Box would win hit testing and swallow every tap.
-                .videoScalePinch(settingsVm, enabled = !isTvForm),
+                .videoScalePinch(settingsVm, enabled = !isTvForm)
+                // Swipe down from the top strip = Back = minimize (live only;
+                // catch-up cannot minimize yet, so it gets no gesture); cancels
+                // the channel-flip swipe above when it starts there. Must stay
+                // LAST in this chain (PhoneMiniPlayer.kt).
+                .playerTopSwipeDown(enabled = !isTvForm && !isCatchupMode, drivesWindow = !isRemote),
         )
 
         // Transient "Fit" / "Fill" label for the pinch gesture above (no-op on

@@ -381,6 +381,12 @@ fun MainScaffold(
             MainScaffoldEntryPoint::class.java,
         ).exoPlayerHolder()
     }
+    val exoWindowMode by remember {
+        dagger.hilt.android.EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            MainScaffoldEntryPoint::class.java,
+        ).exoWindowState().mode
+    }.collectAsStateWithLifecycle()
     // GH #33 re-entry: an app-wide "Now Casting" mini controller above the tab
     // bar so the user can re-open the cast remote after leaving the player.
     val castSender = remember {
@@ -1106,9 +1112,20 @@ fun MainScaffold(
       ) {
       androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxSize()) {
         if (topTabBar) {
+            // Keeps the phone floating mini's top corners below this bar.
+            androidx.compose.runtime.DisposableEffect(Unit) {
+                onDispose {
+                    com.aeriotv.android.feature.player.PhoneMiniChrome
+                        .topChromeBottomPx.floatValue = 0f
+                }
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .onGloballyPositioned {
+                        com.aeriotv.android.feature.player.PhoneMiniChrome
+                            .topChromeBottomPx.floatValue = it.boundsInRoot().bottom
+                    }
                     .statusBarsPadding()
                     .padding(top = 8.dp, bottom = 8.dp),
                 contentAlignment = Alignment.Center,
@@ -1163,10 +1180,23 @@ fun MainScaffold(
             // Bottom overlay: floating mini-player card above the floating tab
             // pill. The mini stays put while the pill slides away on scroll
             // (GH #20) so an active stream's controls are never hidden.
+            // Phone floating mini (PhoneMiniPlayer.kt) is mounted at the
+            // activity root, so publish this overlay's measured top: the mini's
+            // bottom corners rest above the cast card, button and tab bar.
+            androidx.compose.runtime.DisposableEffect(Unit) {
+                onDispose {
+                    com.aeriotv.android.feature.player.PhoneMiniChrome
+                        .bottomChromeTopPx.floatValue = 0f
+                }
+            }
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    .onGloballyPositioned {
+                        com.aeriotv.android.feature.player.PhoneMiniChrome
+                            .bottomChromeTopPx.floatValue = it.boundsInRoot().top
+                    }
                     .navigationBarsPadding()
                     .padding(bottom = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -1244,7 +1274,12 @@ fun MainScaffold(
                 // same session. GH #33: also suppress it while casting so it can
                 // never stack under the Now-Casting card (a local mini session
                 // that was Active before the cast started would otherwise show).
-                if (miniState is MiniPlayerSession.State.Active && !isTv && !casting) {
+                // The row is now only the fallback for an Active session whose
+                // video window is NOT the floating mini (phone Back and the
+                // top-strip swipe minimize into that window instead).
+                if (miniState is MiniPlayerSession.State.Active && !isTv && !casting &&
+                    exoWindowMode != com.aeriotv.android.feature.player.ExoWindowState.Mode.Mini
+                ) {
                     val channel = miniState.channel
                     val nowProgramme = state.epgByChannel[channel.guideMatchKey]?.nowPlaying()
                     Box(

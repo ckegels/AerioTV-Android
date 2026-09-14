@@ -47,6 +47,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.core.playback.AerioExoPlayerHolder
+import com.aeriotv.android.core.pip.isTelevision
 import com.aeriotv.android.feature.settings.SettingsViewModel
 
 /**
@@ -98,6 +99,10 @@ fun BoxScope.PersistentExoWindow(
         initialValue = VIDEO_SCALE_FIT,
     )
     val inPip by com.aeriotv.android.core.pip.PipState.inPictureInPicture
+    // Phones and tablets get the floating PiP-style mini (PhoneMiniPlayer.kt);
+    // everything below that reads MiniPlayerChrome is the TV geometry.
+    val isPhone = remember(context) { !context.isTelevision() }
+    val miniSession = hiltViewModel<com.aeriotv.android.feature.miniplayer.MiniPlayerViewModel>().session
 
     // Minimize / expand is ONE spring on size AND position (tvOS
     // .spring(response: 0.35), HomeView.swift:4920), not a hard cut. The
@@ -173,8 +178,8 @@ fun BoxScope.PersistentExoWindow(
         animationSpec = miniSpec,
         label = "miniCorner",
     )
-    // Settings tab stash (TV only; the phone mini is an audio chip with the
-    // window Hidden). The frame keeps its size, so the SurfaceView is only
+    // Settings tab stash (TV only; the phone mini floats over every tab,
+    // Settings included, like system PiP). The frame keeps its size, so the SurfaceView is only
     // repositioned, never resized: slide right until just [stashSliver] of
     // video stays on screen. With animations off (animator duration scale 0)
     // the move snaps and a short black cover fades out over the new spot.
@@ -213,8 +218,12 @@ fun BoxScope.PersistentExoWindow(
 
     // Hidden is an instant teardown (no surface to animate); Fullscreen keeps
     // the mini frame only for as long as the expand spring is still running.
-    val drawMiniFrame = miniTarget ||
-        (mode == ExoWindowState.Mode.Fullscreen && miniWidth < screenW)
+    val drawMiniFrame = !isPhone && (
+        miniTarget ||
+            (mode == ExoWindowState.Mode.Fullscreen && miniWidth < screenW)
+        )
+    val phoneFrame = if (isPhone) phoneMiniFrameModifier(mode, inPip) else null
+    if (isPhone) PhoneMiniCastGuard(holder = holder, state = state, session = miniSession)
 
     // See PersistentMpvWindow for the long form of the z-index rationale.
     // tl;dr: NavHost paints over PersistentExoWindow by declaration order;
@@ -222,6 +231,7 @@ fun BoxScope.PersistentExoWindow(
     // to float above the Guide's opaque background).
     val containerModifier = when {
         mode == ExoWindowState.Mode.Hidden -> Modifier.size(0.dp)
+        phoneFrame != null -> phoneFrame
         // tvOS geometry, halved from the 1080 pt canvas (mini report D2-D4):
         // 410x231 pt -> 205x115 dp, 40 pt -> 20 dp end inset, corner radius
         // 12 pt -> 6 dp, shadow blur 20 pt -> 10 dp. The top inset is the
@@ -481,6 +491,20 @@ fun BoxScope.PersistentExoWindow(
                             fpsMatch.surfaceView = sv
                             chainFramePacing(holder, player, fpsMatch.handle)
                         }
+                    } else {
+                        // Phones / tablets: same buffer pin, so the fullscreen
+                        // <-> floating mini animation (a per-frame resize) never
+                        // recreates the Surface under the codec. Landscape dims
+                        // whatever the current orientation, since the content is
+                        // landscape video; the hardware scaler maps the buffer
+                        // into the view rect at every size.
+                        (videoSurfaceView as? android.view.SurfaceView)?.let { sv ->
+                            val dm = ctx.resources.displayMetrics
+                            sv.holder.setFixedSize(
+                                maxOf(dm.widthPixels, dm.heightPixels),
+                                minOf(dm.widthPixels, dm.heightPixels),
+                            )
+                        }
                     }
                 }
             },
@@ -545,6 +569,9 @@ fun BoxScope.PersistentExoWindow(
                     .graphicsLayer { alpha = stashFadeCover }
                     .background(Color.Black),
             )
+        }
+        if (isPhone && mode == ExoWindowState.Mode.Mini && !inPip) {
+            PhoneMiniControls(holder = holder, state = state, session = miniSession)
         }
     }
 }
