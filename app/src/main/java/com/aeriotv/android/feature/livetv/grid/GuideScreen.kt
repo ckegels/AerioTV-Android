@@ -219,6 +219,11 @@ fun GuideScreen(
     var collectionPickerFor by remember { mutableStateOf<Pair<String, String>?>(null) }
     var showManageGroups by remember { mutableStateOf(false) }
     var sidebarOriginalGroup by remember { mutableStateOf<String?>(null) }
+    // Manage Groups opened from the sidebar's header button: its dismissal
+    // returns to the still-open sidebar instead of closing it.
+    var manageGroupsFromSidebar by remember { mutableStateOf(false) }
+    // Bumped when the sidebar should pull focus back onto its active row.
+    var sidebarRefocusRequest by remember { mutableStateOf(0) }
 
     val tvComfortScale = if (isTv) displayScaleLiveTv.coerceIn(0.85f, 1.75f) else 1f
     val fontScale = LocalConfiguration.current.fontScale
@@ -555,11 +560,25 @@ fun GuideScreen(
         runCatching { gridFocus.requestFocus() }
     }
     val openSidebarManageGroups: () -> Unit = {
+        manageGroupsFromSidebar = true
         showManageGroups = true
+    }
+    // Row the sidebar refocuses after Manage Groups: the committed group, or
+    // All-style fallback when that group was just hidden (Apple
+    // manageGroupsSheet onDismiss resets to fallbackGroup the same way).
+    val sidebarActiveToken = (sidebarOriginalGroup ?: state.selectedGroup).let { token ->
+        if (token in groups || token.startsWith(ChannelCollection.TOKEN_PREFIX)) token else fallbackGroup
+    }
+    LaunchedEffect(sidebarActiveToken) {
+        // Keep Back's restore target in step with a hidden-group fallback.
+        if (sidebarOriginalGroup != null && sidebarOriginalGroup != sidebarActiveToken && allGroupNames.isNotEmpty()) {
+            sidebarOriginalGroup = sidebarActiveToken
+        }
     }
     // Safety net for every non-commit close: restore, then drop the snapshot.
     LaunchedEffect(groupSidebarOpen) {
         if (groupSidebarOpen) return@LaunchedEffect
+        manageGroupsFromSidebar = false
         restoreSidebarGroup()
         sidebarOriginalGroup = null
     }
@@ -741,6 +760,8 @@ fun GuideScreen(
                 topOffset = 0.dp,
                 onPreview = previewSidebarGroup,
                 onCommit = commitSidebarGroup,
+                refocusToken = sidebarActiveToken,
+                refocusRequest = sidebarRefocusRequest,
                 onManageGroups = openSidebarManageGroups,
                 hiddenGroupCount = hiddenGroups.size,
             )
@@ -838,6 +859,8 @@ fun GuideScreen(
                 topOffset = guideTop + drawerTop,
                 onPreview = previewSidebarGroup,
                 onCommit = commitSidebarGroup,
+                refocusToken = sidebarActiveToken,
+                refocusRequest = sidebarRefocusRequest,
                 onManageGroups = openSidebarManageGroups,
                 hiddenGroupCount = hiddenGroups.size,
             )
@@ -941,9 +964,23 @@ fun GuideScreen(
         if (isTv) {
             TvGroupPicker(
                 allGroups = allGroupNames, hiddenGroups = effectiveHidden,
-                // Close the sidebar too: leaving it open with focus in the grid
-                // made a later held Left a no-op (already "open"). Logan 2026-09-02.
-                onDismiss = { showManageGroups = false; restoreSidebarGroup(); sidebarOriginalGroup = null; groupSidebarOpen = false; runCatching { gridFocus.requestFocus() } },
+                onDismiss = {
+                    showManageGroups = false
+                    if (manageGroupsFromSidebar && groupSidebarOpen) {
+                        // Apple TV parity: only the sheet closes. The sidebar
+                        // stays open with focus on the active group row; its
+                        // own preview / commit / Back rules carry on from there.
+                        manageGroupsFromSidebar = false
+                        sidebarRefocusRequest++
+                    } else {
+                        // Opened elsewhere: close the sidebar too, since leaving
+                        // it open with focus in the grid made a later held Left
+                        // a no-op (already "open"). Logan 2026-09-02.
+                        manageGroupsFromSidebar = false
+                        restoreSidebarGroup(); sidebarOriginalGroup = null; groupSidebarOpen = false
+                        runCatching { gridFocus.requestFocus() }
+                    }
+                },
                 reorderEnabled = true, sortMode = groupSortMode,
                 onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
                 // Only meaningful with the Sidebar Menu group selector.

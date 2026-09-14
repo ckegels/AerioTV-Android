@@ -118,10 +118,31 @@ internal fun GroupSidebarPanel(
      *  highlight ends with the panel instead of running the whole screen
      *  (Logan 2026-09-13, 0.5.2 regression report). */
     hostConstrainsWidth: Boolean = false,
+    /** Row [initialFocus] moves to and focuses whenever [refocusRequest] changes. */
+    refocusToken: String? = null,
+    refocusRequest: Int = 0,
 ) {
     val listState = rememberLazyListState()
     val manageFocus = remember { FocusRequester() }
-    val selectedIndex = groups.indexOf(selectedToken).coerceAtLeast(0)
+    // Once a refocus ran, [initialFocus] follows that row instead of the
+    // active one (a preview can make them differ).
+    var focusTargetToken by remember { mutableStateOf<String?>(null) }
+    val selectedIndex = groups.indexOf(focusTargetToken ?: selectedToken).coerceAtLeast(0)
+    val latestRefocusToken by androidx.compose.runtime.rememberUpdatedState(refocusToken)
+    val latestGroups by androidx.compose.runtime.rememberUpdatedState(groups)
+    LaunchedEffect(refocusRequest) {
+        if (refocusRequest == 0 || initialFocus == null) return@LaunchedEffect
+        // Let the Manage Groups sheet leave composition and the hidden-group
+        // list settle first, as the guide's grid focus retry does.
+        repeat(3) { androidx.compose.runtime.withFrameNanos { } }
+        val token = latestRefocusToken ?: return@LaunchedEffect
+        val index = latestGroups.indexOf(token)
+        if (index < 0) return@LaunchedEffect
+        focusTargetToken = token
+        runCatching { listState.scrollToItem(index) }
+        androidx.compose.runtime.withFrameNanos { }
+        runCatching { initialFocus.requestFocus() }
+    }
     LaunchedEffect(Unit) {
         // Land with the active group visible + focused, like the common
         // IPTV-client sidebars (and unlike starting at the top of 100 groups).
@@ -462,6 +483,9 @@ internal fun GuideGroupSidebarPane(
     /** GH #57: opens Manage Groups from the header button. */
     onManageGroups: (() -> Unit)? = null,
     hiddenGroupCount: Int = 0,
+    /** Row to refocus each time [refocusRequest] changes (after Manage Groups closes). */
+    refocusToken: String? = null,
+    refocusRequest: Int = 0,
 ) {
     val focus = remember { FocusRequester() }
     // The row focus currently rests on; commits use it directly so a Right
@@ -519,6 +543,8 @@ internal fun GuideGroupSidebarPane(
                 onRowFocused = { focusedToken = it },
                 onManageGroups = onManageGroups,
                 hiddenGroupCount = hiddenGroupCount,
+                refocusToken = refocusToken,
+                refocusRequest = refocusRequest,
                 trapFocus = true,
                 hostConstrainsWidth = true,
             )
