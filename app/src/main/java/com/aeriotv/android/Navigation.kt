@@ -914,7 +914,17 @@ fun AerioTVNavHost(
                         // blank-URL event channels still take the route below
                         // (PlayerScreen owns their messaging). Second OK on the
                         // same program promotes via the guide's requestResume.
-                        if (tuneStartsInMini && isTvDevice &&
+                        // Phone floating mini (iPhone parity, Logan 2026-09-14):
+                        // while the mini window is up, a channel tap anywhere
+                        // (guide, list, favorites, home rows, Keep Recent
+                        // Channels Live dialog) re-tunes the SAME window through
+                        // this block and stays minimized; tapping the mini
+                        // expands. TV keeps its Remote Control setting gate.
+                        val phoneMiniUp = !isTvDevice &&
+                            exoWindowNav.mode.value ==
+                            com.aeriotv.android.feature.player.ExoWindowState.Mode.Mini &&
+                            miniVmNav.state.value is MiniPlayerSession.State.Active
+                        if (((tuneStartsInMini && isTvDevice) || phoneMiniUp) &&
                             castDevice == null && companionTvName == null &&
                             channel.url.isNotBlank()
                         ) {
