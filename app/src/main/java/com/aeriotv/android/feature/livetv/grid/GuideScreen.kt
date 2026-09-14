@@ -246,10 +246,18 @@ fun GuideScreen(
     val fallbackGroup = com.aeriotv.android.feature.livetv.fallbackGroupToken(groups)
     // GH #80: a selection that just got hidden (including All) lands on the
     // first pill still shown.
-    LaunchedEffect(groups, state.selectedGroup) {
+    // GH #81: Favorites is synthetic, so it only enters `groups` once the
+    // favorites table has loaded. Resetting while it is still null threw away a
+    // restored Favorites selection on every cold launch, which is why the
+    // default group never stuck.
+    LaunchedEffect(groups, state.selectedGroup, favoritesOrNull == null) {
         val sel = state.selectedGroup
-        if (sel !in groups && !sel.startsWith(ChannelCollection.TOKEN_PREFIX) && allGroupNames.isNotEmpty()) {
-            viewModel.onGroupSelected(fallbackGroup)
+        val favoritesPending = sel == com.aeriotv.android.feature.playlist.PlaylistViewModel.FAVORITES_GROUP &&
+            favoritesOrNull == null
+        if (sel !in groups && !sel.startsWith(ChannelCollection.TOKEN_PREFIX) &&
+            !favoritesPending && allGroupNames.isNotEmpty()
+        ) {
+            viewModel.onGroupSelected(fallbackGroup, persist = false)
         }
     }
     // Pills: collections placed at the beginning, then the groups, then the rest.

@@ -680,6 +680,34 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * GH #81: the Live TV group the app opens on, per playlist. Stores the RAW
+     * group token exactly as the UI uses it, so synthetic groups round-trip
+     * like provider groups do: the Favorites sentinel
+     * ([PlaylistViewModel.FAVORITES_GROUP] = "__favorites__"), the All sentinel,
+     * a "collection:<id>" token, or a provider group name. Before this the
+     * selection lived only in PlaylistViewModel.UiState and every process start
+     * reverted to All, so a user who had settled on Favorites lost it on
+     * relaunch. Scoped per playlist per the per-playlist media rule: group
+     * names are playlist-specific, and the restore is validated against the
+     * active playlist's live groups.
+     *
+     * Empty string = nothing saved yet (open on All).
+     */
+    fun liveGroupToken(playlistId: String): Flow<String> =
+        store.data.map { it[keyLiveGroupToken(playlistId)] ?: "" }
+
+    suspend fun liveGroupTokenOnce(playlistId: String): String =
+        if (playlistId.isBlank()) "" else store.data.first()[keyLiveGroupToken(playlistId)] ?: ""
+
+    suspend fun setLiveGroupToken(playlistId: String, token: String) {
+        if (playlistId.isBlank()) return
+        store.edit { prefs ->
+            if (token.isBlank()) prefs.remove(keyLiveGroupToken(playlistId))
+            else prefs[keyLiveGroupToken(playlistId)] = token
+        }
+    }
+
+    /**
      * Hidden VOD group titles, separately per Movies and Series. Same storage
      * shape as [hiddenGroups] above (newline-delimited); same semantics
      * (empty = nothing hidden, all visible). Mirrors iOS MoviesView's
@@ -1598,6 +1626,9 @@ class AppPreferences @Inject constructor(
         val KEY_RECENT_CHANNEL_IDS = stringPreferencesKey("recent_channel_ids")
         /** Guide rebuild: per-playlist identity fingerprint the EPG cache was built for. */
         private fun keyEpgIdentityHash(playlistId: String) = stringPreferencesKey("epg_identity_hash_$playlistId")
+
+        /** GH #81: per-playlist Live TV group token (see [liveGroupToken]). */
+        private fun keyLiveGroupToken(playlistId: String) = stringPreferencesKey("live_group_token_$playlistId")
         private fun keyFeedValidators(url: String): androidx.datastore.preferences.core.Preferences.Key<String> {
             val d = java.security.MessageDigest.getInstance("SHA-1").digest(url.toByteArray())
             return stringPreferencesKey("feed_validators_" + d.joinToString("") { "%02x".format(it) })

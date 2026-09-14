@@ -423,6 +423,13 @@ class PlaylistViewModel @Inject constructor(
                     isLoading = !hasChannelCache,
                 )
             }
+            // GH #81: bring back the group this playlist was left on (Favorites
+            // included) before the guide first composes, so the launch paint is
+            // already on the user's default group.
+            restoreSelectedGroup(
+                saved.id,
+                cachedChannels.asSequence().map { it.groupTitle }.filter { it.isNotBlank() }.distinct().toList(),
+            )
             if (hasChannelCache) {
                 Log.i(TAG, "bootstrap: painted ${cachedChannels.size} cached channels")
                 AppLaunchTrace.noteChannels()
@@ -525,8 +532,37 @@ class PlaylistViewModel @Inject constructor(
     fun onSearchQueryChange(value: String) {
         _state.update { it.copy(searchQuery = value) }
     }
-    fun onGroupSelected(group: String) {
+    /**
+     * @param persist false for automatic corrections (a stranded selection
+     *   landing on the fallback pill) so a transient empty group list cannot
+     *   overwrite the user's saved default group. GH #81.
+     */
+    @JvmOverloads
+    fun onGroupSelected(group: String, persist: Boolean = true) {
         _state.update { it.copy(selectedGroup = group) }
+        if (!persist) return
+        // GH #81: the selection is the app's default group for this playlist and
+        // has to survive the process. The RAW token is stored, so the Favorites
+        // sentinel round-trips like a provider group name instead of being
+        // rebuilt by name at launch (which is what dropped it).
+        val playlistId = _state.value.playlist?.id
+        if (!playlistId.isNullOrBlank()) {
+            viewModelScope.launch { appPreferences.setLiveGroupToken(playlistId, group) }
+        }
+    }
+
+    /**
+     * GH #81: restore the saved Live TV group for [playlistId]. Called once the
+     * playlist is active (bootstrap and playlist switch). [knownGroups] is the
+     * live group-name list when it is already known, so a group that no longer
+     * exists in this playlist falls back to All instead of filtering the guide
+     * down to nothing.
+     */
+    private suspend fun restoreSelectedGroup(playlistId: String, knownGroups: Collection<String>) {
+        val saved = appPreferences.liveGroupTokenOnce(playlistId)
+        val restored = com.aeriotv.android.feature.livetv.restoredGroupToken(saved, knownGroups)
+            ?: ALL_GROUPS
+        _state.update { if (it.selectedGroup == restored) it else it.copy(selectedGroup = restored) }
     }
 
     fun onSortModeChange(mode: SortMode) {
@@ -1744,24 +1780,25 @@ class PlaylistViewModel @Inject constructor(
             repository.switchActive(playlistId).fold(
                 onSuccess = { (entity, channels) ->
                     _state.update {
-                        // A group selected under the old playlist may not exist in
-                        // the new one; keeping it would filter the guide/list down
-                        // to nothing with no visible reason. Reset to All when the
-                        // selection has no match. Collection tokens are exempt:
-                        // collections are cross-playlist and GuideScreen already
-                        // guards deleted ones.
-                        val keepGroup = it.selectedGroup == ALL_GROUPS ||
-                            it.selectedGroup.startsWith(ChannelCollection.TOKEN_PREFIX) ||
-                            channels.any { ch -> ch.groupTitle.equals(it.selectedGroup, ignoreCase = true) }
                         it.copy(
                             phase = Phase.ChannelsReady,
                             playlist = entity,
                             channels = channels,
-                            selectedGroup = if (keepGroup) it.selectedGroup else ALL_GROUPS,
                             isLoading = false,
                             error = if (channels.isEmpty()) "No channels found." else null,
                         )
                     }
+                    // GH #81 + per-playlist scoping: group selection belongs to
+                    // the playlist, so a switch loads the NEW playlist's saved
+                    // group rather than carrying the old one over. A saved group
+                    // that no longer exists here falls back to All (keeping it
+                    // would filter the guide down to nothing with no visible
+                    // reason); synthetic tokens (Favorites, All, collections)
+                    // always survive.
+                    restoreSelectedGroup(
+                        entity.id,
+                        channels.asSequence().map { ch -> ch.groupTitle }.filter { g -> g.isNotBlank() }.distinct().toList(),
+                    )
                     // Maintainer requirement: every playlist switch auto-runs the
                     // full "Refresh Everything" nuclear reset on the now-active
                     // playlist. refreshEverything() purges + force-reloads the

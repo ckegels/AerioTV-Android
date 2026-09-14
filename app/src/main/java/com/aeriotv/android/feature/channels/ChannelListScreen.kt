@@ -168,7 +168,8 @@ fun ChannelListScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val favoritesVm: FavoritesViewModel = hiltViewModel()
-    val favoritesList = favoritesVm.all.collectAsStateWithLifecycle().value ?: emptyList()
+    val favoritesOrNull = favoritesVm.all.collectAsStateWithLifecycle().value
+    val favoritesList = favoritesOrNull ?: emptyList()
     val favoriteIds = remember(favoritesList) { favoritesList.map { it.channelId }.toSet() }
     val settingsVm: SettingsViewModel = hiltViewModel()
     val palette by settingsVm.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
@@ -270,10 +271,18 @@ fun ChannelListScreen(
         }
     }
     // GH #80: All can be hidden; a stranded selection lands on the first pill.
-    LaunchedEffect(groups, state.selectedGroup) {
+    // GH #81: hold the reset while the favorites table is still loading, or a
+    // restored Favorites selection is discarded before it can ever be shown.
+    LaunchedEffect(groups, state.selectedGroup, favoritesOrNull == null) {
         val sel = state.selectedGroup
-        if (sel !in groups && !sel.startsWith(ChannelCollection.TOKEN_PREFIX) && allGroupsRaw.isNotEmpty()) {
-            viewModel.onGroupSelected(com.aeriotv.android.feature.livetv.fallbackGroupToken(groups))
+        val favoritesPending = sel == PlaylistViewModel.FAVORITES_GROUP && favoritesOrNull == null
+        if (sel !in groups && !sel.startsWith(ChannelCollection.TOKEN_PREFIX) &&
+            !favoritesPending && allGroupsRaw.isNotEmpty()
+        ) {
+            viewModel.onGroupSelected(
+                com.aeriotv.android.feature.livetv.fallbackGroupToken(groups),
+                persist = false,
+            )
         }
     }
 
