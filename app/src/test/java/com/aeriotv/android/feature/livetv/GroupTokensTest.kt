@@ -184,4 +184,14 @@ class GroupTokensTest {
             launchGroupToken(PlaylistViewModel.FAVORITES_GROUP, "Sports", groups),
         )
     }
+
+    @Test
+    fun fallbackPrefersAllOverAPinnedFavoritesToken() {
+        val fav = PlaylistViewModel.FAVORITES_GROUP
+        val all = PlaylistViewModel.ALL_GROUPS
+        assertEquals(all, fallbackGroupToken(listOf(fav, all, "News")))
+        assertEquals("News", fallbackGroupToken(listOf("News", "Sports")))
+        assertEquals(fav, fallbackGroupToken(listOf(fav, "News")))
+        assertEquals(all, fallbackGroupToken(emptyList()))
+    }
 }

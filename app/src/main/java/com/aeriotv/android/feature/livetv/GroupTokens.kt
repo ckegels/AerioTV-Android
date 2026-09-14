@@ -20,9 +20,15 @@ fun groupTokens(visibleGroups: List<String>, hiddenGroups: Set<String>): List<St
     }
 }
 
-/** Where a reset lands: All when it is shown, else the first visible group. */
-fun fallbackGroupToken(tokens: List<String>): String =
-    tokens.firstOrNull() ?: PlaylistViewModel.ALL_GROUPS
+/**
+ * Where a reset lands: All when it is shown, else the first visible group.
+ * Not simply the first token: Favorites is pinned ahead of All, so a reset
+ * would otherwise land on Favorites whenever the user has any.
+ */
+fun fallbackGroupToken(tokens: List<String>): String = when {
+    PlaylistViewModel.ALL_GROUPS in tokens -> PlaylistViewModel.ALL_GROUPS
+    else -> tokens.firstOrNull() ?: PlaylistViewModel.ALL_GROUPS
+}
 
 /**
  * GH #81: is [token] a synthetic group rather than a provider group name?

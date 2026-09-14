@@ -540,9 +540,8 @@ fun GuideScreen(
             GuideGridState.BackStep.RESTORED_NOW_AND_TOP, GuideGridState.BackStep.TOP -> Unit
             GuideGridState.BackStep.NONE -> {
                 // Logan 2026-09-01: Back at the top of the guide must never close
-                // the app. Last rung resets a filtered group to All; at All it
-                // is a no-op (consumed) so the app stays up.
-                if (state.selectedGroup != fallbackGroup) viewModel.onGroupSelected(fallbackGroup)
+                // the app. At now and the top row it is a consumed no-op and the
+                // group stays as picked, matching Apple TV's Menu (now + top only).
             }
         }
     }
