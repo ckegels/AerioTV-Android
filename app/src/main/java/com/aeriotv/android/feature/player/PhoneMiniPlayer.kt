@@ -103,9 +103,9 @@ private val MINI_GAP = 8.dp
 private val MINI_RADIUS = 10.dp
 
 /**
- * Swipe DOWN starting in the top strip of the LIVE touch player dispatches a
- * system Back, which minimizes it to the floating mini. Catch-up and VOD do not
- * apply it until they can minimize (their Back closes the player).
+ * Swipe DOWN starting in the top strip of a touch player dispatches a system
+ * Back, which minimizes it to the floating mini: the live player, and the phone
+ * on-demand player (movies, episodes, recordings, catch-up; PhoneVodMini.kt).
  * Once such a drag passes a (half) touch slop its moves are consumed, which
  * cancels the channel-flip swipe and the tap-to-toggle-chrome layers the
  * modifier is chained after; a drag that starts below the strip is never
@@ -275,7 +275,14 @@ fun BoxScope.phoneMiniFrameModifier(
     var lastMode by remember { mutableStateOf(mode) }
     LaunchedEffect(mode) {
         if (lastMode == ExoWindowState.Mode.Mini && mode == ExoWindowState.Mode.Hidden) {
-            PipState.videoPlaybackActive.value = false
+            // An on-demand expand hides the window under the fullscreen VOD
+            // screen, which owns the flag now; leave it armed.
+            if (!PhoneVodMini.consumeHideHandoff()) {
+                PipState.videoPlaybackActive.value = false
+                // The window went away under an on-demand mini (PiP X, a
+                // teardown): stop it, saving the position.
+                PhoneVodMini.close()
+            }
         }
         lastMode = mode
     }
@@ -379,6 +386,7 @@ fun PhoneMiniCastGuard(
         companionConn is com.aeriotv.android.core.cast.companion.CompanionRemoteController.Conn.Connected
     LaunchedEffect(remoteActive, mode) {
         if (remoteActive && mode == ExoWindowState.Mode.Mini) {
+            PhoneVodMini.close()
             session.dismiss()
             state.hide()
             holder.stop()
@@ -403,10 +411,16 @@ fun BoxScope.PhoneMiniControls(
             .matchParentSize()
             .pointerInput(Unit) {
                 detectTapGestures(onTap = {
-                    // Navigation's resumeRequests collector re-pushes PLAYER for
-                    // the session channel; its mount flips the window Fullscreen,
-                    // so the frame springs back out of the corner.
-                    session.requestResume()
+                    if (PhoneVodMini.isActive) {
+                        // On-demand: Navigation's expandRequests collector
+                        // re-pushes the player route, which adopts the instance.
+                        PhoneVodMini.expand()
+                    } else {
+                        // Navigation's resumeRequests collector re-pushes PLAYER for
+                        // the session channel; its mount flips the window Fullscreen,
+                        // so the frame springs back out of the corner.
+                        session.requestResume()
+                    }
                 })
             },
     )
@@ -419,6 +433,9 @@ fun BoxScope.PhoneMiniControls(
             .background(Color.Black.copy(alpha = 0.55f))
             .pointerInput(Unit) {
                 detectTapGestures(onTap = {
+                    // On-demand: save the resume position and release first,
+                    // exactly what the player's own close does.
+                    PhoneVodMini.close()
                     // Same teardown as the fullscreen chrome's X.
                     session.dismiss()
                     state.hide()

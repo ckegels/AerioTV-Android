@@ -189,6 +189,9 @@ private fun tearDownLiveForVod(navController: androidx.navigation.NavController)
             context.applicationContext,
             MainScaffoldEntryPoint::class.java,
         )
+        // Phone: new on-demand content replaces an on-demand mini (saved and
+        // released first). No-op on TV and for the mini's own expand.
+        com.aeriotv.android.feature.player.PhoneVodMini.closeForNewContent()
         vm.dismiss()
         entry.exoWindowState().hide()
         entry.exoPlayerHolder().stop()
@@ -920,14 +923,20 @@ fun AerioTVNavHost(
                         // Channels Live dialog) re-tunes the SAME window through
                         // this block and stays minimized; tapping the mini
                         // expands. TV keeps its Remote Control setting gate.
+                        // An on-demand mini (PhoneVodMini.kt) counts too: the
+                        // channel replaces it in the same window.
                         val phoneMiniUp = !isTvDevice &&
                             exoWindowNav.mode.value ==
                             com.aeriotv.android.feature.player.ExoWindowState.Mode.Mini &&
-                            miniVmNav.state.value is MiniPlayerSession.State.Active
+                            (miniVmNav.state.value is MiniPlayerSession.State.Active ||
+                                com.aeriotv.android.feature.player.PhoneVodMini.isActive)
                         if (((tuneStartsInMini && isTvDevice) || phoneMiniUp) &&
                             castDevice == null && companionTvName == null &&
                             channel.url.isNotBlank()
                         ) {
+                            if (!isTvDevice) {
+                                com.aeriotv.android.feature.player.PhoneVodMini.close()
+                            }
                             val pl = state.playlist
                             val key = pl?.apiKey?.takeIf { it.isNotBlank() }
                             val isDispatcharr =
@@ -1381,11 +1390,17 @@ fun AerioTVNavHost(
                     .flatten()
                     .firstOrNull { it.uuid == episodeUuid }
 
+                // Phone mini expand reuses the URL already playing (no new
+                // session); null everywhere else, TV included.
                 var resolved by remember(episodeUuid) {
-                    mutableStateOf<OnDemandViewModel.ResolvedVod?>(null)
+                    mutableStateOf<OnDemandViewModel.ResolvedVod?>(
+                        com.aeriotv.android.feature.player.PhoneVodMini.expandUrlFor(episodeUuid)
+                            ?.let { OnDemandViewModel.ResolvedVod(it, authSafe = true) },
+                    )
                 }
                 var resolveError by remember(episodeUuid) { mutableStateOf<String?>(null) }
                 LaunchedEffect(episodeUuid) {
+                    if (resolved != null) return@LaunchedEffect
                     onDemandVm.resolveEpisodeUrl(episodeUuid, episode?.firstStreamId).fold(
                         onSuccess = { resolved = it },
                         onFailure = { resolveError = it.message ?: it::class.simpleName },
@@ -1461,6 +1476,23 @@ fun AerioTVNavHost(
                     )
                 }
 
+                // Phone: Back / top swipe minimize to the floating mini.
+                val epMiniToken = remember { com.aeriotv.android.feature.player.PhoneVodMiniRouteToken() }
+                com.aeriotv.android.feature.player.PhoneVodMiniRoute(
+                    info = resolved?.url?.let { url ->
+                        com.aeriotv.android.feature.player.PhoneVodMini.Info(
+                            key = url,
+                            videoId = episodeUuid,
+                            title = episode?.displayName ?: "Episode",
+                            posterUrl = parentSeriesPoster,
+                            meta = epProgressMeta,
+                            isDvr = false,
+                            reopenRoute = Routes.vodEpisodePlayer(episodeUuid, fromStart = false),
+                        )
+                    },
+                    token = epMiniToken,
+                    onPop = { navController.popBackStack() },
+                )
                 VODPlayerScreen(
                     streamUrl = resolved?.url.orEmpty(),
                     title = episode?.displayName ?: "Episode",
@@ -1469,7 +1501,7 @@ fun AerioTVNavHost(
                     // Audit #53/#38: never replay the API key to a session URL
                     // that resolved OFF the server's origin.
                     httpHeaders = if (resolved?.authSafe == false) emptyMap() else headers,
-                    onClose = { navController.popBackStack() },
+                    onClose = { if (!epMiniToken.minimized) navController.popBackStack() },
                     loadingMessage = resolveError ?: if (resolved == null) "Loading…" else null,
                     videoId = episodeUuid,
                     posterUrl = parentSeriesPoster,
@@ -1655,17 +1687,39 @@ fun AerioTVNavHost(
                     } else emptyMap()
                 }
 
+                // See the episode route: a phone mini expand reuses its URL.
                 var resolved by remember(movieUuid) {
-                    mutableStateOf<OnDemandViewModel.ResolvedVod?>(null)
+                    mutableStateOf<OnDemandViewModel.ResolvedVod?>(
+                        com.aeriotv.android.feature.player.PhoneVodMini.expandUrlFor(movieUuid)
+                            ?.let { OnDemandViewModel.ResolvedVod(it, authSafe = true) },
+                    )
                 }
                 var resolveError by remember(movieUuid) { mutableStateOf<String?>(null) }
                 LaunchedEffect(movieUuid) {
+                    if (resolved != null) return@LaunchedEffect
                     onDemandVm.resolveMovieUrl(movieUuid).fold(
                         onSuccess = { resolved = it },
                         onFailure = { resolveError = it.message ?: it::class.simpleName },
                     )
                 }
 
+                // Phone: Back / top swipe minimize to the floating mini.
+                val movieMiniToken = remember { com.aeriotv.android.feature.player.PhoneVodMiniRouteToken() }
+                com.aeriotv.android.feature.player.PhoneVodMiniRoute(
+                    info = resolved?.url?.let { url ->
+                        com.aeriotv.android.feature.player.PhoneVodMini.Info(
+                            key = url,
+                            videoId = movieUuid,
+                            title = movie?.displayName ?: "On Demand",
+                            posterUrl = movie?.posterUrl,
+                            meta = null,
+                            isDvr = false,
+                            reopenRoute = Routes.vodPlayer(movieUuid, fromStart = false),
+                        )
+                    },
+                    token = movieMiniToken,
+                    onPop = { navController.popBackStack() },
+                )
                 VODPlayerScreen(
                     streamUrl = resolved?.url.orEmpty(),
                     title = movie?.displayName ?: "On Demand",
@@ -1673,7 +1727,7 @@ fun AerioTVNavHost(
                     // Audit #53/#38: never replay the API key to a session URL
                     // that resolved OFF the server's origin.
                     httpHeaders = if (resolved?.authSafe == false) emptyMap() else headers,
-                    onClose = { navController.popBackStack() },
+                    onClose = { if (!movieMiniToken.minimized) navController.popBackStack() },
                     loadingMessage = resolveError ?: if (resolved == null) "Loading…" else null,
                     videoId = movieUuid,
                     posterUrl = movie?.posterUrl,
@@ -1739,6 +1793,8 @@ fun AerioTVNavHost(
                         rpContext.applicationContext,
                         MainScaffoldEntryPoint::class.java,
                     )
+                    // See tearDownLiveForVod: phone on-demand mini replaced.
+                    com.aeriotv.android.feature.player.PhoneVodMini.closeForNewContent()
                     rpMiniPlayerVm.dismiss()
                     rpEntry.exoWindowState().hide()
                     rpEntry.exoPlayerHolder().stop()
@@ -1796,6 +1852,30 @@ fun AerioTVNavHost(
                         }
                     }
                 } else null
+                val recProgressMeta = remember { com.aeriotv.android.feature.player.VodProgressMeta("recording") }
+                // Phone: Back / top swipe minimize to the floating mini. The
+                // reopen route drops fromStart / autoResume: an expand adopts the
+                // playing instance, so no start or resume handling may run.
+                val recMiniToken = remember { com.aeriotv.android.feature.player.PhoneVodMiniRouteToken() }
+                com.aeriotv.android.feature.player.PhoneVodMiniRoute(
+                    info = remember(playbackUrl, title) {
+                        com.aeriotv.android.feature.player.PhoneVodMini.Info(
+                            key = playbackUrl,
+                            videoId = recordingProgressId(playbackUrl, recId),
+                            title = title.ifBlank { "Recording" },
+                            posterUrl = null,
+                            meta = recProgressMeta,
+                            isDvr = isDvr,
+                            reopenRoute = Routes.recordingPlayer(
+                                playbackUrl, title, isDvr = isDvr,
+                                recEnd = recEnd, recChannelId = recChannelId, recId = recId,
+                                csStart = csStart, csEnd = csEnd, csTz = csTz, csUuid = csUuid,
+                            ),
+                        )
+                    },
+                    token = recMiniToken,
+                    onPop = { navController.popBackStack() },
+                )
                 VODPlayerScreen(
                     streamUrl = playbackUrl,
                     title = title.ifBlank { "Recording" },
@@ -1813,7 +1893,7 @@ fun AerioTVNavHost(
                     onReportCatchupPosition = { url, secs, paused ->
                         playlistVm.reportCatchupPosition(url, secs, paused)
                     },
-                    onClose = { navController.popBackStack() },
+                    onClose = { if (!recMiniToken.minimized) navController.popBackStack() },
                     loadingMessage = null,
                     // STABLE progress identity (2026-08-28, iOS parity): server
                     // recordings key as dvr-<remoteID> (derived from the
@@ -1827,7 +1907,7 @@ fun AerioTVNavHost(
                     // /file/ shapes, with or without the /api/channels
                     // prefix.
                     videoId = recordingProgressId(playbackUrl, recId),
-                    progressMeta = remember { com.aeriotv.android.feature.player.VodProgressMeta("recording") },
+                    progressMeta = recProgressMeta,
                     posterUrl = null,
                     isDvr = isDvr,
                     startAtLiveEdge = isDvr && !fromStart && !autoResume,
@@ -1901,6 +1981,15 @@ fun AerioTVNavHost(
         // Double-press D-pad Select event - MainActivity emits into the
         // session's resumeRequests flow; this collects and re-pushes the
         // PLAYER route. Belongs at the NavController scope, hence here.
+        // Phone on-demand mini tap (PhoneVodMini.kt): re-push the player route
+        // that minimized; its VODPlayerScreen adopts the playing instance.
+        // Never emits on TV.
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            com.aeriotv.android.feature.player.PhoneVodMini.expandRequests.collect { route ->
+                runCatching { navController.navigate(route) { launchSingleTop = true } }
+                    .onFailure { android.util.Log.e("PhoneVodMini", "expand navigate threw", it) }
+            }
+        }
         androidx.compose.runtime.LaunchedEffect(Unit) {
             miniPlayerVm.session.resumeRequests.collect { channel ->
                 android.util.Log.i(

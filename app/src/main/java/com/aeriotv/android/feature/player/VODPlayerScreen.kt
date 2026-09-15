@@ -185,7 +185,7 @@ data class VodProgressMeta(
  * outside VODPlayerScreen's verifier-straining body. Season / episode ride
  * along only for an episode row, so a movie save never stamps 0 / 0.
  */
-private fun saveVodProgress(
+internal fun saveVodProgress(
     watchVm: WatchProgressViewModel,
     videoId: String,
     title: String,
@@ -456,7 +456,7 @@ fun VODPlayerScreen(
     // seek re-mint replaces it (new session_id); revoke-on-close and the
     // re-mint's base-host derivation both read this, never the original
     // streamUrl param.
-    var currentPlaybackUrl by remember { mutableStateOf(streamUrl) }
+    var currentPlaybackUrl by remember { mutableStateOf(PhoneVodMini.restoreUrl(streamUrl)) }
     // Task #149: native re-mints are serialized. While one mint is in
     // flight, later seek targets coalesce here and only the LATEST runs
     // when it lands (rapid +/-30s presses used to race out of order and
@@ -472,7 +472,7 @@ fun VODPlayerScreen(
     var errorReconnecting by remember { mutableStateOf(false) }
     // Programme-relative start of the currently tuned timeshift window (0 on
     // first tune; the seek target after each re-tune).
-    var catchupOffsetMs by remember { mutableLongStateOf(0L) }
+    var catchupOffsetMs by remember { mutableLongStateOf(PhoneVodMini.restoreCatchupOffset(streamUrl)) }
 
     // ── TV transport (task #44) ──────────────────────────────────────────
     // D-pad / media-key scrub preview. Non-null while the user is stepping
@@ -491,8 +491,8 @@ fun VODPlayerScreen(
     // the completed /file/ item - the live-edge clamps and growing-
     // window duration logic must stop applying to what is now a fixed
     // file. One-shot migration; the end prompt is one-shot per session.
-    var dvrActive by remember { mutableStateOf(isDvr) }
-    var dvrMigrated by remember { mutableStateOf(false) }
+    var dvrActive by remember { mutableStateOf(PhoneVodMini.restoreDvrActive(streamUrl, isDvr)) }
+    var dvrMigrated by remember { mutableStateOf(PhoneVodMini.restoreDvrMigrated(streamUrl)) }
     var dvrEndPromptVisible by remember { mutableStateOf(false) }
     var dvrEndPromptDismissed by remember { mutableStateOf(false) }
     // iOS PlayerView.scrubStep acceleration: consecutive same-direction
@@ -858,7 +858,7 @@ fun VODPlayerScreen(
         // recording has no detail screen, so the player applies it.
         val finishedRecording = progressMeta?.vodType == "recording" &&
             existing != null && existing.isFinished
-        savedPositionMs = if (finishedRecording) -1L else existing?.positionMs ?: -1L
+        savedPositionMs = PhoneVodMini.resumePosition(videoId, if (finishedRecording) -1L else existing?.positionMs ?: -1L)
     }
 
     // Black player background -- not the navy app-background -- so the
@@ -1138,12 +1138,16 @@ fun VODPlayerScreen(
                 val mediaSourceFactory = DefaultMediaSourceFactory(ctx)
                     .setDataSourceFactory(tracedFactory)
 
-                val player = ExoPlayer.Builder(ctx)
-                    .setRenderersFactory(renderersFactory)
-                    .setLoadControl(loadControl)
-                    .setMediaSourceFactory(mediaSourceFactory)
-                    .setHandleAudioBecomingNoisy(true)
-                    .build()
+                // Phone mini expand (PhoneVodMini.kt): adopt the instance that
+                // kept playing in the floating mini instead of building one.
+                val player = (
+                    PhoneVodMini.adopt(streamUrl) ?: ExoPlayer.Builder(ctx)
+                        .setRenderersFactory(renderersFactory)
+                        .setLoadControl(loadControl)
+                        .setMediaSourceFactory(mediaSourceFactory)
+                        .setHandleAudioBecomingNoisy(true)
+                        .build()
+                    )
                     .apply {
                         // Always-on tune/stall/feed tracer (tag AerioTrace).
                         addAnalyticsListener(tracer.analyticsListener)
@@ -1265,7 +1269,7 @@ fun VODPlayerScreen(
                                 }
                             }
                         })
-                        playWhenReady = true
+                        playWhenReady = PhoneVodMini.playWhenReadyFor(this)
                         // "Watch from Beginning" on an in-progress recording
                         // pins the START POSITION at prepare time rather than
                         // seeking afterwards. Media3 resolves a live HLS to its
@@ -1296,7 +1300,9 @@ fun VODPlayerScreen(
                         // Leaving min/max playback speed unset also pins the
                         // rate at 1.0x, so media3 never speeds up trying to
                         // chase the live edge.
-                        if (isDvr && !startAtLiveEdge) {
+                        if (PhoneVodMini.isAdopted(this)) {
+                            // Already tuned and positioned; prepare() below is a no-op.
+                        } else if (isDvr && !startAtLiveEdge) {
                             val fromStartItem = MediaItem.Builder()
                                 .setUri(streamUrl)
                                 .setLiveConfiguration(
@@ -1334,15 +1340,13 @@ fun VODPlayerScreen(
                 view.resizeMode = videoScaleResizeMode(videoScaleMode, inPip)
             },
             onRelease = { view ->
-                Log.i(TAG, "Releasing VOD ExoPlayer")
-                // Task #149: free the native catch-up session's provider
-                // slot ahead of its idle TTL. Best-effort, fire-and-forget.
-                if (isNativeCatchup) onRevokeCatchup(currentPlaybackUrl)
-                tracer.tracedPlayer = null
-                exoPlayer?.removeAnalyticsListener(tracer.analyticsListener)
-                exoPlayer?.release()
+                // Releases (with the task #149 native catch-up revoke), or keeps
+                // the instance when it was handed to the phone mini.
+                PhoneVodMini.releaseOrRetain(
+                    exoPlayer, tracer, view, catchupOffsetMs,
+                    isNativeCatchup, currentPlaybackUrl, onRevokeCatchup,
+                )
                 exoPlayer = null
-                view.player = null
             },
         )
 
@@ -1639,10 +1643,11 @@ fun VODPlayerScreen(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                 ) { chromeVisible = !chromeVisible }
-                // Pinch to switch Fit <-> Fill on touch devices. Same modifier
-                // chain as the tap handler: a sibling overlay Box would win hit
-                // testing and swallow every tap.
-                .videoScalePinch(settingsVm, enabled = !isTvForm && !inPip),
+                // Pinch to switch Fit <-> Fill on touch devices, plus the phone
+                // top-strip swipe-down to the mini (PhoneVodMini.kt). Same
+                // modifier chain as the tap handler: a sibling overlay Box would
+                // win hit testing and swallow every tap.
+                .vodTapLayerGestures(settingsVm, enabled = !isTvForm && !inPip),
         )
 
         // TV: park D-pad focus on the playback surface (mount + every chrome

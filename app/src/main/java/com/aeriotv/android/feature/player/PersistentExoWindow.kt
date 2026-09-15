@@ -103,6 +103,11 @@ fun BoxScope.PersistentExoWindow(
     // everything below that reads MiniPlayerChrome is the TV geometry.
     val isPhone = remember(context) { !context.isTelevision() }
     val miniSession = hiltViewModel<com.aeriotv.android.feature.miniplayer.MiniPlayerViewModel>().session
+    // Phone on-demand mini (PhoneVodMini.kt): while a movie / episode /
+    // recording / catch-up is minimized, this PlayerView shows THAT screen's
+    // ExoPlayer instead of the live holder's. Never read on TV.
+    val vodMiniPlayer = if (isPhone) PhoneVodMini.session.collectAsStateWithLifecycle().value?.player else null
+    val bindTarget = vodMiniPlayer ?: boundPlayer
 
     // Minimize / expand is ONE spring on size AND position (tvOS
     // .spring(response: 0.35), HomeView.swift:4920), not a hard cut. The
@@ -224,6 +229,7 @@ fun BoxScope.PersistentExoWindow(
         )
     val phoneFrame = if (isPhone) phoneMiniFrameModifier(mode, inPip) else null
     if (isPhone) PhoneMiniCastGuard(holder = holder, state = state, session = miniSession)
+    if (isPhone) PhoneVodMiniHost(state = state, mode = mode)
 
     // See PersistentMpvWindow for the long form of the z-index rationale.
     // tl;dr: NavHost paints over PersistentExoWindow by declaration order;
@@ -518,7 +524,7 @@ fun BoxScope.PersistentExoWindow(
                 // instance; without this, a recreated player renders into a
                 // placeholder surface: audio with a black screen until the
                 // app process restarts (GitHub report).
-                val current = boundPlayer
+                val current = bindTarget
                 if (current != null && view.player !== current) {
                     Log.i(TAG, "PersistentExoWindow: rebinding PlayerView to recreated player")
                     view.player = current
