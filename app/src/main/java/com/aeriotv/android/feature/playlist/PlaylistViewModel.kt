@@ -1918,6 +1918,13 @@ class PlaylistViewModel @Inject constructor(
     suspend fun loadCurrentStreamUrl(channelUuid: String): String? =
         runCatching { repository.currentDispatcharrStreamUrl(channelUuid) }.getOrNull()
 
+    /** Clean-end session check for the player's "Stream ended" card. */
+    suspend fun verifyStreamEndedByLimit(
+        channelUuid: String?,
+        ourConnectedAtEpochSec: Double,
+    ): com.aeriotv.android.core.playback.StreamEndVerifier.Verdict =
+        repository.verifyStreamEndedByLimit(channelUuid, ourConnectedAtEpochSec)
+
     /** LAN/WAN verdict-flip signal for the player's mid-stream re-tune failover. */
     val lanVerdictFlips: kotlinx.coroutines.flow.SharedFlow<String> =
         repository.lanVerdictFlips

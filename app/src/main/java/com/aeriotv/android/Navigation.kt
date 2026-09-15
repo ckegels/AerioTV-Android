@@ -382,6 +382,20 @@ fun AerioTVNavHost(
                 val state by vm.state.collectAsStateWithLifecycle()
                 val context = androidx.compose.ui.platform.LocalContext.current
 
+                // Clean-end session check (StreamEndVerifier), installed once
+                // for the whole app and never cleared: the player, the mini
+                // player, multiview tiles and the cast ingest all consult it
+                // after a live stream ends cleanly, and none of them has a
+                // Dispatcharr client of its own. The graph-scoped view model
+                // outlives every one of those surfaces; if it ever does not,
+                // the call fails and the caller keeps reconnecting.
+                LaunchedEffect(vm) {
+                    com.aeriotv.android.core.playback.StreamEndVerifier.hook =
+                        { channelUuid, connectedAt ->
+                            vm.verifyStreamEndedByLimit(channelUuid, connectedAt)
+                        }
+                }
+
                 // Debug-only auto-load. --es url + --es apikey => Dispatcharr API-key flow.
                 // --es url + optional --es epg => M3U flow. Gated in MainActivity via
                 // BuildConfig.DEBUG so release builds always ignore intent extras.

@@ -70,7 +70,7 @@ fun ConnectionLimitCard(
         ) {
             Text("Retry")
         }
-        if (!compact) {
+        if (!compact && notice.kind != DispatcharrConnectionLimit.Kind.STREAM_ENDED) {
             Text(
                 text = "Close another stream, then press Retry.",
                 style = MaterialTheme.typography.bodySmall,

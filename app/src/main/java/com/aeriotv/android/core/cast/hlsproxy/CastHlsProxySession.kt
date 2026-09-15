@@ -303,6 +303,15 @@ class CastHlsProxySession @Inject constructor(
         ingestJob = ingestScope.launch {
             var consecutiveFailures = 0
             var connected = false
+            // Clean end (Dispatcharr ended this client, e.g. terminate on limit
+            // exceeded): keep reconnecting on the shared escalating backoff
+            // (now, 5 s, 15 s, 30 s, then 60 s) instead of the tight failure
+            // backoff, which used to reset on every successful reconnect and so
+            // bounced against another device forever. The ingest only gives up
+            // when StreamEndVerifier proves the account is at its stream limit.
+            var cleanEndStreak = 0
+            var cleanEndReconnectAtMs = 0L
+            var connectedAtSec = System.currentTimeMillis() / 1000.0
             while (currentCoroutineContext().isActive) {
                 // Fresh remuxer per connection: a TS join lands mid-GOP
                 // with an unknown clock phase, so the remuxer realigns
@@ -424,6 +433,7 @@ class CastHlsProxySession @Inject constructor(
                         audioCodec = name
                     }
                 }, log = { msg -> debugLog(context, TAG, msg) }, allowAc3Passthrough = allowAc3Passthrough)
+                var endedCleanly = false
                 try {
                     val req = Request.Builder().url(url).apply {
                         headers.forEach { (k, v) -> header(k, v) }
@@ -463,10 +473,14 @@ class CastHlsProxySession @Inject constructor(
                         }
                         connected = true
                         consecutiveFailures = 0
+                        connectedAtSec = System.currentTimeMillis() / 1000.0
                         val buf = ByteArray(64 * 1024)
                         while (currentCoroutineContext().isActive) {
                             val n = src.read(buf)
-                            if (n < 0) break
+                            if (n < 0) {
+                                endedCleanly = true
+                                break
+                            }
                             if (n > 0) remuxer.feed(buf, 0, n)
                         }
                     }
@@ -489,6 +503,47 @@ class CastHlsProxySession @Inject constructor(
                     remuxer.release()
                 }
                 if (!currentCoroutineContext().isActive) break
+                if (endedCleanly) {
+                    val verifier = com.aeriotv.android.core.playback.StreamEndVerifier
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val since = now - cleanEndReconnectAtMs
+                    cleanEndStreak =
+                        if (cleanEndReconnectAtMs > 0L && since < verifier.HEALTHY_RESET_MS) {
+                            cleanEndStreak + 1
+                        } else {
+                            1
+                        }
+                    val cleanBackoffMs = verifier.backoffMs(cleanEndStreak)
+                    debugLogWarn(
+                        context, TAG,
+                        "[RECOVER] ingest ended cleanly #$cleanEndStreak; reconnecting in ${cleanBackoffMs}ms",
+                    )
+                    if (cleanEndStreak >= 2) {
+                        val verdict = verifier.verify(
+                            verifier.channelUuidFromUrl(url),
+                            connectedAtSec,
+                        )
+                        debugLog(
+                            context, TAG,
+                            "[RECOVER] ingest clean end #$cleanEndStreak session check: " +
+                                (if (verdict.stopped) "AT LIMIT" else "not verified") +
+                                " (${verdict.detail})",
+                        )
+                        if (verdict.stopped) {
+                            debugLogWarn(
+                                context, TAG,
+                                "[RECOVER] ingest stream end VERIFIED at the stream limit; stopping ingest",
+                            )
+                            sessionError.value = IllegalStateException("stream ended by the server")
+                            return@launch
+                        }
+                    }
+                    if (cleanBackoffMs > 0L) delay(cleanBackoffMs)
+                    if (!currentCoroutineContext().isActive) break
+                    cleanEndReconnectAtMs = android.os.SystemClock.elapsedRealtime()
+                    currentGen = server.beginGeneration()
+                    continue
+                }
                 consecutiveFailures++
                 if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
                     debugLogWarn(

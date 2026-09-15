@@ -27,7 +27,10 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 @UnstableApi
 object DispatcharrConnectionLimit {
 
-    enum class Kind { USER_STREAM_LIMIT, PROVIDER_LIMIT }
+    /** [STREAM_ENDED] is not a server refusal: the live stream ended cleanly
+     *  again right after its one reconnect (see AerioExoPlayerHolder
+     *  onLiveCleanEnd). It reuses the same card and Retry plumbing. */
+    enum class Kind { USER_STREAM_LIMIT, PROVIDER_LIMIT, STREAM_ENDED }
 
     data class Notice(
         val kind: Kind,
@@ -40,6 +43,16 @@ object DispatcharrConnectionLimit {
      *  changes; XC / M3U playlists never show the notice. */
     @Volatile
     var directConnectActive: Boolean = false
+
+    /** Shown only once a clean end has been VERIFIED as this account hitting
+     *  its stream limit (see StreamEndVerifier); an unverified clean end keeps
+     *  reconnecting on a backoff instead. Says nothing about limits, because
+     *  what the user can do about it is press Retry. */
+    val STREAM_ENDED = Notice(
+        kind = Kind.STREAM_ENDED,
+        title = "Stream ended",
+        message = "This stream was stopped by the server. Press Retry to start it again.",
+    )
 
     private const val USER_LIMIT_PREFIX = "Stream limit exceeded"
     private const val PROVIDER_LIMIT_PREFIX =

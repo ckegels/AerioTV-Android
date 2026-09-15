@@ -715,6 +715,19 @@ class AerioExoPlayerHolder @Inject constructor(
         reason: String = "re-prime",
     ): Boolean = reprimeMutex.withLock {
         val now = SystemClock.elapsedRealtime()
+        // A notice owns the screen (limit refusal or repeated clean end): only
+        // the user's Retry or a channel change may reopen the connection.
+        if (_connectionLimit.value != null) {
+            Log.i(TAG, "[RECOVER] re-prime skipped (reason=$reason): notice showing, waiting for Retry")
+            return@withLock false
+        }
+        // The dead session that follows a clean end IS that end: let the
+        // clean-end backoff own the reconnect instead of re-priming now.
+        if (reason.startsWith("dead session") &&
+            withContext(Dispatchers.Main) { onLiveCleanEnd(reason) }
+        ) {
+            return@withLock false
+        }
         if (!bypassCooldown && now - lastForcedReloadAtMs < reloadCooldownMs) {
             Log.i(TAG, "[FOLLOW] re-prime skipped (within ${reloadCooldownMs}ms cooldown)")
             return@withLock false
@@ -1058,6 +1071,7 @@ class AerioExoPlayerHolder @Inject constructor(
             // playing: hold the resume until the cushion is deep enough to
             // survive the worst delivery gap this feed has shown.
             if (playbackState == Player.STATE_BUFFERING) onLiveUnderrun("rebuffer")
+            if (playbackState == Player.STATE_ENDED) onLiveCleanEnd("ENDED")
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -2107,6 +2121,10 @@ class AerioExoPlayerHolder @Inject constructor(
             currentChannelId = it
         }
         clearPauseStamp("re-prime")
+        // A caller-supplied channel id is a real tune (channel change, user
+        // Retry): the clean-end reconnect budget starts over.
+        if (channelId != null) resetCleanEndBudget()
+        if (kind == "live") liveTuneWallSec = System.currentTimeMillis() / 1000.0
         resetWatchdogStateForNewStream()
         // watchdogReloadEnabled is kept current by the collector in init{}; the
         // cached value reflects the latest pref without blocking the main thread.
@@ -2398,6 +2416,9 @@ class AerioExoPlayerHolder @Inject constructor(
      *  command("stop"). */
     fun stop() {
         val p = player ?: return
+        // A deliberate stop outranks any waiting clean-end reconnect.
+        cleanEndJob?.cancel()
+        cleanEndJob = null
         currentChannelId = null
         currentChannelIdForRebuild = null
         // Disarm the stall watchdog so a deliberate stop isn't seen as a wedge.
@@ -2470,6 +2491,9 @@ class AerioExoPlayerHolder @Inject constructor(
         // "Channel is stopping" retry.
         stoppingRetryJob?.cancel()
         stoppingRetryJob = null
+        // A waiting clean-end reconnect must not outlive the player.
+        cleanEndJob?.cancel()
+        cleanEndJob = null
         liveFailover.resetWalk()
         watchdogJob?.cancel()
         watchdogJob = null
@@ -2949,6 +2973,140 @@ class AerioExoPlayerHolder @Inject constructor(
         // switch to, and that case must still reach the unavailable card.
         liveFailover.onServer503(info.reason)
         return false
+    }
+
+    // ---- repeated clean end (Dispatcharr "terminate on limit exceeded") ----
+    // The server ends the OLDEST client's stream cleanly when a new client
+    // takes the account's last slot, and the booted client sees nothing but a
+    // clean end of stream. Reconnecting immediately boots the other device,
+    // which reconnects in turn: two devices bouncing forever. So: always keep
+    // reconnecting (a clean end is usually just a restarted stream), but back
+    // off - now, 5 s, 15 s, 30 s, then every 60 s - and give up ONLY when
+    // [StreamEndVerifier] can prove the account is at its stream limit with a
+    // newer session elsewhere. Never on a guess.
+    /** Clean ends in the current run: 1 = the first (immediate reconnect). */
+    private var cleanEndStreak = 0
+    /** When the reconnect after a clean end opened; 0 when none is pending. */
+    private var cleanEndReconnectAtMs = 0L
+    /** The scheduled reconnect (verification + backoff), if one is waiting. */
+    private var cleanEndJob: Job? = null
+    /** Wall clock (epoch seconds) at which the current live session opened,
+     *  so the verifier can tell a NEWER session elsewhere from our own. */
+    @Volatile private var liveTuneWallSec = 0.0
+
+    /** Channel change, Retry, teardown: forget the streak and any wait. */
+    private fun resetCleanEndBudget() {
+        cleanEndStreak = 0
+        cleanEndReconnectAtMs = 0L
+        cleanEndJob?.cancel()
+        cleanEndJob = null
+    }
+
+    /**
+     * Main thread. A live stream ended cleanly ([source] = "ENDED") or the
+     * follow-poller found the session dead after such an end. Returns true
+     * when this owns recovery (a reconnect is scheduled, or the notice is up),
+     * so the caller must not reconnect as well.
+     */
+    private fun onLiveCleanEnd(source: String): Boolean {
+        val url = lastPlayUrl ?: return false
+        if (isTimeshifting || isCatchup || PlaybackTracer.urlKind(url) != "live") return false
+        if (_connectionLimit.value != null) return true
+        // A reconnect is already waiting out its backoff; this end is the same
+        // one seen twice (ENDED, then the follow-poller's dead session).
+        if (cleanEndJob?.isActive == true) return true
+        if (inSwitchWindow()) {
+            Log.i(TAG, "[RECOVER] clean end ($source) during switch window; left to the switch watch")
+            return false
+        }
+        // A dead session with no clean end behind it is the old wedge case:
+        // leave the follow-poller's own re-prime alone.
+        if (source != "ENDED" && cleanEndStreak == 0) return false
+        val now = SystemClock.elapsedRealtime()
+        val sinceReconnect = now - cleanEndReconnectAtMs
+        cleanEndStreak = if (
+            cleanEndReconnectAtMs > 0L && sinceReconnect < StreamEndVerifier.HEALTHY_RESET_MS
+        ) {
+            cleanEndStreak + 1
+        } else {
+            if (cleanEndStreak > 0) {
+                Log.i(
+                    TAG,
+                    "[RECOVER] clean-end streak reset: ${sinceReconnect}ms of playback " +
+                        "since the last reconnect ch=$currentChannelId",
+                )
+            }
+            1
+        }
+        val streak = cleanEndStreak
+        val backoffMs = StreamEndVerifier.backoffMs(streak)
+        val channelUuid = StreamEndVerifier.channelUuidFromUrl(url)
+        val connectedAtSec = liveTuneWallSec
+        Log.w(
+            TAG,
+            "[RECOVER] clean end ($source) #$streak ch=$currentChannelId; " +
+                "reconnecting in ${backoffMs}ms",
+        )
+        tracer.recover("clean end ($source) #$streak; reconnect in ${backoffMs}ms")
+        // The stream is gone and we are waiting; say so instead of freezing on
+        // the last frame with no message. Deliberately NOT the stall
+        // watchdog's flag: that clears the moment the (stopped) player stops
+        // looking live, which would blank the status through the whole wait.
+        // The next tune's first byte clears it (LiveStreamFailover).
+        if (backoffMs > 0L) liveFailover.publishServerStatus("Reconnecting...")
+        cleanEndJob = watchdogScope.launch {
+            // Verification first: the ONLY way this ever stops for good. A
+            // non-admin account, an old server or any transport failure
+            // answers "not verified" and we just keep reconnecting.
+            if (streak >= 2) {
+                val verdict = StreamEndVerifier.verify(channelUuid, connectedAtSec)
+                Log.i(
+                    TAG,
+                    "[RECOVER] clean end #$streak session check: " +
+                        "${if (verdict.stopped) "AT LIMIT" else "not verified"} (${verdict.detail})",
+                )
+                if (verdict.stopped) {
+                    withContext(Dispatchers.Main) { stopForVerifiedStreamEnd(url) }
+                    return@launch
+                }
+            }
+            if (backoffMs > 0L) delay(backoffMs)
+            withContext(Dispatchers.Main) {
+                if (_connectionLimit.value != null || isTimeshifting || isCatchup) return@withContext
+                val target = lastPlayUrl ?: url
+                Log.i(TAG, "[RECOVER] clean end #$streak: reconnecting ch=$currentChannelId")
+                cleanEndReconnectAtMs = SystemClock.elapsedRealtime()
+                // Keep the follow-poller (and the stall watchdog) from opening a
+                // SECOND connection right behind this one.
+                lastForcedReloadAtMs = cleanEndReconnectAtMs
+                playUrl(
+                    target, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
+                    drmLicenseType = lastPlayDrmType, drmLicenseKey = lastPlayDrmKey,
+                )
+            }
+        }
+        return true
+    }
+
+    /** Verified boot: this account is at its stream limit and a newer session
+     *  elsewhere took the slot. Stop everything until the user presses Retry. */
+    private fun stopForVerifiedStreamEnd(url: String) {
+        if (_connectionLimit.value != null) return
+        Log.w(TAG, "[RECOVER] stream end VERIFIED at the stream limit ch=$currentChannelId; stopping, waiting for Retry")
+        tracer.recover("stream end verified at the stream limit; stopping")
+        cleanEndJob = null
+        resetCleanEndBudget()
+        stoppingRetryJob?.cancel()
+        stoppingRetryJob = null
+        reconnectUrl = lastPlayUrl ?: url
+        reconnectChannelId = currentChannelIdForRebuild ?: currentChannelId ?: reconnectChannelId
+        connectionLimitWasCatchup = false
+        // No failover walk after this: forget it along with the pipeline.
+        liveFailover.resetWalk()
+        liveFailover.publishServerStatus(null)
+        ingestStallStatusShown = false
+        _connectionLimit.value = DispatcharrConnectionLimit.STREAM_ENDED
+        stop()
     }
 
     /**

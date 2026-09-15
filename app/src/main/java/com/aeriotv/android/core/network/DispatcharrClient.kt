@@ -1929,6 +1929,102 @@ class DispatcharrClient @Inject constructor() {
     }
 
     /**
+     * Live-session check behind the player's "Stream ended" card (see
+     * StreamEndVerifier). A live stream that ends cleanly is only ever given
+     * up on when THIS is provable:
+     *
+     *  1. GET /api/accounts/users/me/ -> `id` + `stream_limit`. A limit of 0
+     *     (Dispatcharr's default) means unlimited, so nothing can be proven.
+     *  2. GET /proxy/ts/status -> {"channels": [{channel_id, clients: [
+     *     {client_id, user_id, connected_at}, ...]}, ...]} (apps/proxy/
+     *     live_proxy/channel_status.py get_basic_channel_info). IsAdmin
+     *     server-side, so a standard account gets 401/403 = unverifiable.
+     *  3. Count this account's live sessions the same way the server counts
+     *     them: unique channels when `ignore_same_channel_connections` is on,
+     *     every client otherwise. The setting lives in the core settings group
+     *     `user_limit_settings`; when it cannot be read we count UNIQUE
+     *     CHANNELS, the count that makes stopping LESS likely.
+     *  4. Stop only when that count is at or above the limit AND one of this
+     *     account's other clients connected AFTER our own session started
+     *     (the session that took our slot).
+     *
+     * Any failure answers "not verified": the caller keeps reconnecting.
+     */
+    suspend fun verifyStreamEndedByLimit(
+        baseUrl: String,
+        apiKey: String,
+        ourChannelUuid: String?,
+        ourConnectedAtEpochSec: Double,
+    ): com.aeriotv.android.core.playback.StreamEndVerifier.Verdict {
+        fun no(detail: String) =
+            com.aeriotv.android.core.playback.StreamEndVerifier.Verdict(false, detail)
+        val root = baseUrl.trimEnd('/')
+        val me = client.get("$root/api/accounts/users/me/") { applyAuth(apiKey) }
+        if (!me.status.isSuccess()) return no("users/me HTTP ${me.status.value}")
+        val meObj = runCatching { me.body<JsonElement>() }.getOrNull() as? JsonObject
+            ?: return no("users/me not readable")
+        val userId = (meObj["id"] as? JsonPrimitive)?.contentOrNull
+            ?: return no("users/me has no id")
+        val streamLimit = (meObj["stream_limit"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0
+        if (streamLimit <= 0) return no("account has no stream limit")
+
+        val status = client.get("$root/proxy/ts/status") { applyAuth(apiKey) }
+        if (!status.status.isSuccess()) return no("proxy status HTTP ${status.status.value}")
+        val statusObj = runCatching { status.body<JsonElement>() }.getOrNull() as? JsonObject
+            ?: return no("proxy status not readable")
+        val channels = (statusObj["channels"] as? JsonArray) ?: return no("proxy status has no channels")
+
+        // Best-effort: the same setting the server's check_user_stream_limits
+        // reads. Unreadable (non-admin core settings) keeps the lenient count.
+        val ignoreSameChannel = runCatching {
+            val settings = client.get("$root/api/core/settings/") { applyAuth(apiKey) }
+            if (!settings.status.isSuccess()) return@runCatching null
+            val rows = runCatching { settings.body<JsonElement>() }.getOrNull() as? JsonArray
+                ?: return@runCatching null
+            val row = rows.mapNotNull { it as? JsonObject }
+                .firstOrNull { (it["key"] as? JsonPrimitive)?.contentOrNull == "user_limit_settings" }
+                ?: return@runCatching null
+            val raw = (row["value"] as? JsonPrimitive)?.contentOrNull ?: return@runCatching null
+            val group = runCatching { Json.parseToJsonElement(raw) }.getOrNull() as? JsonObject
+                ?: return@runCatching null
+            (group["ignore_same_channel_connections"] as? JsonPrimitive)?.booleanOrNull
+        }.getOrNull()
+
+        var ourSessions = 0
+        val ourChannels = HashSet<String>()
+        var newerElsewhere = false
+        for (element in channels) {
+            val channel = element as? JsonObject ?: continue
+            val channelId = (channel["channel_id"] as? JsonPrimitive)?.contentOrNull
+            val clients = (channel["clients"] as? JsonArray) ?: continue
+            for (c in clients) {
+                val cl = c as? JsonObject ?: continue
+                if ((cl["user_id"] as? JsonPrimitive)?.contentOrNull != userId) continue
+                ourSessions += 1
+                channelId?.let { ourChannels.add(it) }
+                val connectedAt = (cl["connected_at"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
+                // "Newer than ours, somewhere else": either another channel, or
+                // another client on this one. Our own (dead) session is never
+                // newer than itself, so the comparison is safe either way.
+                if (connectedAt != null && connectedAt > ourConnectedAtEpochSec &&
+                    (channelId == null || channelId != ourChannelUuid)
+                ) {
+                    newerElsewhere = true
+                }
+            }
+        }
+        val counted = if (ignoreSameChannel == true) ourChannels.size else
+            if (ignoreSameChannel == null) ourChannels.size else ourSessions
+        val detail = "sessions=$ourSessions channels=${ourChannels.size} counted=$counted " +
+            "limit=$streamLimit newerElsewhere=$newerElsewhere " +
+            "ignoreSameChannel=${ignoreSameChannel ?: "unknown"}"
+        return com.aeriotv.android.core.playback.StreamEndVerifier.Verdict(
+            stopped = counted >= streamLimit && newerElsewhere,
+            detail = detail,
+        )
+    }
+
+    /**
      * Constructed playback URL for a Dispatcharr recording's raw media file.
      * The endpoint is `AllowAny` on the server (no auth headers required),
      * supports HTTP Range, and serves the raw media file. For a COMPLETED

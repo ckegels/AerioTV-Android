@@ -934,7 +934,8 @@ fun PlayerScreen(
                 // mid-rewind would silently yank playback to live)
                 if (switchStream != null || exoHolder.isReprimeInFlight ||
                     exoHolder.isTimeshifting ||
-                    exoHolder.streamUnavailable.value) { baseline = null; continue }
+                    exoHolder.streamUnavailable.value ||
+                    exoHolder.connectionLimit.value != null) { baseline = null; continue }
                 if (exoHolder.reachedSteadyPlayback.value) everSteady = true
                 // cold-start mutual exclusion with the no-data watchdog: park
                 // only until the stream has been steady ONCE this tune

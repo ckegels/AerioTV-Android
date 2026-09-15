@@ -579,6 +579,20 @@ fun BoxScope.PersistentExoWindow(
         if (isPhone && mode == ExoWindowState.Mode.Mini && !inPip) {
             PhoneMiniControls(holder = holder, state = state, session = miniSession)
         }
+        if (isPhone && mode == ExoWindowState.Mode.Mini && !inPip) {
+            // Limit refusal / Stream ended: PlayerScreen's overlay is gone
+            // while minimized, so the mini shows the compact card itself.
+            // Drawn after the controls so its Retry button takes the tap.
+            val miniNotice by holder.connectionLimit.collectAsStateWithLifecycle()
+            miniNotice?.let { notice ->
+                ConnectionLimitCard(
+                    notice = notice,
+                    isTv = false,
+                    compact = true,
+                    onRetry = { holder.retryConnectionLimit() },
+                )
+            }
+        }
     }
 }
 

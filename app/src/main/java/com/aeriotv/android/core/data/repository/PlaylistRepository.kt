@@ -2191,6 +2191,37 @@ class PlaylistRepository @Inject constructor(
         }.getOrNull()
     }
 
+    /**
+     * "Did the server boot us because this account is out of slots?" for the
+     * player's clean-end handling (see StreamEndVerifier). Direct Connect only;
+     * anything else, or any failure, answers "not verified" so the caller keeps
+     * reconnecting on its backoff instead of giving up on a guess.
+     */
+    suspend fun verifyStreamEndedByLimit(
+        channelUuid: String?,
+        ourConnectedAtEpochSec: Double,
+    ): com.aeriotv.android.core.playback.StreamEndVerifier.Verdict {
+        val notVerified = com.aeriotv.android.core.playback.StreamEndVerifier
+            .Verdict(false, "not a Dispatcharr Direct Connect playlist")
+        val playlist = activePlaylist() ?: return notVerified
+        if (playlist.sourceType != SourceType.DispatcharrApiKey.name &&
+            playlist.sourceType != SourceType.DispatcharrUserPass.name
+        ) {
+            return notVerified
+        }
+        val base = effectiveBaseUrl(playlist)
+        return runCatching {
+            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                dispatcharrClient.verifyStreamEndedByLimit(
+                    base, key, channelUuid, ourConnectedAtEpochSec,
+                )
+            }
+        }.getOrElse {
+            com.aeriotv.android.core.playback.StreamEndVerifier
+                .Verdict(false, "session check failed: ${it.message}")
+        }
+    }
+
     suspend fun clear() {
         dispatcharrTokenStore.clearAll()
         dao.clear()
