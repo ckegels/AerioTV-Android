@@ -366,7 +366,7 @@ fun BoxScope.PersistentExoWindow(
                     if (url != null && playing()) {
                         Log.i(TAG, "Shield: re-priming stream after display mode change")
                         reprimeScope.launch {
-                            runCatching { holder.reprimeWithKeepalive(url = url, bypassCooldown = true) }
+                            runCatching { holder.reprime(url = url, bypassCooldown = true, reason = "Shield display mode change") }
                                 .onFailure { Log.w(TAG, "Shield re-prime failed", it) }
                         }
                     }

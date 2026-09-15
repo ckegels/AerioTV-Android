@@ -59,6 +59,24 @@ private val Context.appDataStore: DataStore<Preferences> by preferencesDataStore
                     }
                 override suspend fun cleanUp() {}
             },
+            // One-time reset of the learned live start buffers (2026-09-15).
+            // Stalls caused by Dispatcharr stream switches fed the bursty-feed
+            // learner and pinned channels at the 10 s start gate, slowing every
+            // tune. Future learning ignores switch-window stalls; this clears
+            // what was already polluted.
+            object : DataMigration<Preferences> {
+                private val clearedFlag =
+                    booleanPreferencesKey("live_start_buffer_switch_reset_v1")
+                override suspend fun shouldMigrate(currentData: Preferences): Boolean =
+                    currentData[clearedFlag] != true
+                override suspend fun migrate(currentData: Preferences): Preferences =
+                    currentData.toMutablePreferences().apply {
+                        remove(stringPreferencesKey("live_start_buffer_ms"))
+                        remove(stringPreferencesKey("live_start_buffer_at_ms"))
+                        set(clearedFlag, true)
+                    }
+                override suspend fun cleanUp() {}
+            },
         )
     },
 )

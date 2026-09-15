@@ -117,12 +117,43 @@ class AerioMediaPlaybackService : MediaLibraryService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A null intent is the system re-creating a sticky service after process
+        // death. There is nothing to resume (the player lived in the dead
+        // process), and the app is usually in the background, where
+        // startForeground() throws ForegroundServiceStartNotAllowedException
+        // (JayK crash: "Unable to start service ... with null"). Stop quietly.
+        if (intent == null) {
+            val p = exoHolder.player
+            val active = p != null && p.playWhenReady && p.currentMediaItem != null
+            if (!active) {
+                android.util.Log.i(TAG, "sticky restart with null intent and no playback; stopping")
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
+        }
         // Explicit start (background-audio promotion from PlayerScreen) must
         // beat the API 31+ 5s foreground-start deadline. Android Auto only
         // BINDS to browse, so it never reaches here -- no spurious foreground
         // notification, no FGS-start-not-allowed risk.
-        startForegroundCompat(buildNowPlayingNotification())
-        return super.onStartCommand(intent, flags, startId)
+        return try {
+            startForegroundCompat(buildNowPlayingNotification())
+            super.onStartCommand(intent, flags, startId)
+            // Never sticky: a system restart after process death has no player
+            // to promote and would only hit the background FGS-start ban.
+            START_NOT_STICKY
+        } catch (e: IllegalStateException) {
+            // ForegroundServiceStartNotAllowedException (API 31+) extends
+            // IllegalStateException; Media3's own promotion can throw it too.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                e is android.app.ForegroundServiceStartNotAllowedException
+            ) {
+                android.util.Log.w(TAG, "startForeground not allowed from background; stopping", e)
+                stopSelf(startId)
+                START_NOT_STICKY
+            } else {
+                throw e
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
@@ -349,6 +380,7 @@ class AerioMediaPlaybackService : MediaLibraryService() {
     }
 
     companion object {
+        private const val TAG = "AerioPlaybackService"
         private const val CHANNEL_ID = "aeriotv_background_playback"
         private const val NOTIF_ID = 0xAF
 
