@@ -315,7 +315,9 @@ class VodCatalogStore @Inject constructor(
         values: Collection<String>,
         query: suspend (List<String>) -> List<VodTitleEntity>,
     ): List<VodTitleEntity> = withContext(Dispatchers.IO) {
-        values.asSequence().filter { it.isNotBlank() }.distinct().chunked(MAX_BIND).flatMap { query(it) }.toList()
+        val out = ArrayList<VodTitleEntity>()
+        for (chunk in values.filter { it.isNotBlank() }.distinct().chunked(MAX_BIND)) out += query(chunk)
+        out
     }
 
     private fun escapeLike(q: String) = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
