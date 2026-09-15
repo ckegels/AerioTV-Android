@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
@@ -376,6 +377,24 @@ fun <T> TvMediaPage(
     val topNavHasFocus = com.aeriotv.android.feature.main.LocalTvTopNavHasFocus.current
     /** Move focus to this tab's own pill in the TV nav bar (null on phone). */
     val requestTabPill = com.aeriotv.android.feature.main.LocalTvRequestCurrentTabPill.current
+    /** Up from the page's FIRST row (hero, else shelf 0, else the header)
+     *  goes to this tab's pill, the same destination as the Back ladder
+     *  (Logan 2026-09-14, Google TV Streamer, Movies with no hero: Up on a
+     *  Watchlist card slid LEFT along the shelf, then did nothing). With
+     *  nothing focusable above the first row inside the grid, the geometric
+     *  search fell back to the nearest card in the row. A key handler, not
+     *  `focusProperties { up = ... }`, for the reason spelled out on the
+     *  grid's top row: a detached custom destination swallows the key. The
+     *  key is ALWAYS consumed so the first row can never move sideways; the
+     *  nav bar requester is the fallback when the pill refuses focus. */
+    val upToTabPill: (KeyEvent, String) -> Boolean = { ev, from ->
+        if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
+            val landed = requestTabPill?.invoke() == true ||
+                runCatching { topNav?.requestFocus() }.getOrNull() == true
+            TvFocusTrace.key("Up", landed, "first-row-to-tab-pill($from)")
+            true
+        } else false
+    }
     val heroPrimary = remember { FocusRequester() }
     val firstCell = remember { FocusRequester() }
     /** The All pill: where the pill row is entered from above or below (Logan 2026-09-10). */
@@ -1242,7 +1261,8 @@ fun <T> TvMediaPage(
                 // 2026-09-10). The hero row gives back the row spacing plus
                 // 10 dp so the shelf sits fully in view.
                 fullSpan("hero", trimBottom = gridRowSpacing + 10.dp, onMeasured = recordLeadingHeight) {
-                  Column {
+                  // The hero is always the first row when it exists.
+                  Column(modifier = Modifier.onPreviewKeyEvent { upToTabPill(it, "hero") }) {
                     // "Continue Watching" over the banner, in the shelf-title
                     // style (12 sp SemiBold onBackground) at the same leading
                     // inset as the hero's copy column: overscan 40 + content
@@ -1295,13 +1315,18 @@ fun <T> TvMediaPage(
                                 TvReturnMemory.focusSource[pageId] = TvReturnSource.Shelf(si, ci)
                             }
                         },
-                        modifier = Modifier.padding(bottom = TvPage.sectionSpacing),
+                        // No hero: shelf 0 is the first row.
+                        modifier = Modifier
+                            .then(if (si == 0 && !hasHero) Modifier.onPreviewKeyEvent { upToTabPill(it, "shelf") } else Modifier)
+                            .padding(bottom = TvPage.sectionSpacing),
                     )
                 }
             }
             fullSpan("header", onMeasured = recordLeadingHeight) {
                 Column(
                     modifier = Modifier
+                        // No hero and no shelves: the header is the first row.
+                        .then(if (!hasHero && visibleShelves.isEmpty()) Modifier.onPreviewKeyEvent { upToTabPill(it, "header") } else Modifier)
                         .padding(start = TvPage.overscan + TvPage.contentInset, end = TvPage.overscan + TvPage.heroInset)
                         .onFocusChanged { if (it.hasFocus) sendAnchor(TvPageAnchor.Header, "header") },
                 ) {
