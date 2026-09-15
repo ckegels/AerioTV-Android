@@ -8,7 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -52,6 +52,7 @@ import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.ui.ClockFormat
 import com.aeriotv.android.core.ui.EpgFlagsRow
 import com.aeriotv.android.core.ui.LocalShowEpgBadges
+import com.aeriotv.android.core.ui.ProgramArtSlot
 import com.aeriotv.android.core.ui.epgFlags
 import com.aeriotv.android.core.ui.rememberClockMode
 import com.aeriotv.android.core.ui.seasonEpisodeLabel
@@ -73,7 +74,21 @@ import java.util.Date
  * The description is the banner's one focus target: OK opens Program Info.
  */
 object GuidePreviewBanner {
-    val height = 106.dp
+    /**
+     * Art height + the row's own 4 dp bottom padding + 1 dp of slack: 106 dp
+     * around the 101 dp slot at 100% Text Size. DERIVED from
+     * [ProgramArtSlot.height] rather than copied, so raising the app-wide Text
+     * Size (the only art-size knob, Logan 2026-09-15 after the user vote)
+     * grows the banner with the art instead of clipping it. The slack scales
+     * too, so the proportions hold at every stop (85% to 150%).
+     *
+     * The guide rows below simply start lower; the drawer top (GuideScreen)
+     * and the mini player's baseline (MiniPlayerChrome.bannerArtBottomPx,
+     * published from the measured art bounds) both read this rather than a
+     * copy of it, so they follow.
+     */
+    val height: Dp
+        @Composable get() = ProgramArtSlot.height + 5.dp * ProgramArtSlot.scale
 
     /**
      * The TV lift: tvOS pulls the banner 28 pt up under the tab bar so eight
@@ -88,10 +103,16 @@ object GuidePreviewBanner {
 
     /**
      * How far the banner's FIRST text line (the program title) sits below the
-     * banner's top edge: the copy column is bottom-aligned in the 106 dp row
-     * and measured at 4 dp on a 1920x1080 Streamer (Logan 2026-09-11).
+     * banner's top edge. The copy column is BOTTOM-aligned, so this inset is
+     * whatever the banner does not spend on text: measured at 4 dp in the
+     * 106 dp row on a 1920x1080 Streamer (Logan 2026-09-11), i.e. a 102 dp
+     * text column. DERIVED from [height] so it cannot drift from it, and the
+     * text column term scales with Text Size exactly as the text itself does,
+     * which keeps the clearance right at every stop. MainScaffold uses it to
+     * keep the remote hint strip clear of that first line.
      */
-    val firstTextInset = 4.dp
+    val firstTextInset: Dp
+        @Composable get() = height - 102.dp * ProgramArtSlot.scale
 }
 
 /** Session art cache keyed by program id or cleaned title; null = every source missed. */
@@ -190,47 +211,34 @@ fun GuidePreviewBanner(
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(22.dp),
     ) {
-        // 360x203 pt art slot, halved. Channel logo only once every source
+        // The shared program-art slot. Channel logo only once every source
         // missed; nothing while a lookup is open (no logo flash).
         // The corner mini player's BOTTOM edge lines up with this art card's
         // (Logan 2026-09-11; tvOS shares one baseline between the logo, the
         // copy and the mini). Published in root coordinates because the mini
         // is mounted at the activity root, outside this composition.
-        // Portrait art (2:3 XMLTV program icons) would lose its title text to a
-        // 16:9 center crop, so the slot itself turns poster-shaped: same height,
-        // width from the image aspect, and the text column takes the freed width.
-        // Only TRUE portrait (under PORTRAIT_ART_MAX_ASPECT) gets it; near-square
-        // art (sports matchup logos ~0.96) keeps the 180x101 cropped slot.
-        var artAspect by remember(art) { androidx.compose.runtime.mutableStateOf(16f / 9f) }
-        val artPortrait = artAspect < PORTRAIT_ART_MAX_ASPECT
-        val artWidth = if (artPortrait) (101f * artAspect).dp else 180.dp
-        Box(
-            modifier = Modifier
-                .width(artWidth)
-                .height(101.dp)
-                .onGloballyPositioned {
-                    com.aeriotv.android.feature.player.MiniPlayerChrome
-                        .bannerArtBottomPx.value = it.boundsInRoot().bottom
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            when {
-                art != null -> AsyncImage(
-                    model = art, contentDescription = null,
-                    contentScale = if (artPortrait) ContentScale.Fit else ContentScale.Crop,
-                    modifier = Modifier.width(artWidth).height(101.dp).clip(RoundedCornerShape(6.dp)),
-                    onSuccess = { state ->
-                        val w = state.result.image.width.toFloat()
-                        val h = state.result.image.height.toFloat()
-                        if (w > 0f && h > 0f) artAspect = w / h
-                    },
-                )
-                artKnown && channel != null && channel.tvgLogo.isNotBlank() -> AsyncImage(
-                    model = channel.tvgLogo, contentDescription = null, contentScale = ContentScale.Fit,
-                    modifier = Modifier.width(135.dp).height(76.dp),
-                )
-            }
-        }
+        // ONE slot shared with the Program Info sheet (ProgramArtSlot, Logan
+        // 2026-09-15): fixed size, whole image, never cropped, never jumping
+        // as art of a different aspect arrives.
+        ProgramArtSlot(
+            model = art,
+            modifier = Modifier.onGloballyPositioned {
+                com.aeriotv.android.feature.player.MiniPlayerChrome
+                    .bannerArtBottomPx.value = it.boundsInRoot().bottom
+            },
+            fallback = {
+                if (artKnown && channel != null && channel.tvgLogo.isNotBlank()) {
+                    AsyncImage(
+                        model = channel.tvgLogo, contentDescription = null, contentScale = ContentScale.Fit,
+                        // Channel-logo fallback: the 135x76 dp logo was 75%
+                        // of the 180x101 slot, so keep that share at any scale.
+                        modifier = Modifier
+                            .width(ProgramArtSlot.maxWidth * 0.75f)
+                            .height(ProgramArtSlot.height * 0.75f),
+                    )
+                }
+            },
+        )
         if (program == null) {
             Text("Select a program", fontSize = 13.sp.subtext(), fontWeight = FontWeight.Medium, color = colors.tertiary)
         } else {

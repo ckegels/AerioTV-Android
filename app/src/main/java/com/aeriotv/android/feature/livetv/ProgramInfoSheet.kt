@@ -69,6 +69,7 @@ import com.aeriotv.android.core.ui.EpgFlag
 import com.aeriotv.android.core.ui.EpgFlagsRow
 import com.aeriotv.android.core.ui.EpgLiveRed
 import com.aeriotv.android.core.ui.LocalShowEpgBadges
+import com.aeriotv.android.core.ui.ProgramArtSlot
 import com.aeriotv.android.core.ui.epgFlags
 import com.aeriotv.android.core.ui.seasonEpisodeLabel
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
@@ -262,16 +263,10 @@ private fun TvProgramInfoCard(
 ) {
     val colors = MaterialTheme.colorScheme
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        // Same slot as the guide preview banner (ProgramArtSlot, Logan
+        // 2026-09-15): same size on both surfaces, whole image, no crop.
         if (posterUrl != null) {
-            var posterRatio by remember(posterUrl) { mutableStateOf(2f / 3f) }
-            AsyncImage(
-                model = posterUrl, contentDescription = null, contentScale = ContentScale.Crop,
-                onSuccess = { st ->
-                    val sz = st.painter.intrinsicSize
-                    if (sz.width > 0f && sz.height > 0f) posterRatio = (sz.width / sz.height).coerceIn(0.55f, 1.9f)
-                },
-                modifier = Modifier.width(120.dp).aspectRatio(posterRatio).clip(RoundedCornerShape(7.dp)),
-            )
+            ProgramArtSlot(model = posterUrl)
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
@@ -485,7 +480,9 @@ private fun ProgramInfoBody(
             AsyncImage(
                 model = posterUrl,
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                // Fit, not Crop: the frame already follows the real ratio, and
+                // the clamp above can leave a sliver that Crop would shave off.
+                contentScale = ContentScale.Fit,
                 onSuccess = { state ->
                     val s = state.painter.intrinsicSize
                     if (s.width > 0f && s.height > 0f) {
