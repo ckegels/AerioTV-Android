@@ -293,40 +293,8 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Mini player on phones",
-            body = "Swipe down from the top of the live player to shrink it into a floating in-app mini player. Movies, episodes, recordings and catch-up minimize to it too, and picking a channel tunes it right in the mini.",
-        ),
-        WhatsNewItem(
-            title = "Skip Intervals",
-            body = "Choose how far skip back and skip forward jump for live, DVR and on demand.",
-        ),
-        WhatsNewItem(
-            title = "Smarter Reconnecting",
-            body = "Reconnecting shows only when playback actually stalls, appears quickly when the server stops a stream, and backs off while a channel is stopping. Changing channels or swapping a multiview tile now closes the old connection.",
-        ),
-        WhatsNewItem(
-            title = "Default Group and Recently Watched",
-            body = "Pick the group Live TV opens on in App Behaviors. Recently Watched lists your last 25 channels; turn it on in Manage Groups. The selected group is remembered per playlist.",
-        ),
-        WhatsNewItem(
-            title = "Hide movies and series",
-            body = "Long-press any title to hide it. Hidden titles live in the Filter dialog and sync with your watchlist.",
-        ),
-        WhatsNewItem(
-            title = "Video Scale in the player",
-            body = "Fit, Fill and Stretch replace Aspect Ratio, with pinch to scale on phones and tablets.",
-        ),
-        WhatsNewItem(
-            title = "More audio formats decoded",
-            body = "More audio formats now decode in the app when the device cannot.",
-        ),
-        WhatsNewItem(
-            title = "TV guide sidebar and remote keys",
-            body = "A Sidebar layout setting (Overlay or Shift guide) in Manage Groups, group previews on focus with Back restoring your group, and six remappable guide keys.",
-        ),
-        WhatsNewItem(
-            title = "Android TV polish",
-            body = "A second Back closes playback, long Left/Right scrubs on demand with controls hidden, Up from the first row reaches the tabs, the mini player steps aside on Settings, and exiting catch-up returns to the guide. The on demand hero now shows only for Continue Watching.",
+            title = "Guide banner art",
+            body = "Square and wide program art fills the full banner slot again. Only portrait posters use the narrow poster slot.",
         ),
     )
 }
