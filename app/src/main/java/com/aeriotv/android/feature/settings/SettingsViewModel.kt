@@ -58,6 +58,18 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setTextScale(value) }
     }
 
+    /** Subtext Size (Appearance > Subtext Size). */
+    val subtextScale: Flow<Float> = prefs.subtextScale
+    fun setSubtextScale(value: Float) {
+        viewModelScope.launch { prefs.setSubtextScale(value) }
+    }
+
+    /** Text Contrast (Appearance > Text Contrast). */
+    val textContrast: Flow<Float> = prefs.textContrast
+    fun setTextContrast(value: Float) {
+        viewModelScope.launch { prefs.setTextContrast(value) }
+    }
+
     val useCustomAccent: Flow<Boolean> = prefs.useCustomAccent
     fun setUseCustomAccent(value: Boolean) {
         viewModelScope.launch { prefs.setUseCustomAccent(value) }

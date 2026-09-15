@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.dvr
 
+import com.aeriotv.android.ui.scale.subtext
 import com.aeriotv.android.ui.LocalDvrAccess
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -645,7 +646,7 @@ private fun EmptyState(title: String, body: String) {
         Spacer(Modifier.height(6.dp))
         Text(
             text = body,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -751,14 +752,14 @@ private fun RecordingRow(
                     text = dateLabel,
                     // bodySmall lands at ~10.8sp effective under the 0.9 TV
                     // type scale, below couch readability; bodyMedium on TV.
-                    style = if (isTv) MaterialTheme.typography.bodyMedium
-                    else MaterialTheme.typography.bodySmall,
+                    style = (if (isTv) MaterialTheme.typography.bodyMedium
+                    else MaterialTheme.typography.bodySmall).subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (rec.description.isNotBlank()) {
                     Text(
                         text = rec.description,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
@@ -798,7 +799,7 @@ private fun RecordingRow(
                 if (isTv && focused) {
                     Text(
                         text = "Hold OK for options",
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelMedium.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     )
                 }

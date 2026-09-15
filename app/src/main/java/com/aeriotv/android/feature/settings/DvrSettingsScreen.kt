@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -186,7 +188,7 @@ fun DvrSettingsScreen(
                             Text(
                                 text = formatStorage(capMB),
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = MaterialTheme.colorScheme.textAccent,
                                 fontWeight = FontWeight.SemiBold,
                             )
                         }
@@ -249,7 +251,7 @@ fun DvrSettingsScreen(
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Text(
                             text = "Currently saving to:",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(2.dp))
@@ -267,7 +269,7 @@ fun DvrSettingsScreen(
                             ) {
                                 Text(
                                     text = "Choose Folder",
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = MaterialTheme.colorScheme.textAccent,
                                 )
                             }
                             if (customFolderUri.isNotBlank()) {
@@ -400,7 +402,7 @@ private fun BufferRow(
             Text(
                 text = formatRoll(selected),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.textAccent,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.size(6.dp))

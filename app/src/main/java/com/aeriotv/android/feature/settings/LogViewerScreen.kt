@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -142,7 +143,7 @@ fun LogViewerScreen(onBack: () -> Unit) {
                     Text(
                         text = "Enable Debug Logging on the previous screen and reproduce " +
                             "the issue you want to diagnose. Lines appear here as the app writes them.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

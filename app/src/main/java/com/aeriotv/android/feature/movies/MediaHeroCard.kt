@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.movies
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -159,14 +161,14 @@ fun MediaHeroCard(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    meta.joinToString(" · "), fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    meta.joinToString(" · "), fontSize = 13.sp.subtext(), fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 val r = formatRating(page.rating)
                 if (r.isNotEmpty()) {
                     Text(
                         (if (meta.isEmpty()) "" else " · ") + "★ $r", fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.primary, maxLines = 1,
+                        color = MaterialTheme.colorScheme.textAccent, maxLines = 1,
                     )
                 }
             }
@@ -214,7 +216,7 @@ fun MediaHeroCard(
                     }
                 }
                 page.remainingLabel?.let {
-                    Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    Text(it, fontSize = 11.sp.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 }
             }
         }

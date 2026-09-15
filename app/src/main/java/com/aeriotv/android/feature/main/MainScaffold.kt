@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.main
 
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewDvr
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
@@ -1578,7 +1579,7 @@ private fun FloatingTabBar(
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     fontWeight = FontWeight.Medium,
-                    color = if (isSel) MaterialTheme.colorScheme.primary
+                    color = if (isSel) MaterialTheme.colorScheme.textAccent
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

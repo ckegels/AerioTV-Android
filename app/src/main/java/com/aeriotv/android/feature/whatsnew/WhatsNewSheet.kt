@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.whatsnew
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -215,13 +217,13 @@ private fun WhatsNewRow(
             text = item.title,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
         )
         if (item.body.isNotBlank()) {
             Spacer(Modifier.height(2.dp))
             Text(
                 text = item.body,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

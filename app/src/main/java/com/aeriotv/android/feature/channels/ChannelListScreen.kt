@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.channels
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.core.ui.subtitleIsRedundant
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
@@ -879,7 +881,7 @@ internal fun SortMenu(
                         Text(
                             text = mode.label,
                             color = if (mode == currentMode)
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.textAccent
                             else
                                 MaterialTheme.colorScheme.onSurface,
                             fontWeight = if (mode == currentMode) FontWeight.SemiBold else FontWeight.Normal,
@@ -1102,7 +1104,7 @@ internal fun ChannelRow(
                             Text(
                                 text = channel.name.take(2).uppercase(),
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = MaterialTheme.colorScheme.textAccent,
                                 fontWeight = FontWeight.Bold,
                             )
                         }
@@ -1187,7 +1189,7 @@ internal fun ChannelRow(
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 text = formatRemaining(nowProgramme),
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelMedium.subtext(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                             )
@@ -1207,7 +1209,7 @@ internal fun ChannelRow(
                         // description (ChannelListView.swift:3094-3100).
                         Text(
                             text = subtitle,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1225,7 +1227,7 @@ internal fun ChannelRow(
                             subtitle.takeIf { !phoneRow },
                             nowProgramme?.description?.takeIf { it.isNotBlank() },
                         ).joinToString(" · ").ifBlank { " " },
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         minLines = 2,
                         maxLines = 2,
@@ -1249,7 +1251,7 @@ internal fun ChannelRow(
                     if (!phoneRow) nowProgramme?.let {
                         Text(
                             text = formatRemaining(it),
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelMedium.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -1485,7 +1487,7 @@ private fun ChannelGuidePanel(
         if (recentlyAired.isEmpty() && upcoming.isEmpty()) {
             Text(
                 text = "No upcoming schedule available",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             )
@@ -1548,7 +1550,7 @@ private fun ChannelGuidePanel(
                                 )
                                 Text(
                                     text = "Previously aired",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    style = MaterialTheme.typography.labelSmall.subtext(),
                                     color = MaterialTheme.colorScheme.tertiary,
                                 )
                                 Icon(
@@ -1665,7 +1667,7 @@ private fun UpcomingProgrammeRow(
                 }?.let { sub ->
                     Text(
                         text = sub,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontStyle = FontStyle.Italic,
                         maxLines = 1,
@@ -1675,7 +1677,7 @@ private fun UpcomingProgrammeRow(
                 if (programme.description.isNotBlank()) {
                     Text(
                         text = programme.description,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,

@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.dvr
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -120,7 +122,7 @@ fun EditRecordingSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Will record",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
@@ -144,7 +146,7 @@ fun EditRecordingSheet(
                 ) {
                     Text(
                         text = "Save",
-                        color = if (canSave) MaterialTheme.colorScheme.primary
+                        color = if (canSave) MaterialTheme.colorScheme.textAccent
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -160,7 +162,7 @@ private fun SectionHeader(label: String) {
     Text(
         text = label.uppercase(),
         style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.textAccent,
         fontWeight = FontWeight.SemiBold,
     )
 }

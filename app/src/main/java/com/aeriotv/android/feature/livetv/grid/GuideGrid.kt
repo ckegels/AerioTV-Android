@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.livetv.grid
 
+import com.aeriotv.android.ui.theme.decorSecondary
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.ui.tv.TvFocusTrace
 import com.aeriotv.android.core.ui.subtitleIsRedundant
 import com.aeriotv.android.core.ui.rememberClockMode
@@ -533,7 +535,7 @@ private fun TimeHeader(
 ) {
     // Apple TV: time labels in the accent colour.
     val labelStyle = TextStyle(
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.textAccent,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
     )
@@ -561,7 +563,7 @@ private fun TimeHeader(
             Text(
                 jumpLabel ?: clock,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (jumpLabel != null) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Unspecified,
+                color = if (jumpLabel != null) MaterialTheme.colorScheme.textAccent else androidx.compose.ui.graphics.Color.Unspecified,
                 fontWeight = if (jumpLabel != null) FontWeight.SemiBold else null,
                 maxLines = 1,
             )
@@ -621,12 +623,17 @@ private fun GridRow(
     // Apple TV cell: bold title, italic accent subtitle, accent-tinted
     // description, then a dim time line with the S/E pill and flag badges.
     val accent = MaterialTheme.colorScheme.primary
-    val timeStyle = TextStyle(color = Color.White.copy(alpha = 0.55f), fontSize = 10.5.sp)
-    val descStyle = TextStyle(color = accent.copy(alpha = 0.85f), fontSize = 10.5.sp)
-    val subStyle = TextStyle(color = accent, fontSize = 10.5.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+    // Subtext Size + Text Contrast for the secondary lines. Guide cells are
+    // always dark (white titles), so contrast blends toward white in both modes.
+    val subScale = com.aeriotv.android.ui.scale.LocalSubtextScale.current
+    val textContrast = com.aeriotv.android.ui.theme.LocalTextContrast.current
+    fun cellText(c: Color) = com.aeriotv.android.ui.theme.contrastBlend(c, textContrast, isDark = true)
+    val timeStyle = TextStyle(color = cellText(Color.White.copy(alpha = 0.55f)), fontSize = 10.5.sp * subScale)
+    val descStyle = TextStyle(color = cellText(accent.copy(alpha = 0.85f)), fontSize = 10.5.sp * subScale)
+    val subStyle = TextStyle(color = cellText(accent), fontSize = 10.5.sp * subScale, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
     val pillStyle = TextStyle(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f), fontSize = 7.5.sp, fontWeight = FontWeight.Medium)
     val badgeStyle = TextStyle(color = Color.White, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
-    val outline = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    val outline = MaterialTheme.colorScheme.decorSecondary.copy(alpha = 0.45f)
     val showBadges = com.aeriotv.android.core.ui.LocalShowEpgBadges.current
     val showSubtitles = com.aeriotv.android.core.ui.LocalShowProgramSubtitles.current
     val hiddenBadges = com.aeriotv.android.core.ui.LocalHiddenEpgBadges.current
@@ -640,11 +647,13 @@ private fun GridRow(
     val seam = 1f
     val padH = 8f
     val appTextScale = com.aeriotv.android.ui.scale.LocalAppTextScale.current
+    // Same growth GuideScreen applies to the phone row height.
+    val subRowGrowth = 1f + (com.aeriotv.android.ui.scale.LocalSubtextScale.current - 1f).coerceAtLeast(0f) * GUIDE_PHONE_SUBTEXT_SHARE
     // Text layouts are measured once per (cell, width) and drawn many times:
     // measuring through TextMeasurer on every draw was ~1 ms per row.
     // Keyed on fontScale too: cached layouts are measured in sp, so a live
     // Text Size change must re-measure instead of drawing stale sizes.
-    val textCache = remember(state.rows, row, showBadges, showSubtitles, clockMode, rail, LocalDensity.current.fontScale) { HashMap<Long, CellText>() }
+    val textCache = remember(state.rows, row, showBadges, showSubtitles, clockMode, rail, LocalDensity.current.fontScale, subScale, textContrast, accent) { HashMap<Long, CellText>() }
     val rangeCache = remember(state.rows, row, clockMode) { HashMap<Long, String>() }
     val railWidthPx = with(LocalDensity.current) { railWidth.toPx() }
     val logos = LocalLogoCache.current
@@ -831,7 +840,7 @@ private fun GridRow(
                     // subtitle; the 72dp / TV rows keep one.
                     // Threshold follows the Text Size so the phone row (98dp x
                     // Text Size) keeps its two lines at every stop.
-                    val descLines = if (size.height >= 90.dp.toPx() * appTextScale) 2 else 1
+                    val descLines = if (size.height >= 90.dp.toPx() * appTextScale * subRowGrowth) 2 else 1
                     val key = ((cell.startMillis * 31 + textW) * 4 + descLines) * 2 + (if (compact) 1 else 0)
                     val text = textCache.getOrPut(key) {
                         fun measure(t: String, st: TextStyle, maxH: Float, ellipsis: Boolean = true, lines: Int = 1) = textMeasurer.measure(
@@ -846,7 +855,7 @@ private fun GridRow(
                             // bottom line; the banner carries the time and
                             // the description.
                             val sub = cell.subTitle?.takeIf { showSubtitles && !subtitleIsRedundant(it, cell.title, cell.description) }
-                                ?.let { measure(it, subStyle, 15.sp.toPx()) }
+                                ?.let { measure(it, subStyle, 15.sp.toPx() * subScale) }
                             val pill = if (showBadges) cell.seasonEpisodeLabel()?.let { measure(it, pillStyle, 12.sp.toPx(), ellipsis = false) } else null
                             val badges = if (showBadges) cell.epgFlags().filter { it.label !in hiddenBadges }
                                 .map { measure(it.label, badgeStyle, 12.sp.toPx(), ellipsis = false) to it.color } else emptyList()
@@ -857,13 +866,13 @@ private fun GridRow(
                             // sub-title into <desc>), and the Appearance
                             // toggle drops the line entirely.
                             val sub = cell.subTitle?.takeIf { showSubtitles && !subtitleIsRedundant(it, cell.title, cell.description) }
-                                ?.let { measure(it, subStyle, 15.sp.toPx()) }
+                                ?.let { measure(it, subStyle, 15.sp.toPx() * subScale) }
                             val desc = cell.description.takeIf { it.isNotBlank() }
-                                ?.let { measure(it, descStyle, 15.sp.toPx() * descLines, lines = descLines) }
+                                ?.let { measure(it, descStyle, 15.sp.toPx() * subScale * descLines, lines = descLines) }
                             val range = rangeCache.getOrPut(cell.startMillis) {
                                 shortFmt.format(Date(cell.startMillis)) + " - " + shortFmt.format(Date(cell.endMillis))
                             }
-                            val time = measure(range, timeStyle, 15.sp.toPx(), ellipsis = false)
+                            val time = measure(range, timeStyle, 15.sp.toPx() * subScale, ellipsis = false)
                             val pill = if (showBadges) cell.seasonEpisodeLabel()?.let { measure(it, pillStyle, 12.sp.toPx(), ellipsis = false) } else null
                             val badges = if (showBadges) cell.epgFlags().filter { it.label !in hiddenBadges }
                                 .map { measure(it.label, badgeStyle, 12.sp.toPx(), ellipsis = false) to it.color } else emptyList()

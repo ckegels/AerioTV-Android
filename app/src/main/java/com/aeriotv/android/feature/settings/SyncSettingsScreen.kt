@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
 import android.app.Activity
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -531,7 +532,7 @@ private fun SignedOutWelcomeBanner() {
                 text = "Select Sign in with Google below to connect your account. AerioTV will " +
                     "then keep your playlists, watch progress, reminders, and preferences in " +
                     "sync across every device signed into the same Google account.",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -550,7 +551,7 @@ private fun DeveloperConfigHint() {
         text = "This build doesn't have a Google Cloud OAuth client configured, so " +
             "Sign in with Google is disabled. Add GOOGLE_DRIVE_WEB_CLIENT_ID to " +
             "local.properties and register the signing-cert SHA-1 in the same Cloud project.",
-        style = MaterialTheme.typography.labelSmall,
+        style = MaterialTheme.typography.labelSmall.subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f),
         modifier = Modifier.padding(horizontal = 4.dp),
     )
@@ -600,7 +601,7 @@ private fun AccountRow(signedIn: Boolean, email: String) {
                     signedIn -> "Account connected"
                     else -> "Sign in to start syncing across devices"
                 },
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

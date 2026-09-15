@@ -71,6 +71,10 @@ const val GUIDE_SCALE_MAX = 2.0f
 const val TEXT_SCALE_MIN = 0.85f
 const val TEXT_SCALE_MAX = 1.50f
 
+/** Subtext Size bounds (Appearance > Subtext Size). 5% stops, default 1.0. */
+const val SUBTEXT_SCALE_MIN = 0.85f
+const val SUBTEXT_SCALE_MAX = 1.50f
+
 /**
  * Typed DataStore wrapper, mirroring the iOS @AppStorage registry
  * (project_aeriotv_ios_architecture.md section C). Each key has a Flow getter
@@ -253,6 +257,30 @@ class AppPreferences @Inject constructor(
     }
     suspend fun setTextScale(value: Float) {
         store.edit { it[KEY_TEXT_SCALE] = snapTextScale(value).toDouble() }
+    }
+
+    /**
+     * Subtext Size multiplier (Appearance > Subtext Size). Scales ONLY
+     * secondary copy (descriptions, subtitles, metadata, captions) on top of
+     * [textScale]. Same 85%..150% range and 5% stops. Default 1.0. Synced.
+     */
+    val subtextScale: Flow<Float> = store.data.map {
+        snapTextScale((it[KEY_SUBTEXT_SCALE] ?: 1.0).toFloat())
+    }
+    suspend fun setSubtextScale(value: Float) {
+        store.edit { it[KEY_SUBTEXT_SCALE] = snapTextScale(value).toDouble() }
+    }
+
+    /**
+     * Text Contrast (Appearance > Text Contrast). 0.0 = the theme's dimmed /
+     * accent-tinted text as designed, 1.0 = plain white (dark) / black (light)
+     * text. 10% stops. Default 0.0. Synced.
+     */
+    val textContrast: Flow<Float> = store.data.map {
+        snapTextContrast((it[KEY_TEXT_CONTRAST] ?: 0.0).toFloat())
+    }
+    suspend fun setTextContrast(value: Float) {
+        store.edit { it[KEY_TEXT_CONTRAST] = snapTextContrast(value).toDouble() }
     }
 
     /** iOS `displayScaleLiveTV` parity. 0.85 .. 1.25. Default 1.0. */
@@ -1272,6 +1300,8 @@ class AppPreferences @Inject constructor(
         val out = mutableMapOf<String, String>()
         data[KEY_SELECTED_THEME]?.let { out["selectedTheme"] = it }
         data[KEY_TEXT_SCALE]?.let { out["textScale"] = it.toString() }
+        data[KEY_SUBTEXT_SCALE]?.let { out["subtextScale"] = it.toString() }
+        data[KEY_TEXT_CONTRAST]?.let { out["textContrast"] = it.toString() }
         // Appearance mode is the OPPOSITE of defaultLiveTVView: it MUST sync so
         // the user's Dark/Light/System choice follows them to every device.
         data[KEY_APPEARANCE_MODE]?.let { out["appearanceMode"] = it }
@@ -1334,6 +1364,8 @@ class AppPreferences @Inject constructor(
         store.edit { prefs ->
             keys["selectedTheme"]?.let { prefs[KEY_SELECTED_THEME] = it }
             keys["textScale"]?.toFloatOrNull()?.let { prefs[KEY_TEXT_SCALE] = snapTextScale(it).toDouble() }
+            keys["subtextScale"]?.toFloatOrNull()?.let { prefs[KEY_SUBTEXT_SCALE] = snapTextScale(it).toDouble() }
+            keys["textContrast"]?.toFloatOrNull()?.let { prefs[KEY_TEXT_CONTRAST] = snapTextContrast(it).toDouble() }
             keys["appearanceMode"]?.let { prefs[KEY_APPEARANCE_MODE] = it }
             keys["defaultTab"]?.let { prefs[KEY_DEFAULT_TAB] = it }
             keys["timeFormat"]?.let { prefs[KEY_TIME_FORMAT] = it }
@@ -1844,6 +1876,8 @@ class AppPreferences @Inject constructor(
         val KEY_DISPLAY_SCALE_LIVE_TV = doublePreferencesKey("display_scale_live_tv")
         val KEY_GUIDE_SCALE = doublePreferencesKey("guide_scale")
         val KEY_TEXT_SCALE = doublePreferencesKey("text_scale")
+        val KEY_SUBTEXT_SCALE = doublePreferencesKey("subtext_scale")
+        val KEY_TEXT_CONTRAST = doublePreferencesKey("text_contrast")
         val KEY_DEFAULT_TAB = stringPreferencesKey("default_tab")
         val KEY_NETWORK_TIMEOUT = doublePreferencesKey("network_timeout_secs")
         val KEY_MAX_RETRIES = intPreferencesKey("max_retries")
@@ -1904,4 +1938,10 @@ class AppPreferences @Inject constructor(
 fun snapTextScale(value: Float): Float {
     val v = if (value.isNaN()) 1f else value.coerceIn(TEXT_SCALE_MIN, TEXT_SCALE_MAX)
     return kotlin.math.round(v * 20f) / 20f
+}
+
+/** Clamp to 0..1 and snap to the nearest 10% stop (Text Contrast). */
+fun snapTextContrast(value: Float): Float {
+    val v = if (value.isNaN()) 0f else value.coerceIn(0f, 1f)
+    return kotlin.math.round(v * 10f) / 10f
 }

@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.favorites
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -176,7 +177,7 @@ fun FavoritesTabContent(
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = "Long-press a channel in Live TV and tap Add to Favorites.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

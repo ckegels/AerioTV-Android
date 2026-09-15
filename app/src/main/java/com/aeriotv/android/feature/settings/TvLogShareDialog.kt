@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -100,7 +101,7 @@ fun TvLogShareDialog(
                 Text(
                     text = "On your phone, scan the QR code or open this URL. " +
                         "The .txt file will download. Attach it to a GitHub Issue or email.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
@@ -142,7 +143,7 @@ fun TvLogShareDialog(
                     Text(
                         text = "The server stops when you close this screen. " +
                             "The TV and your phone must be on the same Wi-Fi network.",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                         textAlign = TextAlign.Center,
                     )

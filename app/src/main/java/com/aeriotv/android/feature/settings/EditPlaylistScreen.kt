@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.core.data.db.entity.sanitizeGuideDays
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -174,7 +176,7 @@ fun EditPlaylistScreen(
                 // discards and pops the screen. Phones/tablets keep Cancel.
                 if (!isTv) {
                     TextButton(onClick = onBack) {
-                        Text("Cancel", color = MaterialTheme.colorScheme.primary)
+                        Text("Cancel", color = MaterialTheme.colorScheme.textAccent)
                     }
                 }
             },
@@ -199,7 +201,7 @@ fun EditPlaylistScreen(
             Text(
                 "No playlist loaded",
                 modifier = Modifier.padding(24.dp),
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             return@Column
@@ -268,7 +270,7 @@ fun EditPlaylistScreen(
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = "Type: ${sourceType.displayName}. To switch types, use Change Playlist.",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -492,7 +494,7 @@ fun EditPlaylistScreen(
                                     Spacer(Modifier.width(12.dp))
                                     Text(
                                         "Loading profiles...",
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        style = MaterialTheme.typography.bodyMedium.subtext(),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -597,7 +599,7 @@ private fun ProfileRow(
             if (detail != null) {
                 Text(
                     text = detail,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -636,7 +638,7 @@ private fun Section(
         if (footer != null) {
             Text(
                 text = footer,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp),
             )

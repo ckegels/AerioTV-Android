@@ -245,7 +245,12 @@ fun GuideScreen(
     // and are shorter (tvOS 96 vs 110 pt).
     val liveTvLayout by settingsVm.liveTvLayout.collectAsStateWithLifecycle()
     val previewMode = isTv && liveTvLayout == "preview"
-    val rowHeight = if (isTv) (if (previewMode) 48.dp else 55.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale
+    // Subtext Size grows rows only (never shrinks them) by the share of the
+    // row that holds secondary lines (subtitle, description, time).
+    val subtextGrowth = com.aeriotv.android.ui.scale.LocalSubtextScale.current.let { s ->
+        1f + (s - 1f).coerceAtLeast(0f) * (if (!isTv && isPhoneIdiom) GUIDE_PHONE_SUBTEXT_SHARE else GUIDE_SUBTEXT_SHARE)
+    }
+    val rowHeight = (if (isTv) (if (previewMode) 48.dp else 55.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth
     val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
 
     // Clock: 30 s tick for the now-line and the airing tint.
@@ -1265,3 +1270,9 @@ internal object GuideCatchupReturn {
 
     fun consume(): Target? = pending.also { pending = null }
 }
+
+/** Share of a phone guide row (98dp) taken by secondary lines; drives Subtext Size growth. */
+internal const val GUIDE_PHONE_SUBTEXT_SHARE = 0.6f
+
+/** Share of a tablet / TV guide row taken by secondary lines. */
+internal const val GUIDE_SUBTEXT_SHARE = 0.45f

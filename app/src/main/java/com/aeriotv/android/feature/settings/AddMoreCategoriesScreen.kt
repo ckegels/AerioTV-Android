@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -137,7 +138,7 @@ fun AddMoreCategoriesScreen(
                 )
                 Text(
                     text = "Toggle a bucket on to colour matching programmes. Select the swatch to override its hex.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -163,7 +164,7 @@ fun AddMoreCategoriesScreen(
                         )
                         Text(
                             text = "Match an XMLTV category substring and pick its colour. Useful for genres outside the built-in buckets (e.g. Horror, Anime).",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -186,7 +187,7 @@ fun AddMoreCategoriesScreen(
                 item {
                     Text(
                         text = "No custom categories yet. Select + above to add one.",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 8.dp),
                     )

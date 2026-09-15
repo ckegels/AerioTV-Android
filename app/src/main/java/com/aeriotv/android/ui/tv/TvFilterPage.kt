@@ -1,5 +1,6 @@
 package com.aeriotv.android.ui.tv
 
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.EaseInOut
@@ -191,7 +192,7 @@ private fun FilterRow(
             fontSize = 13.sp,
             lineHeight = 16.sp,
             fontWeight = FontWeight.Medium,
-            color = colors.primary,
+            color = colors.textAccent,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,

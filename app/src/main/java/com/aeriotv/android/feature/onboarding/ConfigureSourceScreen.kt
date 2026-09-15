@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.onboarding
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.core.data.db.entity.sanitizeGuideDays
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
@@ -398,7 +400,7 @@ private fun DispatcharrFields(
             Text(
                 text = "Use your Dispatcharr Dashboard password (System -> Users -> Account tab), " +
                         "not your Dispatcharr XC password.",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             InfoBanner(
@@ -535,7 +537,7 @@ private fun ImportFileLink(label: String, onClick: () -> Unit) {
     Text(
         text = label,
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.textAccent,
         fontWeight = FontWeight.Medium,
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -598,7 +600,7 @@ private fun LanUrlField(state: PlaylistViewModel.UiState, viewModel: PlaylistVie
     Text(
         text = "AerioTV uses this URL automatically whenever your server is reachable on " +
                 "the local network, and the public one above otherwise. No setup needed.",
-        style = MaterialTheme.typography.bodySmall,
+        style = MaterialTheme.typography.bodySmall.subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
@@ -633,7 +635,7 @@ private fun IconTextField(
         modifier = Modifier.fillMaxWidth()
             .tvFormFieldInput(horizontalFocusEscape = trailing != null),
         singleLine = true,
-        placeholder = { Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        placeholder = { Text(placeholder, style = androidx.compose.material3.LocalTextStyle.current.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant) },
         leadingIcon = {
             Icon(
                 imageVector = leading,
@@ -838,7 +840,7 @@ private fun VodEnabledRow(
         }
         Text(
             text = "When off, this playlist's movies and TV shows aren't loaded into On Demand. Useful if you only want Live TV from this server, or if you have a second playlist that already provides On Demand. You can change this later in Settings.",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
@@ -886,7 +888,7 @@ private fun DvrDestinationRow(
         }
         Text(
             text = "Where recordings are saved by default. Server recording requires a Dispatcharr admin account. You can change this later in Settings > DVR.",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
@@ -933,7 +935,7 @@ private fun GuideHistoryRow(
         }
         Text(
             text = "How many days of guide data to load, back and ahead. Dispatcharr only; other sources show what their guide carries.",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )

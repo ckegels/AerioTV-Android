@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.ondemand
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -63,7 +65,7 @@ internal fun ExpandablePlot(plot: String, maxWidth: Dp) {
     Column(modifier = Modifier.widthIn(max = maxWidth)) {
         Text(
             text = plot,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = if (expanded) Int.MAX_VALUE else 4,
             overflow = TextOverflow.Ellipsis,
@@ -73,7 +75,7 @@ internal fun ExpandablePlot(plot: String, maxWidth: Dp) {
             Text(
                 text = if (expanded) "Less" else "More",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.textAccent,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .padding(top = 4.dp)
@@ -92,13 +94,13 @@ internal fun PhoneMetaRow(label: String, value: String) {
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = "$label:",
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.subtext(),
             color = MaterialTheme.colorScheme.tertiary,
             modifier = Modifier.width(60.dp),
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -249,7 +251,7 @@ private fun TmdbNoteRow(icon: androidx.compose.ui.graphics.vector.ImageVector, t
         )
         Text(
             text = text,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.subtext(),
             color = MaterialTheme.colorScheme.tertiary,
         )
     }

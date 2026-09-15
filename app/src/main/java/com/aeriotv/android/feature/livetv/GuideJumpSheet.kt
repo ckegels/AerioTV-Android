@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -104,7 +106,7 @@ fun GuideJumpSheet(
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
             Text("Jump To", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(14.dp))
-            Text("Day", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text("Day", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.textAccent)
             Spacer(Modifier.height(6.dp))
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 dayOffsets.forEach { offset ->
@@ -120,7 +122,7 @@ fun GuideJumpSheet(
                 }
             }
             Spacer(Modifier.height(14.dp))
-            Text("Time", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text("Time", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.textAccent)
             Spacer(Modifier.height(6.dp))
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 slots.forEach { (label, hour) ->
@@ -241,7 +243,7 @@ internal fun GuideJumpTvContent(
         }
         Text(
             java.text.SimpleDateFormat("EEEE, MMMM d, yyyy 'at' h:mm a", Locale.getDefault()).format(java.util.Date(target())),
-            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 4.dp)) {
             com.aeriotv.android.ui.tv.TvPill("Go", selected = true, onClick = { onJump(target()); onDismiss() })

@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.miniplayer
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -77,7 +79,7 @@ fun MiniPlayerRow(
                 Text(
                     text = channel.name.take(2).uppercase(),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -96,14 +98,14 @@ fun MiniPlayerRow(
                 Text(
                     text = nowProgramme.title,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             } else {
                 Text(
                     text = "Tap to resume",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

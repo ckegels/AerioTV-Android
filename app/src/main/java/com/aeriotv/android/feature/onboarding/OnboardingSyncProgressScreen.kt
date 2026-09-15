@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.onboarding
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -104,7 +105,7 @@ fun OnboardingSyncProgressScreen(
             Spacer(Modifier.height(6.dp))
             Text(
                 text = "Pulling your synced setup from Google Drive",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(20.dp))

@@ -1000,7 +1000,16 @@ class MainActivity : ComponentActivity() {
             // multiplier for every sp in this window. Dialogs / sheets / menus
             // re-apply it in their own windows (see ui/scale/AppTextScale.kt).
             val textScale by appPreferences.textScale.collectAsState(initial = 1f)
-            CompositionLocalProvider(LocalAppTextScale provides textScale) {
+            // Subtext Size + Text Contrast (Appearance): plain locals, so they
+            // cross Dialog / sheet / menu windows without a shim. The theme
+            // reads LocalTextContrast to build its text color tokens.
+            val subtextScale by appPreferences.subtextScale.collectAsState(initial = 1f)
+            val textContrast by appPreferences.textContrast.collectAsState(initial = 0f)
+            CompositionLocalProvider(
+                LocalAppTextScale provides textScale,
+                com.aeriotv.android.ui.scale.LocalSubtextScale provides subtextScale,
+                com.aeriotv.android.ui.theme.LocalTextContrast provides textContrast,
+            ) {
             ProvideAppTextScale {
             AerioTVTheme(
                 appTheme = theme,

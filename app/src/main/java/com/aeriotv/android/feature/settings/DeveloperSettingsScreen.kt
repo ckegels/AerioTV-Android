@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -427,7 +428,7 @@ private fun DevSectionGroup(
             Spacer(Modifier.height(2.dp))
             Text(
                 text = footer,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
@@ -463,7 +464,7 @@ private fun InfoRow(icon: ImageVector?, label: String, value: String) {
         }
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
@@ -502,7 +503,7 @@ private fun CategoryRow(icon: ImageVector, title: String, detail: String) {
             )
             Text(
                 text = detail,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

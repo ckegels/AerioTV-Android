@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.multiview
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -308,7 +310,7 @@ fun AddToMultiviewSheet(
                 TextButton(onClick = onLaunch, enabled = canLaunch) {
                     Text(
                         text = "Play (${selected.size})",
-                        color = if (canLaunch) MaterialTheme.colorScheme.primary
+                        color = if (canLaunch) MaterialTheme.colorScheme.textAccent
                         else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -774,7 +776,7 @@ private fun NowPlayingPinnedRow(
     ) {
         Text(
             text = channel.channelNumber ?: "",
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(28.dp),
         )
@@ -796,7 +798,7 @@ private fun NowPlayingPinnedRow(
                 Text(
                     text = channel.name.take(2).uppercase(),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -815,7 +817,7 @@ private fun NowPlayingPinnedRow(
                 text = if (nowTitle.isNotBlank()) "Tile 1 · Now playing · $nowTitle"
                 else "Tile 1 · Now playing",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.textAccent,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -857,7 +859,7 @@ private fun ChannelPickerRow(
     ) {
         Text(
             text = channel.channelNumber ?: "",
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(28.dp),
         )
@@ -879,7 +881,7 @@ private fun ChannelPickerRow(
                 Text(
                     text = channel.name.take(2).uppercase(),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -898,7 +900,7 @@ private fun ChannelPickerRow(
                 Text(
                     text = nowTitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1003,7 +1005,7 @@ private fun VodPickerRow(
             if (subtitle.isNotBlank()) {
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1064,7 +1066,7 @@ private fun BackRow(onClick: () -> Unit) {
         Text(
             text = "All Series",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
             fontWeight = FontWeight.Medium,
         )
     }

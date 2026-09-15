@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -126,6 +128,8 @@ fun AppearanceSettingsScreen(
     val scaleMovies by viewModel.displayScaleMovies.collectAsStateWithLifecycle(initialValue = 1.0f)
     val scaleLiveTV by viewModel.displayScaleLiveTV.collectAsStateWithLifecycle(initialValue = 1.0f)
     val textScale by viewModel.textScale.collectAsStateWithLifecycle(initialValue = 1.0f)
+    val subtextScale by viewModel.subtextScale.collectAsStateWithLifecycle(initialValue = 1.0f)
+    val textContrast by viewModel.textContrast.collectAsStateWithLifecycle(initialValue = 0f)
     val useCustomAccent by viewModel.useCustomAccent.collectAsStateWithLifecycle(initialValue = false)
     val customAccentHex by viewModel.customAccentHex.collectAsStateWithLifecycle(initialValue = "")
     val showChannelLogos by viewModel.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
@@ -252,8 +256,38 @@ fun AppearanceSettingsScreen(
                     footer = "Scales all text in AerioTV, on top of your device's font size. Changes apply live.",
                 ) {
                     TextSizeSliderRow(
+                        label = "Text Size",
+                        stops = TEXT_SCALE_STOPS,
                         value = textScale,
                         onValueChange = viewModel::setTextScale,
+                    )
+                }
+
+                // SUBTEXT SIZE card: extra multiplier for secondary copy only
+                // (descriptions, subtitles, metadata), stacking on Text Size.
+                settingsCard(
+                    header = "Subtext Size",
+                    footer = "Scales only secondary text such as descriptions, program details, and captions, on top of Text Size. Titles and buttons stay the same. Changes apply live.",
+                ) {
+                    TextSizeSliderRow(
+                        label = "Subtext Size",
+                        stops = TEXT_SCALE_STOPS,
+                        value = subtextScale,
+                        onValueChange = viewModel::setSubtextScale,
+                    )
+                }
+
+                // TEXT CONTRAST card: blends dimmed and accent-tinted text
+                // toward plain white (dark) / black (light).
+                settingsCard(
+                    header = "Text Contrast",
+                    footer = "Makes dimmed and accent-colored text brighter in dark mode and darker in light mode. 0% keeps the theme's look, 100% uses plain white or black text. Changes apply live.",
+                ) {
+                    TextSizeSliderRow(
+                        label = "Text Contrast",
+                        stops = TEXT_CONTRAST_STOPS,
+                        value = textContrast,
+                        onValueChange = viewModel::setTextContrast,
                     )
                 }
 
@@ -511,7 +545,7 @@ private fun LazyListScope.settingsCard(
             if (footer != null) {
                 Text(
                     text = footer,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 4.dp),
                 )
@@ -578,7 +612,7 @@ private fun ThemeRow(
             )
             Text(
                 text = themeSubtitle(theme),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -654,7 +688,7 @@ private fun AppearanceModeRow(
             )
             Text(
                 text = appearanceModeSubtitle(mode),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -876,7 +910,7 @@ private fun ToggleRow(
             )
             Text(
                 text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -894,46 +928,51 @@ private val SCALE_SEGMENTS: List<Pair<Float, String>> = listOf(
     1.25f to "125%", 1.50f to "150%", 1.75f to "175%",
 )
 
-/** Text Size stops: 85% .. 150% in 5% steps. */
+/** Text Contrast stops: 0% .. 100% in 10% steps. */
+private val TEXT_CONTRAST_STOPS: List<Float> = (0..10).map { it / 10f }
+
+/** Text Size / Subtext Size stops: 85% .. 150% in 5% steps. */
 private val TEXT_SCALE_STOPS: List<Float> =
     (0..((TEXT_SCALE_MAX - TEXT_SCALE_MIN) * 20f).roundToInt()).map { TEXT_SCALE_MIN + it * 0.05f }
 
 /**
- * Text Size row: label left, current percent right, a stepped Material
+ * Text Size / Subtext Size / Text Contrast row: label left, current percent right, a stepped Material
  * slider beneath. Same shape as the SteppedSliderRow in App Behaviors and
  * TV-safe the same way ([dpadFocusEscape]: UP/DOWN leave the slider,
  * LEFT/RIGHT step one 5% stop).
  */
 @Composable
 private fun TextSizeSliderRow(
+    label: String,
+    stops: List<Float>,
     value: Float,
     onValueChange: (Float) -> Unit,
 ) {
-    val idx = TEXT_SCALE_STOPS.indices.minByOrNull { kotlin.math.abs(TEXT_SCALE_STOPS[it] - value) } ?: 0
+    val idx = stops.indices.minByOrNull { kotlin.math.abs(stops[it] - value) } ?: 0
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "Text Size",
+                text = label,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = "${(TEXT_SCALE_STOPS[idx] * 100f).roundToInt()}%",
+                text = "${(stops[idx] * 100f).roundToInt()}%",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.textAccent,
                 fontWeight = FontWeight.SemiBold,
             )
         }
         Slider(
             value = idx.toFloat(),
             onValueChange = { raw ->
-                val newIdx = raw.roundToInt().coerceIn(0, TEXT_SCALE_STOPS.lastIndex)
-                if (newIdx != idx) onValueChange(TEXT_SCALE_STOPS[newIdx])
+                val newIdx = raw.roundToInt().coerceIn(0, stops.lastIndex)
+                if (newIdx != idx) onValueChange(stops[newIdx])
             },
-            valueRange = 0f..TEXT_SCALE_STOPS.lastIndex.toFloat(),
-            steps = (TEXT_SCALE_STOPS.size - 2).coerceAtLeast(0),
+            valueRange = 0f..stops.lastIndex.toFloat(),
+            steps = (stops.size - 2).coerceAtLeast(0),
             modifier = Modifier.dpadFocusEscape(),
             colors = SliderDefaults.colors(
                 thumbColor = MaterialTheme.colorScheme.primary,
@@ -984,7 +1023,7 @@ private fun ScaleSliderRow(
                 Text(
                     text = segLabel,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (selected) MaterialTheme.colorScheme.primary
+                    color = if (selected) MaterialTheme.colorScheme.textAccent
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                 )
@@ -1064,7 +1103,7 @@ private fun AddMoreCategoriesRow(
             )
             Text(
                 text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -1122,7 +1161,7 @@ private fun AccentPickerDialog(
                     Spacer(Modifier.size(12.dp))
                     Text(
                         text = if (isValid) "Preview $sanitized" else "Enter 6-char hex",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.reminders
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -123,7 +124,7 @@ fun ReminderBannerHost(
                                 "Starting now on ${banner.channelName}"
                             else
                                 "Starting now",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,

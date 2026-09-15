@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.update
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -248,7 +249,7 @@ private fun UpdatePromptBody(
     Spacer(Modifier.height(8.dp))
     Text(
         text = bodyText,
-        style = MaterialTheme.typography.bodyMedium,
+        style = MaterialTheme.typography.bodyMedium.subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (notes.isNotBlank()) {
@@ -258,7 +259,7 @@ private fun UpdatePromptBody(
         val notesScroll = rememberScrollState()
         Text(
             text = notes,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .heightIn(max = 180.dp)
@@ -275,7 +276,7 @@ private fun UpdatePromptBody(
         Spacer(Modifier.height(4.dp))
         Text(
             text = "$pct%",
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

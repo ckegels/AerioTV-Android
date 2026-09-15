@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -460,7 +462,7 @@ fun LiveTvPhoneHeaderRow(
                 )
                 Text(
                     text = channelCount.toString(),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.subtext(),
                     color = MaterialTheme.colorScheme.tertiary,
                     maxLines = 1,
                 )
@@ -583,7 +585,7 @@ private fun LiveTvHeaderActions(
                     text = {
                         Text(
                             text = mode.label,
-                            color = if (mode == sortMode) MaterialTheme.colorScheme.primary
+                            color = if (mode == sortMode) MaterialTheme.colorScheme.textAccent
                             else MaterialTheme.colorScheme.onSurface,
                             fontWeight = if (mode == sortMode) FontWeight.SemiBold
                             else FontWeight.Normal,

@@ -1,5 +1,8 @@
 package com.aeriotv.android.feature.multiview
 
+import com.aeriotv.android.ui.theme.decorTertiary
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import android.content.res.Configuration
 import android.util.Log
 import android.view.LayoutInflater
@@ -359,7 +362,7 @@ fun MultiviewScreen(
         ) {
             Text(
                 text = "No tiles selected.",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             CloseButton(onClose = onClose)
@@ -528,7 +531,7 @@ fun MultiviewScreen(
                 text = countLabel,
                 style = MaterialTheme.typography.labelMedium,
                 color = if (labelHighlighted)
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.textAccent
                 else
                     Color.White.copy(alpha = 0.85f),
                 fontWeight = if (labelHighlighted) FontWeight.Bold else FontWeight.Normal,
@@ -1461,7 +1464,7 @@ private fun Tile(
     // outranks the audio-focus border so the navigation cursor is never
     // ambiguous; the speaker icon still distinguishes the audio tile.
     val targetBorderColor = when {
-        isDropTarget -> MaterialTheme.colorScheme.tertiary
+        isDropTarget -> MaterialTheme.colorScheme.decorTertiary
         isRelocating -> MaterialTheme.colorScheme.primary
         dpadFocused -> Color.White
         isAudioFocused && audioFocusStyle == "grayPersistent" ->

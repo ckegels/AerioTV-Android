@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.onboarding
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -120,7 +121,7 @@ fun ChooseSourceTypeScreen(
                 )
                 Text(
                     text = "Select how you want to connect to your media source.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )

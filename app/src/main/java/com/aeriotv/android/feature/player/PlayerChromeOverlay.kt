@@ -1,5 +1,9 @@
 package com.aeriotv.android.feature.player
 
+import com.aeriotv.android.ui.theme.decorSecondary
+import com.aeriotv.android.ui.theme.forText
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -967,8 +971,8 @@ private val TV_TIMELINE_INSET = 56.dp
 private fun PlayerFormatBadge(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
-        fontSize = 9.sp,
-        lineHeight = 11.sp,
+        fontSize = 9.sp.subtext(),
+        lineHeight = 11.sp.subtext(),
         fontWeight = FontWeight.Medium,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
         maxLines = 1,
@@ -1106,8 +1110,8 @@ private fun PlayerMoreMenu(
             // row); Back closes the dropdown, which the "‹" chevron represents.
             Text(
                 text = "Press ‹ to close",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                fontSize = 12.sp.subtext(),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f).forText(),
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
             )
         }
@@ -1297,7 +1301,7 @@ private fun InfoCard(
                     Text(
                         text = channel.name.take(2).uppercase(),
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.textAccent,
                         fontWeight = FontWeight.Bold,
                     )
                 }
@@ -1444,7 +1448,7 @@ private fun RewindTransportBar(
                 color = if (state.timeshifting && behindMs > 5_000) {
                     Color.White.copy(alpha = 0.8f)
                 } else {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.textAccent
                 },
             )
         }
@@ -1760,7 +1764,7 @@ private fun TvRewindTimeline(
                 color = if (showBehind) {
                     Color.White.copy(alpha = 0.8f)
                 } else {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.textAccent
                 },
             )
         }
@@ -1868,7 +1872,7 @@ private fun StreamInfoSection(label: String, lines: List<String>) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.width(64.dp),
         )
@@ -1908,7 +1912,7 @@ fun SubtitlesSheet(
             if (tracks.isEmpty()) {
                 Text(
                     text = "No subtitle tracks reported by the stream.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
                 )
@@ -1956,7 +1960,7 @@ fun AudioTracksSheet(
             if (tracks.isEmpty()) {
                 Text(
                     text = "No audio tracks reported by the stream.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
                 )
@@ -1984,7 +1988,7 @@ fun AudioTracksSheet(
             // threading it through each caller would add plumbing for no
             // isolation gain. Mirrored on iOS/tvOS via mpv audio-delay.
             Spacer(Modifier.height(14.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.decorSecondary.copy(alpha = 0.2f))
             Spacer(Modifier.height(10.dp))
             var syncMs by remember {
                 mutableStateOf(com.aeriotv.android.core.playback.AudioSyncOffset.offsetMs)
@@ -2007,7 +2011,7 @@ fun AudioTracksSheet(
                 Spacer(Modifier.weight(1f))
                 Text(
                     text = if (syncMs == 0L) "0 ms" else "%+d ms".format(syncMs),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -2027,7 +2031,7 @@ fun AudioTracksSheet(
             }
             Text(
                 text = "Positive plays audio later; negative plays it earlier.",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
@@ -2070,7 +2074,7 @@ fun SwitchStreamSheet(
             if (streams.isEmpty()) {
                 Text(
                     text = "No alternate streams available for this channel.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
                 )

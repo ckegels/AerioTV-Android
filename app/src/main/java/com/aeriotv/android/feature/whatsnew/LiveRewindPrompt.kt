@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.whatsnew
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -91,7 +92,7 @@ fun LiveRewindPromptGate(currentRoute: String?) {
                 Text(
                     "Buffered video is deleted automatically. You can change " +
                         "this anytime in Settings > App Behaviors > Live Rewind.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

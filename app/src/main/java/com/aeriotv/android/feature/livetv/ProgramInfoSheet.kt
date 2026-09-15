@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.scale.subtext
 import com.aeriotv.android.core.ui.subtitleIsRedundant
 import com.aeriotv.android.core.ui.rememberClockMode
 import com.aeriotv.android.core.ui.ClockFormat
@@ -283,7 +284,7 @@ private fun TvProgramInfoCard(
                 fontSize = 19.sp, lineHeight = 23.sp, fontWeight = FontWeight.Bold, color = colors.onBackground,
             )
             target.subTitle?.takeIf { !subtitleIsRedundant(it, target.title, target.description) }?.let { sub ->
-                Text(sub, fontSize = 12.sp, fontStyle = FontStyle.Italic, color = colors.onSurfaceVariant)
+                Text(sub, fontSize = 12.sp.subtext(), fontStyle = FontStyle.Italic, color = colors.onSurfaceVariant)
             }
             val showEpgBadges = LocalShowEpgBadges.current
             val badges = buildList {
@@ -464,7 +465,7 @@ private fun ProgramInfoBody(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = sub,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontStyle = FontStyle.Italic,
                 )
@@ -517,7 +518,7 @@ private fun ProgramInfoBody(
     if (target.description.isBlank()) {
         Text(
             text = "No program description provided in XMLTV.",
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontStyle = FontStyle.Italic,
         )
@@ -578,7 +579,7 @@ private fun InfoRow(label: String, value: String, verticalPadding: Dp) {
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(

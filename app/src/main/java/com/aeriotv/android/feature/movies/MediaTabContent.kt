@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.movies
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -386,7 +387,7 @@ fun MediaTabContent(
         if (personMatchName != null) add(PageRow("person") {
             Text(
                 "Includes titles with $personMatchName",
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.subtext(),
                 color = MaterialTheme.colorScheme.tertiary,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
@@ -671,7 +672,7 @@ fun MediaPosterCard(
             modifier = Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { 28.sp.toDp() } + 2.dp),
         )
         Text(
-            item.year?.toString() ?: " ", fontSize = 10.sp,
+            item.year?.toString() ?: " ", fontSize = 10.sp.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),

@@ -1,5 +1,6 @@
 package com.aeriotv.android.ui
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -34,12 +35,12 @@ fun TmdbAttribution(modifier: Modifier = Modifier, long: Boolean = true, isTv: B
         // Their required line first, ours second.
         Text(
             text = "This product uses the TMDB API but is not endorsed or certified by TMDB.",
-            style = style,
+            style = style.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
             text = "TMDB data is used only after configuring a TMDB API key in Settings > App Behaviors.",
-            style = style,
+            style = style.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

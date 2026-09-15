@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.movies.tv
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -206,7 +207,7 @@ internal fun TvMediaTab(
     val extras = buildList<@Composable () -> Unit> {
         if (personMatchName != null) add {
             Text(
-                "Includes titles with $personMatchName", fontSize = 10.sp,
+                "Includes titles with $personMatchName", fontSize = 10.sp.subtext(),
                 color = MaterialTheme.colorScheme.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }

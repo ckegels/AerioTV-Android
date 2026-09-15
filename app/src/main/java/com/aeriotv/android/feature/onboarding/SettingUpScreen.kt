@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.onboarding
 
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -101,7 +102,7 @@ fun SettingUpScreen(onSkip: () -> Unit) {
             }
             Spacer(Modifier.height(28.dp))
             TextButton(onClick = onSkip) {
-                Text("Skip", color = MaterialTheme.colorScheme.primary)
+                Text("Skip", color = MaterialTheme.colorScheme.textAccent)
             }
         }
     }
@@ -153,7 +154,7 @@ private fun StageRow(label: String, status: StageStatus, showSynced: Boolean) {
                 Text(
                     text = "Synced",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                 )
             }
         }

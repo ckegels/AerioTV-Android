@@ -1,5 +1,8 @@
 package com.aeriotv.android.feature.livetv.grid
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
+import com.aeriotv.android.ui.theme.forText
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -229,7 +232,7 @@ fun GuidePreviewBanner(
             }
         }
         if (program == null) {
-            Text("Select a program", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = colors.tertiary)
+            Text("Select a program", fontSize = 13.sp.subtext(), fontWeight = FontWeight.Medium, color = colors.tertiary)
         } else {
             // The mini (205 dp wide, 20 dp from the end) floats over the
             // banner's right end; the copy stops short of it rather than the
@@ -248,26 +251,26 @@ fun GuidePreviewBanner(
                         modifier = Modifier.weight(1f, fill = false).alignByBaseline(),
                     )
                     if (channel != null) {
-                        Text(channel.name, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = colors.primary, maxLines = 1, modifier = Modifier.alignByBaseline())
+                        Text(channel.name, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = colors.textAccent, maxLines = 1, modifier = Modifier.alignByBaseline())
                     }
                 }
                 val sub = program.subTitle?.takeIf { !subtitleIsRedundant(it, program.title, program.description) }
                 if (sub != null) {
-                    Text(sub, fontSize = 11.sp, fontWeight = FontWeight.Medium, fontStyle = FontStyle.Italic, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(sub, fontSize = 11.sp.subtext(), fontWeight = FontWeight.Medium, fontStyle = FontStyle.Italic, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     val range = fmt.format(Date(program.startMillis)) + " - " + fmt.format(Date(program.endMillis))
-                    Text(range, fontSize = 10.sp, fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant, maxLines = 1)
+                    Text(range, fontSize = 10.sp.subtext(), fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant, maxLines = 1)
                     // Date-coded seasons ("S2026 E905") are not episode identity.
                     val se = seasonEpisodeLabel(program.season, program.episode)?.takeIf { (program.season ?: 0) < 1900 }
                     if (se != null) {
-                        Text("·", fontSize = 10.sp, color = colors.tertiary)
-                        Text(se, fontSize = 10.sp, fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant)
+                        Text("·", fontSize = 10.sp.subtext(), color = colors.tertiary)
+                        Text(se, fontSize = 10.sp.subtext(), fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant)
                     }
                     if (program.startMillis <= nowMs && nowMs < program.endMillis) {
                         val left = ((program.endMillis - nowMs) / 60_000L).toInt().coerceAtLeast(1)
-                        Text("·", fontSize = 10.sp, color = colors.tertiary)
-                        Text(if (left >= 60) "${left / 60} h ${left % 60} min left" else "$left min left", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant)
+                        Text("·", fontSize = 10.sp.subtext(), color = colors.tertiary)
+                        Text(if (left >= 60) "${left / 60} h ${left % 60} min left" else "$left min left", fontSize = 10.sp.subtext(), fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant)
                     }
                     if (showBadges) EpgFlagsRow(flags = program.epgFlags(), compact = true)
                 }
@@ -275,12 +278,12 @@ fun GuidePreviewBanner(
                     val interaction = remember { MutableInteractionSource() }
                     var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
                     Text(
-                        program.description, fontSize = 11.sp, lineHeight = 14.sp,
+                        program.description, fontSize = 11.sp.subtext(), lineHeight = 14.sp.subtext(),
                         // The banner height is fixed (drawer math + mini
                         // baseline), so large Text Sizes trade a description
                         // line for room instead of pushing the title out the top.
-                        color = colors.onBackground.copy(alpha = 0.85f),
-                        maxLines = androidx.compose.ui.platform.LocalDensity.current.fontScale.let { fs ->
+                        color = colors.onBackground.copy(alpha = 0.85f).forText(),
+                        maxLines = (androidx.compose.ui.platform.LocalDensity.current.fontScale * com.aeriotv.android.ui.scale.LocalSubtextScale.current).let { fs ->
                             when { fs >= 1.35f -> 1; fs >= 1.1f -> 2; else -> 3 }
                         },
                         overflow = TextOverflow.Ellipsis,

@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -205,7 +207,7 @@ fun ManageGroupsSheet(
                     onSave(working.toSet())
                     onDismiss()
                 }) {
-                    Text("Done", color = MaterialTheme.colorScheme.primary)
+                    Text("Done", color = MaterialTheme.colorScheme.textAccent)
                 }
             }
             if (reorderEnabled) {
@@ -217,7 +219,7 @@ fun ManageGroupsSheet(
                 ) {
                     Text(
                         text = "Order",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 4.dp, end = 4.dp),
                     )
@@ -226,7 +228,7 @@ fun ManageGroupsSheet(
                         TextButton(onClick = { onSortModeChange(mode) }) {
                             Text(
                                 text = mode.label,
-                                color = if (selected) MaterialTheme.colorScheme.primary
+                                color = if (selected) MaterialTheme.colorScheme.textAccent
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                             )
@@ -243,12 +245,12 @@ fun ManageGroupsSheet(
                 Text(
                     text = if (manualReorder) "Drag to reorder, check to show or hide."
                     else "Check groups to show, uncheck to hide.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = { working = mutableSetOf() }) {
-                    Text("All", color = MaterialTheme.colorScheme.primary)
+                    Text("All", color = MaterialTheme.colorScheme.textAccent)
                 }
                 Box(
                     modifier = Modifier
@@ -256,7 +258,7 @@ fun ManageGroupsSheet(
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                 )
                 TextButton(onClick = { working = allGroups.toMutableSet() }) {
-                    Text("None", color = MaterialTheme.colorScheme.primary)
+                    Text("None", color = MaterialTheme.colorScheme.textAccent)
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
@@ -312,7 +314,7 @@ fun ManageGroupsSheet(
                 ) {
                     Text(
                         text = "No groups available",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -525,7 +527,7 @@ fun TvGroupPicker(
                                     text = mode.label,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selected) MaterialTheme.colorScheme.primary
+                                    color = if (selected) MaterialTheme.colorScheme.textAccent
                                     else MaterialTheme.colorScheme.onSurface,
                                 )
                             }
@@ -567,7 +569,7 @@ fun TvGroupPicker(
                                     text = label,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selected) MaterialTheme.colorScheme.primary
+                                    color = if (selected) MaterialTheme.colorScheme.textAccent
                                     else MaterialTheme.colorScheme.onSurface,
                                 )
                             }
@@ -575,7 +577,7 @@ fun TvGroupPicker(
                     }
                     Text(
                         text = "Shift guide moves the TV Guide over so the sidebar never covers programs.",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 28.dp, vertical = 2.dp),
                     )
@@ -593,7 +595,7 @@ fun TvGroupPicker(
                     ) {
                         Text(
                             text = "No groups available",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -756,7 +758,7 @@ fun TvGroupPicker(
                                 },
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (visible || isMoving) MaterialTheme.colorScheme.primary
+                                color = if (visible || isMoving) MaterialTheme.colorScheme.textAccent
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
