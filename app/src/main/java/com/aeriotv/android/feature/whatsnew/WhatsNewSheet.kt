@@ -318,7 +318,7 @@ object WhatsNewContent {
         ),
         WhatsNewItem(
             title = "More audio formats decoded",
-            body = "AAC, AC-3, E-AC-3, DTS, TrueHD, MP2, MP3, FLAC and ALAC now decode in the app when the device cannot.",
+            body = "More audio formats now decode in the app when the device cannot.",
         ),
         WhatsNewItem(
             title = "TV guide sidebar and remote keys",
