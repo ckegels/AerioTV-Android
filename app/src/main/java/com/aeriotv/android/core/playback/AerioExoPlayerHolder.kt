@@ -951,6 +951,15 @@ class AerioExoPlayerHolder @Inject constructor(
      *  unavailable overlay shows it so "Channel unavailable" stops hiding
      *  what actually went wrong. Cleared on the next [playUrl]. */
     val lastErrorText: StateFlow<String?> = _lastErrorText.asStateFlow()
+    private val _connectionLimit = MutableStateFlow<DispatcharrConnectionLimit.Notice?>(null)
+    /** Set when Dispatcharr refused the live / catch-up request with an exact
+     *  connection-limit signal (see [DispatcharrConnectionLimit]). The player
+     *  shows the notice with Retry; nothing retries automatically. Cleared by
+     *  the next tune or [retryConnectionLimit]. */
+    val connectionLimit: StateFlow<DispatcharrConnectionLimit.Notice?> = _connectionLimit.asStateFlow()
+    /** Whether the tune the limit notice refused was a catch-up replay, so
+     *  Retry re-tunes the archive and not the live channel. */
+    private var connectionLimitWasCatchup = false
     /** The URL to replay when the unavailable overlay retries. Preserved by
      *  [markStreamUnavailable] BEFORE it calls [stop] (which nulls
      *  [lastPlayUrl]) - without this every [retryUnavailable] hit the
@@ -1158,6 +1167,9 @@ class AerioExoPlayerHolder @Inject constructor(
                 rebuildWithStockAudioAndReplay()
                 return
             }
+            // Dispatcharr connection limit (exact server signal, Direct Connect
+            // only): show the notice and stop. No reload ladder, no walk.
+            if (handleConnectionLimit(error)) return
             // Android companion to the frame-stall path: a terminal source/HTTP
             // error. Re-prime under the same cooldown + reload cap. If a LAN/WAN
             // failover hook is set (PlayerScreen mount), ask it to re-probe and
@@ -1987,7 +1999,10 @@ class AerioExoPlayerHolder @Inject constructor(
         val source = ProgressiveMediaSource.Factory(
             tracer.wrapDataSourceFactory(httpDataSourceFactory(isLive = true)),
             tsOnlyExtractorsFactory(),
-        ).createMediaSource(mediaItem)
+        )
+            // A Dispatcharr connection-limit refusal is shown, never re-GET.
+            .setLoadErrorHandlingPolicy(DispatcharrConnectionLimit.LoadErrorPolicy())
+            .createMediaSource(mediaItem)
         p.setMediaSource(source)
         retireLiveCalls(p, staleCalls)
         p.prepare()
@@ -2165,7 +2180,7 @@ class AerioExoPlayerHolder @Inject constructor(
         val headerUa = httpHeaders.entries
             .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
             ?.value
-        val calls = LiveCallTracker(liveHttpClient).also { liveCallTrackers.add(it) }
+        val calls = LiveCallTracker(liveHttpClient, pendingRetireGate).also { liveCallTrackers.add(it) }
         val factory = OkHttpDataSource.Factory(calls)
             .setUserAgent(okHttpSafeUserAgent(headerUa ?: DEFAULT_PLAYBACK_USER_AGENT))
         val nonUaHeaders = okHttpSafeHeaders(
@@ -2184,12 +2199,35 @@ class AerioExoPlayerHolder @Inject constructor(
      * (~10 s) or the read timeout. Same discipline as TimeshiftController's
      * fill: cancel the CALL. A cancel after [cancelAll] applies to any late
      * retry the dying source still makes.
+     *
+     * [openGate] orders a same-player tune: the superseded source's Calls are
+     * cancelled on the playback looper right after setMediaSource (so their
+     * read failure reports as a canceled load), and a prepared player can start
+     * the NEW source's loader before that post runs. The new source therefore
+     * waits on the gate before issuing its first request, so the old
+     * Dispatcharr connection is always closed before the new one opens (a
+     * per-user stream limit otherwise counts both). Bounded so a player
+     * released before the post runs can never wedge the loader thread.
      */
-    private class LiveCallTracker(private val client: OkHttpClient) : okhttp3.Call.Factory {
+    private class LiveCallTracker(
+        private val client: OkHttpClient,
+        private val openGate: java.util.concurrent.CountDownLatch? = null,
+    ) : okhttp3.Call.Factory {
         private val calls = ArrayDeque<okhttp3.Call>()
         private var cancelled = false
 
         override fun newCall(request: okhttp3.Request): okhttp3.Call {
+            openGate?.let { gate ->
+                if (gate.count > 0L) {
+                    val closed = try {
+                        gate.await(RETIRE_GATE_MAX_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        false
+                    }
+                    if (!closed) Log.w(TAG, "[TUNE] stale live connection not closed after ${RETIRE_GATE_MAX_WAIT_MS}ms; opening anyway")
+                }
+            }
             val call = client.newCall(request)
             synchronized(this) {
                 if (cancelled) {
@@ -2221,8 +2259,17 @@ class AerioExoPlayerHolder @Inject constructor(
     private fun takeLiveCallTrackers(): List<LiveCallTracker> {
         val stale = liveCallTrackers.toList()
         liveCallTrackers.removeAll(stale.toSet())
+        // A gate nobody retired (a take with no source swap after it) must
+        // never hold a later source.
+        pendingRetireGate?.countDown()
+        pendingRetireGate = if (stale.isEmpty()) null else java.util.concurrent.CountDownLatch(1)
         return stale
     }
+
+    /** Opens when the stale Calls taken by the latest [takeLiveCallTrackers]
+     *  have been cancelled; live sources built in between wait on it before
+     *  their first request (see [LiveCallTracker]). Main thread only. */
+    private var pendingRetireGate: java.util.concurrent.CountDownLatch? = null
 
     /** Cancel [stale] Calls once ExoPlayer has released the old period.
      *  Posted to the playback looper, so it runs after the stop /
@@ -2230,8 +2277,24 @@ class AerioExoPlayerHolder @Inject constructor(
      *  resulting read failure then reports as a canceled load, never as a
      *  load error the reconnect / 503 / stall paths would act on. */
     private fun retireLiveCalls(p: ExoPlayer, stale: List<LiveCallTracker>) {
-        if (stale.isEmpty()) return
-        android.os.Handler(p.playbackLooper).post { stale.forEach { it.cancelAll() } }
+        val gate = pendingRetireGate
+        pendingRetireGate = null
+        if (stale.isEmpty()) {
+            gate?.countDown()
+            return
+        }
+        val posted = android.os.Handler(p.playbackLooper).post {
+            try {
+                stale.forEach { it.cancelAll() }
+            } finally {
+                gate?.countDown()
+            }
+        }
+        if (!posted) {
+            // Playback looper already gone: nothing is loading, close now.
+            stale.forEach { it.cancelAll() }
+            gate?.countDown()
+        }
     }
 
     /**
@@ -2424,6 +2487,8 @@ class AerioExoPlayerHolder @Inject constructor(
             // release() blocks until the playback thread let go of the
             // loaders, so the stale Calls can be cancelled right here.
             staleCalls.forEach { it.cancelAll() }
+            pendingRetireGate?.countDown()
+            pendingRetireGate = null
             PlaybackActivityTracker.playerReleased()
         }
     }
@@ -2786,6 +2851,7 @@ class AerioExoPlayerHolder @Inject constructor(
      * substitute a guessed cause such as "too many connections".
      */
     private fun handleLive503(error: Throwable): Boolean {
+        if (DispatcharrConnectionLimit.parse(error) != null) return false
         val info = Dispatcharr503.parse(error) ?: return false
         // Live only: VOD / catch-up / DVR have their own error paths and no
         // member-stream walk to fall back on.
@@ -2883,6 +2949,48 @@ class AerioExoPlayerHolder @Inject constructor(
         // switch to, and that case must still reach the unavailable card.
         liveFailover.onServer503(info.reason)
         return false
+    }
+
+    /**
+     * Dispatcharr connection-limit refusal on a live or catch-up tune: record
+     * the notice, stop the pipeline (no reconnect, no failover walk, no
+     * Reconnecting status) and keep what Retry needs. Returns true when the
+     * error was a limit refusal this holder now owns, including the duplicate
+     * second sighting (load error, then terminal player error).
+     */
+    private fun handleConnectionLimit(error: Throwable): Boolean {
+        val notice = DispatcharrConnectionLimit.parse(error) ?: return false
+        if (_connectionLimit.value != null) return true
+        if (isTimeshifting) return false
+        val url = lastPlayUrl
+        val catchup = isCatchup
+        if (!catchup && (url == null || PlaybackTracer.urlKind(url) != "live")) return false
+        Log.w(TAG, "[LIMIT] ${notice.kind} \"${notice.message}\"; stopping, waiting for Retry")
+        tracer.recover("connection limit ${notice.kind}; stopping")
+        stoppingRetryJob?.cancel()
+        stoppingRetryJob = null
+        if (!catchup) {
+            reconnectUrl = url ?: reconnectUrl
+            reconnectChannelId = currentChannelIdForRebuild ?: currentChannelId ?: reconnectChannelId
+        }
+        connectionLimitWasCatchup = catchup
+        liveFailover.publishServerStatus(null)
+        _connectionLimit.value = notice
+        stop()
+        return true
+    }
+
+    /** Retry button of the connection-limit notice: one fresh tune of what
+     *  was refused. */
+    fun retryConnectionLimit() {
+        if (_connectionLimit.value == null) return
+        _connectionLimit.value = null
+        if (connectionLimitWasCatchup) {
+            val cu = lastCatchupUrl ?: return
+            playCatchup(cu, lastCatchupTitle, lastCatchupSubtitle, lastCatchupArtworkUri)
+        } else {
+            retryUnavailable()
+        }
     }
 
     /**
@@ -3012,6 +3120,7 @@ class AerioExoPlayerHolder @Inject constructor(
         serverReason = null
         _streamUnavailable.value = false
         _lastErrorText.value = null
+        _connectionLimit.value = null
         // A fresh stream is starting; if it fails, markStreamUnavailable will
         // re-preserve the current URL. (retryUnavailable already captured its
         // URL before the playUrl that lands here, so clearing is safe.)
@@ -3152,13 +3261,20 @@ class AerioExoPlayerHolder @Inject constructor(
             // (Frankie B. Shield log 2026-09-14 18:21:03: 503, no parse, no
             // Retry-After, straight into the generic in-place reload ladder and
             // the "Channel Unavailable ... Retrying in 4s" card).
+            val limit = DispatcharrConnectionLimit.parse(error)
             val is503 = Dispatcharr503.parse(error) != null
-            if (wasCanceled && !is503) return
+            if (wasCanceled && !is503 && limit == null) return
             Log.w(
                 TAG,
                 "load error uri=${loadEventInfo.uri} " +
                     "${error.javaClass.simpleName}: ${error.message}${causeChain(error)}",
             )
+            // A connection-limit refusal owns the error outright: the 503 flavor
+            // of it must not start the stopping ladder or the failover walk.
+            if (limit != null) {
+                handleConnectionLimit(error)
+                return
+            }
             // A Dispatcharr 503 carries the server's OWN reason; act on it here
             // rather than letting the retry ladders guess (see handleLive503).
             handleLive503(error)
@@ -3361,6 +3477,9 @@ class AerioExoPlayerHolder @Inject constructor(
          *  than [Dispatcharr503.DEFAULT_RETRY_AFTER_MS] so the NEXT 503, the one
          *  answering a scheduled retry, is always judged fresh. */
         private const val LIVE_503_DEDUPE_MS = 500L
+        /** Longest a new live source waits for the superseded source's
+         *  connection to be closed before opening its own anyway. */
+        private const val RETIRE_GATE_MAX_WAIT_MS = 1_500L
 
         /**
          * Default player User-Agent. Without an explicit UA, Media3's

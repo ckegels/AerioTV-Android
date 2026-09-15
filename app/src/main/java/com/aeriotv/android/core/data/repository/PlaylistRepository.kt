@@ -169,6 +169,10 @@ class PlaylistRepository @Inject constructor(
      * source that doesn't need auth (clears the cache).
      */
     private fun publishActiveCredentials(playlist: PlaylistEntity?) {
+        // Connection-limit notice gate: Direct Connect playlists only.
+        com.aeriotv.android.core.playback.DispatcharrConnectionLimit.directConnectActive =
+            playlist?.sourceType == SourceType.DispatcharrApiKey.name ||
+                playlist?.sourceType == SourceType.DispatcharrUserPass.name
         if (playlist == null) {
             activeCredentials.clear()
             return

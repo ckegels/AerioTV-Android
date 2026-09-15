@@ -1628,6 +1628,9 @@ private fun ExoTile(
     // factory so the overlay's Retry button can re-prime with the factory's
     // header-aware DataSource.
     val tileError = remember { mutableStateOf<String?>(null) }
+    // Dispatcharr connection-limit refusal on this tile (exact server signal,
+    // Direct Connect only): static notice with Retry, no auto-reconnect.
+    val tileLimit = remember { mutableStateOf<com.aeriotv.android.core.playback.DispatcharrConnectionLimit.Notice?>(null) }
     val tileRetryRef = remember { mutableStateOf<(() -> Unit)?>(null) }
     val tileRetrySerial = remember { mutableIntStateOf(0) }
     // Always-on playback tracer (tag AerioTrace), one per tile. The "press"
@@ -1808,6 +1811,7 @@ private fun ExoTile(
                         consecutiveRetries = 0
                         // Task #150: a retry reached steady playback.
                         tileError.value = null
+                        tileLimit.value = null
                         // Resume from the pre-resolved position (Phase 2 picker
                         // looked it up via WatchProgressDao), once per tile.
                         if (isVod && !didResumeRef.value) {
@@ -1823,6 +1827,14 @@ private fun ExoTile(
                 override fun onPlayerError(error: PlaybackException) {
                     val retryUrl = currentUrlRef.value
                     if (retryUrl.isBlank()) return
+                    if (!isVod && tile.kind != TileKind.Dvr) {
+                        com.aeriotv.android.core.playback.DispatcharrConnectionLimit.parse(error)?.let { notice ->
+                            Log.w(TAG, "[LIMIT] tile $channelName ${notice.kind} \"${notice.message}\"; waiting for Retry")
+                            tileError.value = null
+                            tileLimit.value = notice
+                            return
+                        }
+                    }
                     // Audio sink could not be created or written (the device's
                     // audio HAL is out of tracks): keep the tile's video by
                     // dropping its audio track, then re-prepare. The focused
@@ -1889,6 +1901,7 @@ private fun ExoTile(
                 val u = currentUrlRef.value
                 if (p != null && u.isNotBlank()) {
                     Log.i(TAG, "Tile error-overlay retry: $channelName")
+                    tileLimit.value = null
                     liveCalls.setSource(p) { buildTileMediaSource(u, dataSourceFactory()) }
                     tracer.recover("tile error-overlay retry")
                     tracer.markTuneStart(channelName, traceKind)
@@ -1937,6 +1950,7 @@ private fun ExoTile(
             // teardown -- hand the new URL to the same player.
             if (url.isNotBlank() && currentUrlRef.value != url) {
                 Log.i(TAG, "Tile ExoPlayer swap: ${currentUrlRef.value} -> $url")
+                tileLimit.value = null
                 // setSource closes the old channel's live connection once the
                 // player has dropped it; the swap factory is built inside so
                 // the new source's tracker is never the one retired.
@@ -2017,7 +2031,18 @@ private fun ExoTile(
     // Task #150 (iOS parity): tile playback-error overlay. Real error text,
     // a Retry button, and an auto-reconnect loop on an escalating 5s->30s
     // delay. STATE_READY in the listener clears it.
-    tileError.value?.let { errMsg ->
+    tileLimit.value?.let { notice ->
+        com.aeriotv.android.feature.player.ConnectionLimitCard(
+            notice = notice,
+            isTv = false,
+            compact = true,
+            onRetry = {
+                tileRetrySerial.intValue += 1
+                tileRetryRef.value?.invoke()
+            },
+        )
+    }
+    if (tileLimit.value == null) tileError.value?.let { errMsg ->
         LaunchedEffect(tileRetrySerial.intValue) {
             kotlinx.coroutines.delay(
                 minOf(30, 5 shl minOf(tileRetrySerial.intValue, 3)) * 1_000L,
@@ -2091,12 +2116,16 @@ private fun buildTileMediaSource(
     val mediaItem = MediaItem.fromUri(url)
     return when {
         url.endsWith(".m3u8", ignoreCase = true) ->
-            HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+            HlsMediaSource.Factory(dataSourceFactory)
+                // A Dispatcharr connection-limit refusal is shown, never re-GET.
+                .setLoadErrorHandlingPolicy(com.aeriotv.android.core.playback.DispatcharrConnectionLimit.LoadErrorPolicy())
+                .createMediaSource(mediaItem)
         url.endsWith(".ts", ignoreCase = true) ||
             url.contains("/proxy/ts/", ignoreCase = true) -> {
             val extractors = DefaultExtractorsFactory()
                 .setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT)
             ProgressiveMediaSource.Factory(dataSourceFactory, extractors)
+                .setLoadErrorHandlingPolicy(com.aeriotv.android.core.playback.DispatcharrConnectionLimit.LoadErrorPolicy())
                 .createMediaSource(mediaItem)
         }
         else -> DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(mediaItem)

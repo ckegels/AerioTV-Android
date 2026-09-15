@@ -246,6 +246,13 @@ fun LiveFailoverStatusOverlay(
         onDispose { exoHolder.liveFailover.hooks = null }
     }
 
+    // Dispatcharr connection-limit refusal: the notice owns the screen, with
+    // Retry and nothing else (no spinner, no status line).
+    val connectionLimit by exoHolder.connectionLimit.collectAsStateWithLifecycle()
+    connectionLimit?.let { notice ->
+        ConnectionLimitCard(notice = notice, isTv = isTv, onRetry = { exoHolder.retryConnectionLimit() })
+        return
+    }
     val statusText by exoHolder.liveStatusText.collectAsStateWithLifecycle()
     val unavailable by exoHolder.streamUnavailable.collectAsStateWithLifecycle()
     val playerInstance by exoHolder.playerInstance.collectAsStateWithLifecycle()

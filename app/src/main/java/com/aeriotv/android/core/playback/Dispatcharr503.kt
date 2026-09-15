@@ -106,7 +106,7 @@ object Dispatcharr503 {
         )
     }
 
-    private fun findInvalidResponseCode(
+    internal fun findInvalidResponseCode(
         error: Throwable?,
     ): HttpDataSource.InvalidResponseCodeException? {
         var t = error
@@ -125,6 +125,15 @@ object Dispatcharr503 {
      * phrase; we never substitute a guessed cause.
      */
     private fun reasonFrom(body: String): String {
+        errorField(body)?.let { return it }
+        val flat = body.trim().replace(Regex("\\s+"), " ")
+        return if (flat.isNotEmpty() && flat.length <= 200) flat else "Channel unavailable"
+    }
+
+    /** The JSON `error` string of a Dispatcharr error body, or null when the
+     *  body carries none. No fallback text: callers that match on the
+     *  server's exact wording must not match on a guess. */
+    internal fun errorField(body: String): String? {
         val key = "\"error\""
         val at = body.indexOf(key)
         if (at >= 0) {
@@ -138,8 +147,7 @@ object Dispatcharr503 {
                 }
             }
         }
-        val flat = body.trim().replace(Regex("\\s+"), " ")
-        return if (flat.isNotEmpty() && flat.length <= 200) flat else "Channel unavailable"
+        return null
     }
 
     /** Sentence case: capitalize the first letter only, leave the rest as the

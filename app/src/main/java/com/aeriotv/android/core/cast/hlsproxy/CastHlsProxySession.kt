@@ -30,6 +30,12 @@ import okhttp3.Request
 class IngestHttpException(val code: Int) :
     Exception("cast ingest failed with HTTP $code")
 
+/** The ingest request was refused with a Dispatcharr connection-limit
+ *  signal (see DispatcharrConnectionLimit). Terminal: never reconnected. */
+class IngestConnectionLimitException(
+    val notice: com.aeriotv.android.core.playback.DispatcharrConnectionLimit.Notice,
+) : Exception("cast ingest refused: ${notice.message}")
+
 /**
  * Phone-side cast HLS proxy session (GH #33 web-receiver rework): owns
  * the OkHttp ingest of a live channel's raw MPEG-TS stream, feeds
@@ -427,6 +433,18 @@ class CastHlsProxySession @Inject constructor(
                     call.execute().use { resp ->
                         if (!resp.isSuccessful) {
                             debugLogWarn(context, TAG, "ingest connect failed http=${resp.code}")
+                            // A connection-limit refusal is final: reconnecting
+                            // would only keep competing for the user's slots.
+                            if (resp.code == 429 || resp.code == 503) {
+                                val body = runCatching { resp.peekBody(4_096).string() }.getOrDefault("")
+                                val notice = com.aeriotv.android.core.playback.DispatcharrConnectionLimit
+                                    .fromResponse(resp.code, body)
+                                if (notice != null) {
+                                    debugLogWarn(context, TAG, "[LIMIT] ingest ${notice.kind}: ${notice.message}")
+                                    sessionError.value = IngestConnectionLimitException(notice)
+                                    return@launch
+                                }
+                            }
                             // An output-profile URL that errors (503 when
                             // the server cannot start the profile) must
                             // surface NOW so the caller can retry on the

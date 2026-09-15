@@ -1010,6 +1010,10 @@ class AerioCastSender @Inject constructor(
                     allowAc3Passthrough = ac3Ok,
                     onNotice = { message -> surfaceCastFailure(message) },
                 )
+            } catch (e: com.aeriotv.android.core.cast.hlsproxy.IngestConnectionLimitException) {
+                Log.w(TAG, "[Cast] load channel=${base.title} refused: ${e.notice.message}")
+                surfaceCastFailure("${e.notice.title}. ${e.notice.message}")
+                null
             } catch (e: UnsupportedCodecException) {
                 Log.w(
                     TAG,
