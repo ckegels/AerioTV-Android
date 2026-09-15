@@ -293,8 +293,8 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Guide banner art",
-            body = "Square and wide program art fills the full banner slot again. Only portrait posters use the narrow poster slot.",
+            title = "Bigger channel logos",
+            body = "Channel logos in the guide and channel list grow to use the space when channel numbers or names are hidden.",
         ),
     )
 }
