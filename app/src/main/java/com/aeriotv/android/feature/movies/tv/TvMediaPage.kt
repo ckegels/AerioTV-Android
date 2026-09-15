@@ -1778,7 +1778,8 @@ private fun TvHeroCard(
     val guard = rememberTvMenuGuard()
     // Measured aspect of the loaded hero art; 0 until it lands (16:9 slot).
     var artAspect by remember(page.artUrl) { mutableStateOf(0f) }
-    val artPortrait = artAspect > 0f && artAspect < 1f
+    val artPortrait = artAspect > 0f &&
+            artAspect < com.aeriotv.android.feature.livetv.grid.PORTRAIT_ART_MAX_ASPECT
     Box(
         modifier = Modifier
             .semantics(mergeDescendants = true) {}

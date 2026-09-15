@@ -196,8 +196,11 @@ fun GuidePreviewBanner(
         // Portrait art (2:3 XMLTV program icons) would lose its title text to a
         // 16:9 center crop, so the slot itself turns poster-shaped: same height,
         // width from the image aspect, and the text column takes the freed width.
+        // Only TRUE portrait (under PORTRAIT_ART_MAX_ASPECT) gets it; near-square
+        // art (sports matchup logos ~0.96) keeps the 180x101 cropped slot.
         var artAspect by remember(art) { androidx.compose.runtime.mutableStateOf(16f / 9f) }
-        val artWidth = if (artAspect < 1f) (101f * artAspect).dp else 180.dp
+        val artPortrait = artAspect < PORTRAIT_ART_MAX_ASPECT
+        val artWidth = if (artPortrait) (101f * artAspect).dp else 180.dp
         Box(
             modifier = Modifier
                 .width(artWidth)
@@ -210,7 +213,8 @@ fun GuidePreviewBanner(
         ) {
             when {
                 art != null -> AsyncImage(
-                    model = art, contentDescription = null, contentScale = ContentScale.Crop,
+                    model = art, contentDescription = null,
+                    contentScale = if (artPortrait) ContentScale.Fit else ContentScale.Crop,
                     modifier = Modifier.width(artWidth).height(101.dp).clip(RoundedCornerShape(6.dp)),
                     onSuccess = { state ->
                         val w = state.result.image.width.toFloat()
@@ -310,3 +314,6 @@ object ActivePlaylistBase {
     @Volatile var baseUrl: String? = null
     @Volatile var playlistId: String? = null
 }
+
+/** Width/height below which banner art counts as a portrait poster. */
+internal const val PORTRAIT_ART_MAX_ASPECT = 0.8f

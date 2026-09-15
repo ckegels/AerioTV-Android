@@ -110,7 +110,8 @@ fun MediaHeroCard(
         // edge and the copy sits beside it, the Live TV banner treatment
         // (d40f9ab5). artAspect is 0 until the image lands.
         var artAspect by remember(page.artUrl) { mutableStateOf(0f) }
-        val artPortrait = artAspect > 0f && artAspect < 1f
+        val artPortrait = artAspect > 0f &&
+            artAspect < com.aeriotv.android.feature.livetv.grid.PORTRAIT_ART_MAX_ASPECT
         val posterWidth = 220.dp * artAspect
         if (!page.artUrl.isNullOrBlank()) {
             AsyncImage(
