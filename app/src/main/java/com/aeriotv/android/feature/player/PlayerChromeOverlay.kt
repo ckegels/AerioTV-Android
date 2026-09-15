@@ -231,14 +231,7 @@ fun PlayerChromeOverlay(
     // only wired into the phone branch below.
     var forcedLandscape by remember { mutableStateOf(false) }
     if (!isTv) {
-        DisposableEffect(Unit) {
-            onDispose {
-                // Auto-Rotate aware: UNSPECIFIED when following the sensor,
-                // LOCKED when the user disabled rotation in App Behaviors.
-                context.findActivity()?.requestedOrientation =
-                    com.aeriotv.android.core.preferences.AutoRotateState.restingOrientation
-            }
-        }
+        RestoreOrientationOnExit(context.findActivity())
     }
 
     // Tell the host the chrome is "busy" (Options menu or Sleep sheet open) so
@@ -2269,3 +2262,21 @@ data class StreamInfoSnapshot(
     val cacheLines: List<String>,
     val syncLines: List<String>,
 )
+
+/**
+ * Releases any player-forced orientation back to the Auto-Rotate aware resting
+ * orientation (UNSPECIFIED when following the sensor, LOCKED when the user
+ * disabled rotation in App Behaviors) when the player leaves composition.
+ * Keyed only on the activity, so it survives rotation-driven recomposition;
+ * never key this on orientation or it releases the fullscreen button's
+ * landscape lock as soon as the rotation completes.
+ */
+@Composable
+internal fun RestoreOrientationOnExit(activity: android.app.Activity?) {
+    DisposableEffect(activity) {
+        onDispose {
+            activity?.requestedOrientation =
+                com.aeriotv.android.core.preferences.AutoRotateState.restingOrientation
+        }
+    }
+}
