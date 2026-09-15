@@ -85,6 +85,16 @@ object TvFocusTrace {
         Log.i(TAG, "[RESTORE] returnOffset=$returnOffset row=$row col=$col source=$source")
     }
 
+    /** Live TV guide grid events (gate snapshots, focus retries, refused
+     *  vertical steps): one line per event, never per frame.
+     *
+     *   [GUIDE] gates sidebarOpen=false layout=overlay ...
+     *   [GUIDE] refocus after=sidebar-close requested=true gridHasFocus=true
+     */
+    fun guide(detail: String) {
+        Log.i(TAG, "[GUIDE] $detail")
+    }
+
     /** Up/Down/Left/Right/Back only; null for every other key so the trace
      *  stays readable and no string is built for the rest of the remote. */
     fun nameOf(event: KeyEvent): String? = when (event.key) {

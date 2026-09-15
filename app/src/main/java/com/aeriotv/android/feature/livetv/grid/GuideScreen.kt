@@ -456,21 +456,55 @@ fun GuideScreen(
     // second until the grid actually holds focus.
     var gridHasFocus by remember { mutableStateOf(false) }
     val topNavHasFocus = com.aeriotv.android.feature.main.LocalTvTopNavHasFocus.current
+    // Trace (AerioFocus): every gate that can keep focus out of the grid or
+    // block a vertical step, as one string. Logged on change (a [GUIDE] gates
+    // line) and appended to the grid's [KEY] and focus lines.
+    val traceContext = androidx.compose.ui.platform.LocalContext.current
+    val exoWindowModeFlow = remember {
+        dagger.hilt.android.EntryPointAccessors.fromApplication(
+            traceContext.applicationContext,
+            com.aeriotv.android.feature.main.MainScaffoldEntryPoint::class.java,
+        ).exoWindowState().mode
+    }
+    val exoWindowMode by exoWindowModeFlow.collectAsStateWithLifecycle()
+    val traceGates: () -> String = {
+        "gates[tabActive=$tabActive gridHasFocus=$gridHasFocus" +
+            " sidebarOpen=$groupSidebarOpen sidebarMode=$sidebarGroupMode layout=${if (sidebarShiftMode) "shift" else "overlay"}" +
+            " gridFocusEnabled=${!(sidebarShiftMode && groupSidebarOpen && !gridHasFocus)}" +
+            " manageGroups=$showManageGroups menu=${menuFor != null} info=${programInfoTarget != null} record=${recordTarget != null}" +
+            " jump=$showJumpSheet collectionPicker=${collectionPickerFor != null} search=$searchActive" +
+            " mini=$miniActive exoWindow=$exoWindowMode clockTrigger=$clockSelectTrigger" +
+            " rows=${rows.size} focusRow=${grid.focusRow} topNavHasFocus=${topNavHasFocus.value}]"
+    }
+    if (isTv) {
+        val gateKey = traceGates().substringBefore(" rows=")
+        LaunchedEffect(gateKey) { com.aeriotv.android.ui.tv.TvFocusTrace.guide("gates ${traceGates()}") }
+    }
     LaunchedEffect(isTv, rows.isEmpty, tabActive) {
         if (!tabActive) return@LaunchedEffect
         if (isTv && !rows.isEmpty) {
-            repeat(12) {
-                if (gridHasFocus) return@LaunchedEffect
+            repeat(12) { attempt ->
+                if (gridHasFocus) {
+                    if (attempt > 0) com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=launch-loop result=success attempts=$attempt")
+                    return@LaunchedEffect
+                }
                 // The user is walking the tab bar (selection follows focus
                 // there): leave focus in the bar; Down brings them in.
-                if (topNavHasFocus.value) return@LaunchedEffect
+                if (topNavHasFocus.value) {
+                    com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=launch-loop result=skipped reason=topNavHasFocus attempts=$attempt")
+                    return@LaunchedEffect
+                }
                 // GH #90: a held Left that minimized the player also opened
                 // the group sidebar as the guide composed; the sidebar owns
                 // focus then, and this loop must not pull it back to the grid.
-                if (groupSidebarOpen) return@LaunchedEffect
+                if (groupSidebarOpen) {
+                    com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=launch-loop result=skipped reason=sidebarOpen attempts=$attempt")
+                    return@LaunchedEffect
+                }
                 runCatching { gridFocus.requestFocus() }
                 delay(100L)
             }
+            com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=launch-loop result=${if (gridHasFocus) "success" else "failure"} attempts=12 ${traceGates()}")
         }
     }
     // Logan 2026-09-02: backing out of a full-screen channel lands the guide
@@ -481,7 +515,12 @@ fun GuideScreen(
         if (!tabActive) return@LaunchedEffect
         val id = miniChannelId ?: return@LaunchedEffect
         if (!isTv || rows.isEmpty) return@LaunchedEffect
-        if (grid.focusChannel(id)) runCatching { gridFocus.requestFocus() }
+        val found = grid.focusChannel(id)
+        val requested = if (found) runCatching { gridFocus.requestFocus() }.isSuccess else false
+        if (isTv) {
+            androidx.compose.runtime.withFrameNanos { }
+            com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=mini-channel channel=$id found=$found requested=$requested gridHasFocus=$gridHasFocus cell=${guideTraceCell(grid)} ${traceGates()}")
+        }
     }
 
     val collectionPillItem: @Composable (ChannelCollection) -> Unit = { c ->
@@ -621,7 +660,19 @@ fun GuideScreen(
     }
 
     var guideTopPx by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
-    Box(modifier = modifier.fillMaxSize().onGloballyPositioned { guideTopPx = it.positionInRoot().y }) {
+    Box(modifier = modifier.fillMaxSize().onGloballyPositioned { guideTopPx = it.positionInRoot().y }
+        .onPreviewKeyEvent { e ->
+            // Trace only, never consumes: a D-pad key inside the guide that the
+            // grid node will not see (focus is on the banner, pills, sidebar...).
+            if (isTv && !gridHasFocus && e.type == KeyEventType.KeyDown) {
+                val name = when (e.key) {
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> "Center"
+                    else -> com.aeriotv.android.ui.tv.TvFocusTrace.nameOf(e)
+                }
+                if (name != null) com.aeriotv.android.ui.tv.TvFocusTrace.key(name, false, "guide-screen(focus-not-in-grid) ${traceGates()}")
+            }
+            false
+        }) {
     Row(modifier = Modifier.fillMaxSize()) {
     if (groupSidebarOpen && !isTv) {
         GuideGroupSidebarPane(
@@ -825,6 +876,7 @@ fun GuideScreen(
                 // on focus) before the pane's rows claim it.
                 focusEnabled = !(sidebarShiftMode && groupSidebarOpen && !gridHasFocus),
                 onGridFocusChanged = { gridHasFocus = it },
+                traceGates = traceGates,
                 modifier = Modifier.fillMaxSize(),
             )
             }
@@ -877,7 +929,9 @@ fun GuideScreen(
                 if (!drawerWasOpen) return@LaunchedEffect
                 drawerWasOpen = false
                 repeat(3) { androidx.compose.runtime.withFrameNanos { } }
-                runCatching { gridFocus.requestFocus() }
+                val requested = runCatching { gridFocus.requestFocus() }.isSuccess
+                androidx.compose.runtime.withFrameNanos { }
+                com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=sidebar-close requested=$requested result=${if (gridHasFocus) "success" else "failure"} ${traceGates()}")
             }
         }
         if (sidebarShiftMode) {
@@ -918,7 +972,9 @@ fun GuideScreen(
             if (!jumpWasOpen) return@LaunchedEffect
             jumpWasOpen = false
             repeat(3) { androidx.compose.runtime.withFrameNanos { } }
-            runCatching { gridFocus.requestFocus() }
+            val requested = runCatching { gridFocus.requestFocus() }.isSuccess
+            androidx.compose.runtime.withFrameNanos { }
+            com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=jump-close requested=$requested result=${if (gridHasFocus) "success" else "failure"} ${traceGates()}")
         }
     } else if (showJumpSheet && isTv) {
         jumpOverlay()

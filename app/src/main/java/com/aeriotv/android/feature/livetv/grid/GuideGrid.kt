@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.livetv.grid
 
+import com.aeriotv.android.ui.tv.TvFocusTrace
 import com.aeriotv.android.core.ui.subtitleIsRedundant
 import com.aeriotv.android.core.ui.rememberClockMode
 import com.aeriotv.android.core.ui.ClockFormat
@@ -132,6 +133,8 @@ fun GuideGrid(
     onClockLongPress: () -> Unit = {},
     /** Channel Preview layout: cells keep the title and tags (the banner carries the rest). */
     compact: Boolean = false,
+    /** Host gate snapshot for the trace (AerioFocus [KEY]/[GUIDE] lines); read only when a line is logged. */
+    traceGates: () -> String = { "" },
     /** Bumped by the host to park the cursor on the clock (Down from the banner, tvOS). */
     clockSelectTrigger: Int = 0,
 ) {
@@ -228,8 +231,12 @@ fun GuideGrid(
     androidx.compose.runtime.LaunchedEffect(clockSelectTrigger) {
         if (clockSelectTrigger > 0) { clockSelected = true; runCatching { focusRequester.requestFocus() } }
     }
-    val keyHandler: (KeyEvent) -> Boolean = handler@{ event ->
+    // Trace (AerioFocus): which branch decided the key; set inside the handler.
+    var traceBy = "none"
+    val keyHandlerInner: (KeyEvent) -> Boolean = handler@{ event ->
+        traceBy = "unhandled"
         if (clockSelected) {
+            traceBy = "clock"
             val native = event.nativeKeyEvent as? AndroidKeyEvent
             val down = event.type == KeyEventType.KeyDown
             return@handler when (event.key) {
@@ -251,7 +258,7 @@ fun GuideGrid(
                 else -> false
             }
         }
-        if (isTv && channelNumberEntry.onKeyEvent(event)) return@handler true
+        if (isTv && channelNumberEntry.onKeyEvent(event)) { traceBy = "channel-number-entry"; return@handler true }
         val native = event.nativeKeyEvent as? AndroidKeyEvent
         val repeat = native?.repeatCount ?: 0
         // Some remotes (and adb --longpress) flag a hold instead of repeating.
@@ -264,13 +271,18 @@ fun GuideGrid(
                 Key.DirectionUp -> {
                     if (!down) return@handler true
                     if (!state.moveRows(-1)) {
-                        if (isTv) { clockSelected = true; return@handler true }
-                        if (onLeaveTop()) return@handler true
+                        if (isTv) { traceBy = "grid-top-row->clock"; clockSelected = true; return@handler true }
+                        if (onLeaveTop()) { traceBy = "grid-top-row->onLeaveTop"; return@handler true }
+                        traceBy = "grid-top-row->topNav"
                         return@handler topNav?.let { runCatching { it.requestFocus() }.isSuccess } ?: false
                     }
+                    traceBy = "grid-moveRows"
                     true
                 }
-                Key.DirectionDown -> { if (down) state.moveRows(+1); true }
+                Key.DirectionDown -> {
+                    if (down) traceBy = if (state.moveRows(+1)) "grid-moveRows" else "grid-moveRows-refused"
+                    true
+                }
                 // Left/Right pan on RELEASE, not on press (Logan 2026-09-02): a
                 // held Left opens the group sidebar and must not pan the
                 // timeline first; a held Right maps to its own action too.
@@ -278,6 +290,7 @@ fun GuideGrid(
                 // Remote Control); a hold mapped to NAVIGATE does not latch, so
                 // its release runs the short press instead.
                 Key.DirectionRight -> {
+                    traceBy = "grid-right(pans-on-release)"
                     if (down) {
                         if (repeat == 0) { rightHoldLatched = false; rightDownSeen = true }
                         val holdAction = remoteAction(RemoteSlot.RIGHT_LONG)
@@ -305,6 +318,7 @@ fun GuideGrid(
                     true
                 }
                 Key.DirectionLeft -> {
+                    traceBy = "grid-left(pans-on-release)"
                     if (down) {
                         if (repeat == 0) { leftHoldLatched = false; leftDownSeen = true }
                         val holdAction = remoteAction(RemoteSlot.LEFT_LONG)
@@ -346,7 +360,8 @@ fun GuideGrid(
                 Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                     val channel = state.focusRow.takeIf { it >= 0 }?.let { state.rows.channel(it) }
                     val cell = state.focusedCell()
-                    if (channel == null || cell == null) return@handler true
+                    if (channel == null || cell == null) { traceBy = "grid-ok-no-cell"; return@handler true }
+                    traceBy = "grid-ok"
                     if (down) {
                         if (repeat == 0) { okLongLatched = false; okDownSeen = true }
                         if (!okLongLatched && repeat >= OK_LONG_REPEATS) {
@@ -365,6 +380,44 @@ fun GuideGrid(
             }
         } finally {
             Trace.endSection()
+        }
+    }
+    // One [KEY] line per D-pad KeyDown the grid node receives (onPreviewKeyEvent
+    // only runs while focus is on the grid), with the cell before and after and
+    // the vertical-move state. Built only for those keys, never per frame.
+    val keyHandler: (KeyEvent) -> Boolean = { event ->
+        val name = if (event.type == KeyEventType.KeyDown) guideTraceKeyName(event) else null
+        if (name == null) keyHandlerInner(event) else {
+            val before = guideTraceCell(state)
+            val rowBefore = state.focusRow
+            val clockBefore = clockSelected
+            val digitsBefore = channelNumberEntry.digits
+            val scrolling = listState.isScrollInProgress
+            val consumed = keyHandlerInner(event)
+            val repeat = (event.nativeKeyEvent as? AndroidKeyEvent)?.repeatCount ?: 0
+            val vertical = if (name == "Up" || name == "Down") {
+                val delta = if (name == "Up") -1 else 1
+                val target = rowBefore.coerceAtLeast(0) + delta
+                val refused = when {
+                    clockBefore -> "clock-selected"
+                    digitsBefore.isNotEmpty() -> "channel-number-entry"
+                    state.rows.isEmpty -> "no-rows"
+                    state.focusRow == rowBefore && target >= state.rows.size -> "at-last-row"
+                    state.focusRow == rowBefore && target < 0 -> "at-top-row"
+                    state.focusRow == rowBefore -> "row-unchanged"
+                    else -> null
+                }
+                " target=r$target rows=${state.rows.size} firstVisible=${listState.firstVisibleItemIndex}/${listState.firstVisibleItemScrollOffset}" +
+                    " visible=${listState.layoutInfo.visibleItemsInfo.size} scrollInProgress=$scrolling" +
+                    " refused=${refused ?: "no"}"
+            } else ""
+            TvFocusTrace.key(
+                name, consumed,
+                "$traceBy repeat=$repeat gridFocused=$gridFocused focusEnabled=$focusEnabled clock=$clockBefore->$clockSelected" +
+                    " cell=$before -> ${guideTraceCell(state)}$vertical" +
+                    " viewportStart=${state.viewportStartMs} drawStart=${state.drawViewportStartMs} ${traceGates()}",
+            )
+            consumed
         }
     }
 
@@ -393,7 +446,18 @@ fun GuideGrid(
                 left = FocusRequester.Cancel
                 right = FocusRequester.Cancel
             }
-            .onFocusChanged { gridFocused = it.isFocused; onGridFocusChanged(it.isFocused) }
+            .onFocusChanged {
+                if (it.isFocused != gridFocused) {
+                    if (it.isFocused) {
+                        TvFocusTrace.focus("grid:r${state.focusRow}")
+                        TvFocusTrace.guide("grid focus gained cell=${guideTraceCell(state)} focusEnabled=$focusEnabled ${traceGates()}")
+                    } else {
+                        TvFocusTrace.guide("grid focus lost cell=${guideTraceCell(state)} focusEnabled=$focusEnabled hasFocus=${it.hasFocus} ${traceGates()}")
+                        TvFocusTrace.blurred("grid:r${state.focusRow}")
+                    }
+                }
+                gridFocused = it.isFocused; onGridFocusChanged(it.isFocused)
+            }
             .focusable(enabled = focusEnabled)
             .onPreviewKeyEvent(keyHandler),
     ) {
@@ -911,6 +975,19 @@ private const val OK_LONG_REPEATS = 1
 private val GuideRemoteAction.columnIndependent: Boolean
     get() = this == GuideRemoteAction.PLAY || this == GuideRemoteAction.PROGRAM_MENU ||
         this == GuideRemoteAction.PROGRAM_INFO || this == GuideRemoteAction.RECORD
+
+/** Trace name for the D-pad keys the guide logs; null for every other key. */
+private fun guideTraceKeyName(event: KeyEvent): String? = when (event.key) {
+    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> "Center"
+    else -> TvFocusTrace.nameOf(event)
+}
+
+/** "r<row> <channel> @<programStart>" for the trace. */
+internal fun guideTraceCell(state: GuideGridState): String {
+    val row = state.focusRow
+    if (row !in 0 until state.rows.size) return "r$row(none)"
+    return "r$row ${state.rows.channel(row).name} @${state.focusCellStartMs}"
+}
 
 private fun GuideRemoteAction.orDefault(default: GuideRemoteAction) = if (this == GuideRemoteAction.NONE) default else this
 private const val MIN_CELL_PX = 6f
