@@ -295,6 +295,18 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
+            title = "Text Size",
+            body = "Make text larger or smaller across the whole app, from 85% to 150% in 5% steps. Find it in Settings > Appearance.",
+        ),
+        WhatsNewItem(
+            title = "Subtext Size",
+            body = "Adjust just the secondary text, like descriptions and details, from 85% to 150%, without changing titles.",
+        ),
+        WhatsNewItem(
+            title = "Text Contrast",
+            body = "Turn up contrast from 0 to 100% to make dimmed and theme-colored text easier to read.",
+        ),
+        WhatsNewItem(
             title = "Bigger channel logos",
             body = "Channel logos in the guide and channel list grow to use the space when channel numbers or names are hidden.",
         ),
