@@ -523,6 +523,36 @@ fun GuideScreen(
         }
     }
 
+    // Returning from a catch-up replay launched from this guide: the player
+    // route disposed the guide, so the grid state above is fresh (row 0, now).
+    // Put the launched cell and the panned timeline back, snapped (no ease),
+    // and hold grid focus against the tab bar's one-shot initial pill pull,
+    // which lands a few frames after the guide recomposes.
+    LaunchedEffect(rows.isEmpty, tabActive) {
+        if (!isTv || !tabActive || rows.isEmpty) return@LaunchedEffect
+        val ret = GuideCatchupReturn.consume() ?: return@LaunchedEffect
+        val row = grid.rows.indexOfChannel(ret.channelId)
+        if (row < 0) {
+            com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=catchup-return channel=${ret.channelId} found=false ${traceGates()}")
+            return@LaunchedEffect
+        }
+        grid.scrollViewportTo(ret.viewportStartMs, animated = false)
+        grid.focusRowAt(row, ret.cellStartMs)
+        var held = 0
+        var attempts = 0
+        while (attempts < 20 && held < 6) {
+            if (gridHasFocus) {
+                held++
+            } else {
+                held = 0
+                runCatching { gridFocus.requestFocus() }
+            }
+            attempts++
+            delay(100L)
+        }
+        com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=catchup-return channel=${ret.channelId} found=true result=${if (gridHasFocus) "success" else "failure"} attempts=$attempts cell=${guideTraceCell(grid)} viewportStart=${grid.viewportStartMs} ${traceGates()}")
+    }
+
     val collectionPillItem: @Composable (ChannelCollection) -> Unit = { c ->
         val token = ChannelCollection.token(c.id)
         CollectionPill(
@@ -1084,6 +1114,9 @@ fun GuideScreen(
         val watchFromStart: () -> Unit = {
             viewModel.playCatchup(channel, cell) { result ->
                 result.onSuccess { r ->
+                    // TV: remember the launched cell and the timeline so the
+                    // guide that composes again after the replay lands back here.
+                    if (isTv) GuideCatchupReturn.set(channel.id, cell.startMillis, grid.viewportStartMs)
                     onPlayCatchup(channel.id, r.url, cell.title, cell.startMillis, cell.endMillis, r.panelTimeZoneId, r.channelUuid.orEmpty())
                 }
             }
@@ -1209,3 +1242,20 @@ private fun GroupPills(
 }
 
 private const val QUANTUM_MS = 15 * 60_000L
+
+/**
+ * The guide cell a TV catch-up replay was launched from, plus the timeline
+ * start at launch. Set just before the player route opens and consumed once
+ * by the guide that composes after it pops. Process memory only.
+ */
+internal object GuideCatchupReturn {
+    data class Target(val channelId: String, val cellStartMs: Long, val viewportStartMs: Long)
+
+    @Volatile private var pending: Target? = null
+
+    fun set(channelId: String, cellStartMs: Long, viewportStartMs: Long) {
+        pending = Target(channelId, cellStartMs, viewportStartMs)
+    }
+
+    fun consume(): Target? = pending.also { pending = null }
+}

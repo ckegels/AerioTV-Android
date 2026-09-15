@@ -784,8 +784,7 @@ fun PlayerScreen(
             // returns to the guide). No mini for a replay - the mini is a
             // LIVE affordance. The native session revoke runs in onDispose.
             PlayerDoubleBack.clear()
-            exoHolder.stop()
-            onClose()
+            closeCatchupReplay(exoHolder, exoWindowState, miniPlayerVm, context, onClose)
         } else if (isTvForm) {
             // #10 back model (Archie 2026-07-02): a SINGLE Back minimizes the
             // fullscreen player straight to the corner mini. OK/Select is now
@@ -1648,7 +1647,7 @@ fun PlayerScreen(
         if (streamUnavailable && isCatchupMode) {
             CatchupUnavailableCard(
                 exoHolder = exoHolder,
-                onClose = onClose,
+                onClose = { closeCatchupReplay(exoHolder, exoWindowState, miniPlayerVm, context, onClose) },
             )
         } else if (streamUnavailable) {
             StreamUnavailableCard(
@@ -2684,6 +2683,26 @@ private fun LiveRewindChromeSection(
     )
 }
 
+// Leaving a catch-up replay (Back, or Go Back on the unavailable card): the
+// same teardown as the chrome X. The replay runs in the shared holder with the
+// persistent window in Fullscreen, and a bare stop() + pop left that window
+// Fullscreen under the guide. MainActivity then kept routing D-pad Up/Down to a
+// player that was gone (the remote went dead on the guide). Hidden is the only
+// valid mode once nothing plays.
+private fun closeCatchupReplay(
+    exoHolder: com.aeriotv.android.core.playback.AerioExoPlayerHolder,
+    exoWindowState: ExoWindowState,
+    miniPlayerVm: MiniPlayerViewModel,
+    context: android.content.Context,
+    onClose: () -> Unit,
+) {
+    miniPlayerVm.dismiss()
+    exoWindowState.hide()
+    exoHolder.stop()
+    com.aeriotv.android.core.playback.AerioMediaPlaybackService.stop(context)
+    onClose()
+}
+
 // Task #148 milestone B: a catch-up 4xx means the provider has no
 // archive for this window (flag-but-no-archive class). Retrying
 // can't conjure one, so no auto-reconnect - show why + Go Back.
@@ -2731,10 +2750,7 @@ private fun CatchupUnavailableCard(
                 textAlign = TextAlign.Center,
             )
         }
-        Button(onClick = {
-            exoHolder.stop()
-            onClose()
-        }) {
+        Button(onClick = onClose) {
             Text("Go Back")
         }
     }
