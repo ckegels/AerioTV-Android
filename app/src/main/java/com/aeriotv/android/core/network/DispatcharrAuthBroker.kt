@@ -144,6 +144,12 @@ class DispatcharrAuthBroker @Inject constructor(
             dao.update(playlist.copy(apiKey = newKey))
             Log.i(TAG, "silentRebootstrap OK for ${playlist.id.take(8)}")
             newKey
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // A cancelled caller (a sweep preempted by a playlist switch, the
+            // user leaving the tab) is not a login failure: logging it as FAIL
+            // sent GH #109 chasing a credential problem that did not exist,
+            // and swallowing it let the cancelled coroutine keep running.
+            throw c
         } catch (t: Throwable) {
             Log.w(TAG, "silentRebootstrap FAIL for ${playlist.id.take(8)}: ${t.message}")
             null

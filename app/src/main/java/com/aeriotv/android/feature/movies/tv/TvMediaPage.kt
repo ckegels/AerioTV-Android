@@ -315,6 +315,10 @@ fun <T> TvMediaPage(
     isLoading: Boolean = false,
     railLetters: Set<Char> = emptySet(),
     railIndexOf: (Char) -> Int = { -1 },
+    /** Index of a grid key without iterating [gridItems] (GH #109: the Movies
+     *  and TV Shows grids are windows over the Room catalog, and a full walk
+     *  would read every row). Null falls back to the linear search. */
+    indexOfKey: ((Any) -> Int)? = null,
     railMinimumCount: Int = 1,
     /** Return-focus requester for the grid cell opened last (BACK from a detail). */
     cellReturnRequester: (T) -> FocusRequester? = { null },
@@ -1058,7 +1062,7 @@ fun <T> TvMediaPage(
         }
         if (key == null) { onReturnHandled(); return@LaunchedEffect }
         if (!hasItems) return@LaunchedEffect
-        val idx = gridItems.indexOfFirst { gridKey(it) == key }
+        val idx = indexOfKey?.invoke(key) ?: gridItems.indexOfFirst { gridKey(it) == key }
         if (idx < 0) { onReturnHandled(); return@LaunchedEffect }
         // Exact offset first (tvOS returns pixel-identical); the row park is
         // the fallback when the recorded index no longer exists after a

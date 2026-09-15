@@ -2529,8 +2529,9 @@ private data class VodPresence(
     companion object {
         fun from(s: com.aeriotv.android.feature.ondemand.OnDemandViewModel.UiState) = VodPresence(
             unsupportedSource = s.unsupportedSource,
-            hasMovies = s.movies.isNotEmpty(),
-            hasSeries = s.series.isNotEmpty(),
+            // Stored catalog counts (GH #109: the lists are no longer in memory).
+            hasMovies = s.totalCount > 0,
+            hasSeries = s.seriesTotalCount > 0,
             isLoading = s.isLoading,
             isLoadingSeries = s.isLoadingSeries,
             hasDeferredXtreamContent = s.hasDeferredXtreamContent,

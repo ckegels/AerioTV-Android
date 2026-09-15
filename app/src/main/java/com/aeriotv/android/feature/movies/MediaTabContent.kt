@@ -104,7 +104,7 @@ fun MediaTabContent(
     // Add / Remove entries on every poster and hero menu.
     val watchlistEntries by watchlistVm.entries.collectAsStateWithLifecycle(initialValue = emptyList())
     val watchlistKeys = remember(watchlistEntries) { watchlistEntries.map { it.key }.toSet() }
-    val watchlistPages: List<MediaHeroPage> = remember(watchlistEntries, state.movies, state.series, kind, hiddenTitles) {
+    val watchlistPages: List<MediaHeroPage> = remember(watchlistEntries, state.catalogMovies, state.catalogSeries, state.resolvedMovies, state.resolvedSeries, kind, hiddenTitles) {
         watchlistEntries.filter { it.isMovie == (kind == MediaKind.Movies) && it.key !in hiddenTitles }.map { e ->
             // Indexed lookups (Logan 2026-09-11): the per-entry scan over the
             // whole library cost 185 ms on the main thread at every Movies open.
@@ -127,7 +127,7 @@ fun MediaTabContent(
     // newest first, movies for the Movies tab and one page per series for
     // TV Shows (the newest episode row wins), at most 12.
     val recentProgress by watchVm.observeRecent(40).collectAsStateWithLifecycle(initialValue = emptyList())
-    val heroPages: List<MediaHeroPage> = remember(recentProgress, state.movies, state.series, kind, hiddenTitles) {
+    val heroPages: List<MediaHeroPage> = remember(recentProgress, state.catalogMovies, state.catalogSeries, state.resolvedMovies, state.resolvedSeries, kind, hiddenTitles) {
         val rows = recentProgress.filter { r ->
             r.positionMs > 0L && !r.isFinished && (r.durationMs <= 0L || r.positionMs < r.durationMs - 5 * 60_000L)
         }
@@ -168,7 +168,7 @@ fun MediaTabContent(
     // Watching progress rows themselves, before the library resolves them.
     // A row the user removes leaves this set at once, so the held hero
     // cannot outlive it (removal is a user action, not a load transition).
-    val progressKeys: Set<String> = remember(recentProgress, state.movies, state.series, kind, hiddenTitles) {
+    val progressKeys: Set<String> = remember(recentProgress, state.catalogMovies, state.catalogSeries, state.resolvedMovies, state.resolvedSeries, kind, hiddenTitles) {
         val rows = recentProgress.filter { r ->
             r.positionMs > 0L && !r.isFinished && (r.durationMs <= 0L || r.positionMs < r.durationMs - 5 * 60_000L)
         }
@@ -429,6 +429,10 @@ fun MediaTabContent(
         com.aeriotv.android.feature.movies.tv.TvMediaTab(
             kind = kind, gridState = gridState, heroPages = heroPages, progressKeys = progressKeys, watchlistPages = watchlistPages,
             backdrops = backdrops, library = library, gridItems = gridItems, available = available,
+            railIndexOf = libraryBuilt.indexOfLetter,
+            // Search hits are a plain list; only the catalog window needs the
+            // indexed key lookup for the return-from-detail restore.
+            gridIndexOfKey = if (isSearching) null else libraryBuilt.indexOfKey,
             posterUrlFor = posterUrlFor,
             isSearching = isSearching, searchActive = searchActive, query = query,
             onQueryChange = { submitQuery(it) },
@@ -543,7 +547,9 @@ fun MediaTabContent(
             else Text(if (isSearching) "No results" else kind.emptyTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         },
         railLetters = available,
-        railIndexOf = { letter -> library.indexOfFirst { it.bucket == letter } },
+        // The library is a window over the catalog (GH #109): the rail index
+        // comes from its bucket array, never from walking the rows.
+        railIndexOf = libraryBuilt.indexOfLetter,
         isRefreshing = isLoading && gridItems.isNotEmpty(),
         onRefresh = { if (kind == MediaKind.Movies) viewModel.refresh() else viewModel.refreshSeries() },
         // TMDB's terms ask for the logo and wording wherever their data and

@@ -189,6 +189,56 @@ class TmdbArtCache @Inject constructor(
         }
     }
 
+    /**
+     * [enrich] over a library too large to hand over as one list (GH #109:
+     * the catalog lives in Room and can hold 100k+ titles). [priority] runs
+     * first; then [nextPage] is called with the previous page's cursor (0 to
+     * start) and returns the next cursor plus (art key, title) pairs, or null
+     * when the library is exhausted. Each page is filtered against the cache
+     * and resolved before the next is read, so only one page is ever held.
+     */
+    fun enrichPaged(
+        isMovie: Boolean,
+        priority: List<Pair<String, String>>,
+        nextPage: suspend (cursor: Long) -> Pair<Long, List<Pair<String, String>>>?,
+    ) {
+        val kind = if (isMovie) "movie" else "series"
+        enrichJobs.remove(kind)?.cancel()
+        enrichJobs[kind] = scope.launch {
+            if (!appPreferences.programPostersTmdbEnabled.first()) return@launch
+            val apiKey = appPreferences.tmdbApiKey.first()
+            if (apiKey.isBlank()) return@launch
+            loadIfNeeded()
+            val cutoff = System.currentTimeMillis() - MISS_TTL_MS
+            var resolved = 0
+            var cursor = 0L
+            var page: List<Pair<String, String>>? = priority
+            while (page != null) {
+                val todo = page.filter { (key, _) ->
+                    val cached = entries[key]
+                    cached == null || (cached.poster.isEmpty() && cached.at < cutoff)
+                }.distinctBy { it.first }
+                for ((key, title) in todo) {
+                    if (!isActive) return@launch
+                    // A duplicate title in a later page resolved meanwhile.
+                    if (entries[key]?.let { it.poster.isNotEmpty() || it.at >= cutoff } == true) continue
+                    val entry = tmdbService.lookupArt(title, isMovie, apiKey)
+                    if (entry != null) {
+                        store(key, entry)
+                        resolved++
+                    } else {
+                        delay(BACKOFF_MS)
+                    }
+                    delay(PACE_MS)
+                }
+                val next = nextPage(cursor) ?: break
+                cursor = next.first
+                page = next.second
+            }
+            Log.i(TAG, "[TMDB-ART] enrich $kind (paged): done, $resolved resolved")
+        }
+    }
+
     private companion object {
         const val TAG = "TmdbArtCache"
         const val SAVE_DEBOUNCE_MS = 2_000L

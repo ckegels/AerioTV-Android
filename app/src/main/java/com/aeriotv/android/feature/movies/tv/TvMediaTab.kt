@@ -55,6 +55,10 @@ internal fun TvMediaTab(
     library: List<MediaItem>,
     gridItems: List<MediaItem>,
     available: Set<Char>,
+    /** First grid index for a rail letter (the catalog window's bucket index). */
+    railIndexOf: (Char) -> Int,
+    /** Grid index of an item key without walking [gridItems]; null for a plain list. */
+    gridIndexOfKey: ((Any) -> Int)? = null,
     isSearching: Boolean,
     searchActive: Boolean,
     query: String,
@@ -267,7 +271,8 @@ internal fun TvMediaTab(
         },
         isLoading = isLoading,
         railLetters = available,
-        railIndexOf = { letter -> library.indexOfFirst { it.bucket == letter } },
+        railIndexOf = railIndexOf,
+        indexOfKey = gridIndexOfKey,
         // Snapshot at composition start: the click that ARMS the key must not
         // restart the restore while the page is still up (it would clear the
         // key before the detail even opened).

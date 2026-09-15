@@ -1421,11 +1421,31 @@ class DispatcharrClient @Inject constructor() {
         // provider name like "|DE| NETFLIX" needs "|movie" appended too. The
         // old contains('|') test sent those untyped and every such category
         // failed (204 of them on Logan's account, 2026-09-08).
-        val typed = if (category.endsWith("|movie")) category else "$category|movie"
-        val encoded = java.net.URLEncoder.encode(typed, "UTF-8")
-        val url = "${baseUrl.trimEnd('/')}/api/vod/movies/?page_size=$pageSize&category=$encoded"
-        return getVODMoviesPage(url, apiKey)
+        return getVODMoviesPage(vodCategoryUrl(baseUrl, isMovie = true, category, pageSize), apiKey)
     }
+
+    /**
+     * Host-free query for one VOD category walk ("page_size=100&category=..."),
+     * or the unfiltered walk when [category] is blank. The catalog sweep saves
+     * this (and each page's `next` query) so a resumed walk rebuilds the URL
+     * against the CURRENT base: a LAN/WAN switch between runs never replays a
+     * stale host.
+     */
+    fun vodCategoryQuery(isMovie: Boolean, category: String, pageSize: Int = 100): String {
+        if (category.isBlank()) return "page_size=$pageSize"
+        val suffix = if (isMovie) "|movie" else "|series"
+        // Always pin the type: Dispatcharr splits on the LAST pipe, so a
+        // provider name like "|DE| NETFLIX" needs the suffix appended too.
+        val typed = if (category.endsWith(suffix)) category else "$category$suffix"
+        return "page_size=$pageSize&category=" + java.net.URLEncoder.encode(typed, "UTF-8")
+    }
+
+    /** Absolute list URL for [query] (see [vodCategoryQuery]) against [baseUrl]. */
+    fun vodListUrl(baseUrl: String, isMovie: Boolean, query: String): String =
+        "${baseUrl.trimEnd('/')}/api/vod/${if (isMovie) "movies" else "series"}/?$query"
+
+    private fun vodCategoryUrl(baseUrl: String, isMovie: Boolean, category: String, pageSize: Int): String =
+        vodListUrl(baseUrl, isMovie, vodCategoryQuery(isMovie, category, pageSize))
 
     /** Series counterpart of [getVODMoviesByCategory]; pins |series. Mirrors iOS
      *  StreamingAPIs.swift seriesPath(category:) (line 2061). */
@@ -1445,10 +1465,7 @@ class DispatcharrClient @Inject constructor() {
         category: String,
         pageSize: Int = 100,
     ): VODSeriesPage {
-        val typed = if (category.endsWith("|series")) category else "$category|series"
-        val encoded = java.net.URLEncoder.encode(typed, "UTF-8")
-        val url = "${baseUrl.trimEnd('/')}/api/vod/series/?page_size=$pageSize&category=$encoded"
-        return getVODSeriesPage(url, apiKey)
+        return getVODSeriesPage(vodCategoryUrl(baseUrl, isMovie = false, category, pageSize), apiKey)
     }
 
     /**

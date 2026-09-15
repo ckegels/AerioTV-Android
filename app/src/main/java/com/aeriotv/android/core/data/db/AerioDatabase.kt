@@ -10,6 +10,7 @@ import com.aeriotv.android.core.data.db.dao.LocalRecordingDao
 import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.db.dao.ReminderDao
 import com.aeriotv.android.core.data.db.dao.TmdbArtDao
+import com.aeriotv.android.core.data.db.dao.VodCatalogDao
 import com.aeriotv.android.core.data.db.dao.WatchProgressDao
 import com.aeriotv.android.core.data.db.entity.ChannelSnapshotEntity
 import com.aeriotv.android.core.data.db.entity.EpgChunkCoverage
@@ -19,6 +20,9 @@ import com.aeriotv.android.core.data.db.entity.LocalRecordingEntity
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.db.entity.ReminderEntity
 import com.aeriotv.android.core.data.db.entity.TmdbArtEntity
+import com.aeriotv.android.core.data.db.entity.VodSweepLaneEntity
+import com.aeriotv.android.core.data.db.entity.VodSweepStateEntity
+import com.aeriotv.android.core.data.db.entity.VodTitleEntity
 import com.aeriotv.android.core.data.db.entity.WatchProgressEntity
 
 @Database(
@@ -32,8 +36,11 @@ import com.aeriotv.android.core.data.db.entity.WatchProgressEntity
         EpgChunkCoverage::class,
         ChannelSnapshotEntity::class,
         TmdbArtEntity::class,
+        VodTitleEntity::class,
+        VodSweepStateEntity::class,
+        VodSweepLaneEntity::class,
     ],
-    version = 32,
+    version = 33,
     exportSchema = false,
 )
 abstract class AerioDatabase : RoomDatabase() {
@@ -46,4 +53,5 @@ abstract class AerioDatabase : RoomDatabase() {
     abstract fun epgChunkCoverageDao(): EpgChunkCoverageDao
     abstract fun channelSnapshotDao(): ChannelSnapshotDao
     abstract fun tmdbArtDao(): TmdbArtDao
+    abstract fun vodCatalogDao(): VodCatalogDao
 }

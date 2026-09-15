@@ -23,6 +23,12 @@ import javax.inject.Singleton
  * Refresh Movies and TV Shows). Apple parity: VODLibraryCache. Keyed by the
  * playlist identity (id, URL, account), so another source never serves a
  * stale library.
+ *
+ * Since GH #109 the titles themselves live in the Room catalog
+ * (VodCatalogStore) and this file carries only the metadata below: group
+ * names and the change-probe baseline. [Snapshot.movies] / [Snapshot.series]
+ * are read once from a pre-Room file for the one-time import and are never
+ * written again, which also retires the 30 MB decode at launch.
  */
 @Singleton
 class VodLibrarySnapshotStore @Inject constructor(
@@ -80,14 +86,13 @@ class VodLibrarySnapshotStore @Inject constructor(
         }
             .onFailure { Log.w(TAG, "snapshot unreadable: ${it.message}") }
             .getOrNull()
-            ?.takeIf { it.identity == identity && (it.movies.isNotEmpty() || it.series.isNotEmpty()) }
+            ?.takeIf { it.identity == identity }
     }
 
     /** Streamed for the same reason as [load]: encodeToString built the whole
      *  30 MB document in memory before a byte reached the disk. */
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     suspend fun save(snapshot: Snapshot) = withContext(Dispatchers.IO) {
-        if (snapshot.movies.isEmpty() && snapshot.series.isEmpty()) return@withContext
         val f = file(snapshot.identity)
         runCatching {
             val tmp = File(f.parentFile, f.name + ".tmp")

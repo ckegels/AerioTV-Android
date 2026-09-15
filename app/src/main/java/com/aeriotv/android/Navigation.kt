@@ -1416,7 +1416,7 @@ fun AerioTVNavHost(
                     .firstOrNull { (_, list) -> list.any { it.uuid == episodeUuid } }
                     ?.key
                 val parentSeriesPoster = parentSeriesId?.let { id ->
-                    epOnDemandState.series.firstOrNull { it.id == id }?.posterUrl
+                    onDemandVm.seriesById(id)?.posterUrl
                 }
                 LaunchedEffect(parentSeriesId) {
                     parentSeriesId?.let { onDemandVm.loadSeriesProviders(it) }
@@ -1646,7 +1646,8 @@ fun AerioTVNavHost(
                 val movieUuid = Uri.decode(entry.arguments?.getString("movieUuid").orEmpty())
                 // See the episode route above.
                 val movieFromStart = entry.arguments?.getBoolean("fromStart") ?: false
-                val movie = onDemandState.movies.firstOrNull { it.uuid == movieUuid }
+                // Catalog-backed lookup (GH #109); recomposes when the row lands.
+                val movie = onDemandVm.movieByUuid(movieUuid)
 
                 // Version switching: make sure the provider copies are loaded
                 // for the in-player "Switch Version" sheet (idempotent; the
