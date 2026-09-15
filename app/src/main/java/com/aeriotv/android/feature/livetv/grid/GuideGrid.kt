@@ -728,15 +728,35 @@ private fun GridRow(
         }
         if (logo != null) {
             val gap = if (name != null || underNumber != null) (if (phoneRail) 4.dp.toPx() else 2.dp.toPx()) else 0f
-            val top = (size.height - logoH - nameH - gap) / 2f
-            val scale = minOf(logoW / logo.width, logoH / logo.height)
+            // Hidden number and/or name: the logo box grows into the freed
+            // space (Fit keeps the aspect). The band clears the corner star /
+            // catch-up icons on top and, on the wide rail, the number column
+            // on the left. Both shown keeps the stock 36x24 (40x28 phone) box.
+            // boxLeft/boxW = centring region, fitW/boxH = the Fit box.
+            var boxLeft = nameLeft; var boxW = nameW.toFloat()
+            var fitW = logoW; var boxH = logoH
+            var top = (size.height - logoH - nameH - gap) / 2f
+            if (!(rail.numbers && rail.names)) {
+                var bandTop = if (isFavorite || channel.hasCatchup) RAIL_LOGO_ICON_CLEAR.toPx() else RAIL_LOGO_INSET.toPx()
+                var left = nameLeft; var w = nameW.toFloat()
+                if (rail.numbers && !phoneRail) {
+                    if (narrowRail) bandTop = maxOf(bandTop, 2.dp.toPx() + number.title.size.height + RAIL_LOGO_INSET.toPx())
+                    else { left = RAIL_NUMBER_COLUMN.toPx(); w = railWidthPx - left - RAIL_LOGO_INSET.toPx() }
+                }
+                val grownH = size.height - bandTop - RAIL_LOGO_INSET.toPx() - nameH - gap
+                // Never shrink below the stock box on a short row.
+                if (grownH >= logoH && w >= logoW) {
+                    boxLeft = left; boxW = w; fitW = w; boxH = grownH; top = bandTop
+                }
+            }
+            val scale = minOf(fitW / logo.width, boxH / logo.height)
             val dw = logo.width * scale; val dh = logo.height * scale
             drawImage(
                 logo,
-                dstOffset = IntOffset((nameLeft + (nameW - dw) / 2f).toInt(), (top + (logoH - dh) / 2f).toInt()),
+                dstOffset = IntOffset((boxLeft + (boxW - dw) / 2f).toInt(), (top + (boxH - dh) / 2f).toInt()),
                 dstSize = IntSize(dw.toInt(), dh.toInt()),
             )
-            drawNameStack(top + logoH + gap)
+            drawNameStack(top + boxH + gap)
         } else if (name != null || underNumber != null) {
             drawNameStack((size.height - nameH) / 2f)
         }
@@ -994,6 +1014,13 @@ private const val MIN_CELL_PX = 6f
 private const val RAIL_NUMBER_KEY = Long.MIN_VALUE + 1
 private const val RAIL_NAME_KEY = Long.MIN_VALUE + 2
 private const val RAIL_UNDER_NUMBER_KEY = Long.MIN_VALUE + 3
+
+// Grown rail logo (number and/or name hidden): inset from the rail edges,
+// top clearance under the 12 dp corner icons (4 dp top + 12 dp + 2 dp), and
+// the wide rail's number column (6 dp left + 30 dp text + 4 dp).
+private val RAIL_LOGO_INSET = 4.dp
+private val RAIL_LOGO_ICON_CLEAR = 18.dp
+private val RAIL_NUMBER_COLUMN = 40.dp
 private val NOW_RED = Color(0xFFFF4757)
 
 private class CellText(

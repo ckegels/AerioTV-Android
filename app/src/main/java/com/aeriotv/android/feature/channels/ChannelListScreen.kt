@@ -1075,10 +1075,15 @@ internal fun ChannelRow(
                 // on the card. The container is wider than tall so wider
                 // logos like NBC Sports fit comfortably without cropping.
                 if (showLogo) {
+                    // Numbers off: the logo box grows into the freed number
+                    // column (28 + 8 dp) and taller, still inside the fixed
+                    // info column's height, so the row height is unchanged.
+                    val logoW = if (showNumber) ROW_LOGO_WIDTH else ROW_LOGO_WIDTH + ROW_NUMBER_COLUMN
+                    val logoH = if (showNumber) ROW_LOGO_HEIGHT else ROW_LOGO_GROWN_HEIGHT
                     Box(
                         modifier = Modifier
-                            .width(50.dp)
-                            .height(32.dp),
+                            .width(logoW)
+                            .height(logoH),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (channel.tvgLogo.isNotBlank()) {
@@ -1090,8 +1095,8 @@ internal fun ChannelRow(
                                 // default Image.resizable + scaledToFit() pair.
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier
-                                    .width(50.dp)
-                                    .height(32.dp),
+                                    .width(logoW)
+                                    .height(logoH),
                             )
                         } else {
                             Text(
@@ -1773,3 +1778,11 @@ private fun formatTimeRange(programme: EPGProgramme): String {
     val end = timeFormat.format(java.util.Date(programme.endMillis))
     return "$start – $end"
 }
+
+// Channel row logo box (iOS CachedLogoImage 38x26 on iPhone, 50x32 here).
+// When channel numbers are hidden it absorbs the 28 dp number column plus its
+// 8 dp spacer and grows to 44 dp tall, below the ~80 dp locked info column.
+private val ROW_LOGO_WIDTH = 50.dp
+private val ROW_LOGO_HEIGHT = 32.dp
+private val ROW_NUMBER_COLUMN = 36.dp
+private val ROW_LOGO_GROWN_HEIGHT = 44.dp
