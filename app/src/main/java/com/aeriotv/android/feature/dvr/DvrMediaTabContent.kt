@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -38,9 +39,9 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -574,7 +575,9 @@ fun DvrPosterCard(
         }
         // Centered under the poster (Logan 2026-09-10, all platforms).
         Text(rec.title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().height(30.dp))
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            // Two 14sp lines (+2dp): sp-derived so the grid stays aligned at every Text Size.
+            modifier = Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { 28.sp.toDp() } + 2.dp))
         Text(metaLine(rec, now), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f), maxLines = 1, overflow = TextOverflow.Ellipsis,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp))
     }
@@ -624,7 +627,7 @@ fun DvrHeroCard(
                 HeroRound(Icons.Outlined.Info, "Details", onInfo)
                 if (menu != null) Box {
                     HeroRound(Icons.Filled.MoreHoriz, "Options") { menuOpen = true }
-                    androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    com.aeriotv.android.ui.scale.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         menu { menuOpen = false }
                     }
                 }
@@ -636,7 +639,7 @@ fun DvrHeroCard(
 @Composable
 private fun HeroPill(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, primary: Boolean, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.height(40.dp).clip(CircleShape)
+        modifier = Modifier.heightIn(min = 40.dp).clip(CircleShape)
             .background(if (primary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
             .clickable(onClick = onClick).padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),

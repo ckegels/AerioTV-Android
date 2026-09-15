@@ -1407,7 +1407,7 @@ fun <T> TvMediaPage(
                     // the text pins its own line height too.
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 4.dp).height(16.dp),
+                        modifier = Modifier.padding(top = 4.dp).height(with(androidx.compose.ui.platform.LocalDensity.current) { 16.sp.toDp() }),
                     ) {
                         if (isLoading && gridItems.isNotEmpty()) {
                             CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.tertiary)
@@ -2177,7 +2177,9 @@ fun TvPosterCard(
         Text(
             title, fontSize = 9.sp, lineHeight = 11.sp, fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().height(22.dp),
+            textAlign = TextAlign.Center,
+            // Two 11sp lines: sp-derived so rows stay aligned at every Text Size.
+            modifier = Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { 22.sp.toDp() }),
         )
         Text(
             year?.toString() ?: " ", fontSize = 8.sp, fontWeight = FontWeight.Medium,

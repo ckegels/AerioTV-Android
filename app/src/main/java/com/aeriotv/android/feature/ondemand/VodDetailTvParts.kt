@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -102,7 +103,7 @@ internal fun TvHeroActionButton(
     Row(
         modifier = modifier
             .tvFocusScale(focused, focusedScale = 1.04f)
-            .height(30.dp)
+            .heightIn(min = 30.dp)
             .clip(CircleShape)
             .background(fill)
             .border(

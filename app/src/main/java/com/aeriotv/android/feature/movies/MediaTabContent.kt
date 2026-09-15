@@ -33,7 +33,7 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -667,7 +667,8 @@ fun MediaPosterCard(
             item.title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground,
             maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().height(30.dp),
+            // Two 14sp lines (+2dp): sp-derived so the grid stays aligned at every Text Size.
+            modifier = Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { 28.sp.toDp() } + 2.dp),
         )
         Text(
             item.year?.toString() ?: " ", fontSize = 10.sp,

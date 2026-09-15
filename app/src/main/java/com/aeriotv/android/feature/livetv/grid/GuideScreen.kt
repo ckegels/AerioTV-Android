@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -226,7 +227,12 @@ fun GuideScreen(
     var sidebarRefocusRequest by remember { mutableStateOf(0) }
 
     val tvComfortScale = if (isTv) displayScaleLiveTv.coerceIn(0.85f, 1.75f) else 1f
-    val fontScale = LocalConfiguration.current.fontScale
+    // System font size times the app Text Size (the root LocalDensity carries
+    // both), so TV rows grow with the text they hold.
+    val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale
+    // Phone / tablet rows keep their fixed canon heights at 100% and grow only
+    // with the app Text Size (not the system font size, unchanged from before).
+    val appTextScale = com.aeriotv.android.ui.scale.LocalAppTextScale.current
     val hourWidth = if (isTv) 300.dp * guideScale * tvComfortScale else 320.dp * guideScale
     val railWidth = if (isTv) 120.dp * tvComfortScale else 78.dp
     // Phone cells carry the subtitle and two description lines (Logan
@@ -239,8 +245,8 @@ fun GuideScreen(
     // and are shorter (tvOS 96 vs 110 pt).
     val liveTvLayout by settingsVm.liveTvLayout.collectAsStateWithLifecycle()
     val previewMode = isTv && liveTvLayout == "preview"
-    val rowHeight = if (isTv) (if (previewMode) 48.dp else 55.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp else 72.dp
-    val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp
+    val rowHeight = if (isTv) (if (previewMode) 48.dp else 55.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale
+    val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
 
     // Clock: 30 s tick for the now-line and the airing tint.
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -1204,7 +1210,7 @@ private fun GroupPills(
     LazyRow(
         state = listState,
         contentPadding = PaddingValues(start = leadInset, end = 12.dp, top = 6.dp, bottom = 6.dp),
-        modifier = Modifier.fillMaxWidth().height(44.dp).focusProperties { if (topNav != null) up = topNav },
+        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).focusProperties { if (topNav != null) up = topNav },
     ) {
         items(items, key = { it.first }) { (group, label) ->
             // TV chrome canon (ui/tv/TvChrome.kt): capsule, accent fill when

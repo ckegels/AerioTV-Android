@@ -13,6 +13,7 @@ import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -43,6 +44,8 @@ import com.aeriotv.android.feature.player.ExoWindowState
 import com.aeriotv.android.feature.player.PersistentExoWindow
 import com.aeriotv.android.feature.splash.SplashGate
 import com.aeriotv.android.ui.theme.AerioTVTheme
+import com.aeriotv.android.ui.scale.LocalAppTextScale
+import com.aeriotv.android.ui.scale.ProvideAppTextScale
 import com.aeriotv.android.ui.theme.AppTheme
 import com.aeriotv.android.ui.theme.AppearanceMode
 import dagger.hilt.android.AndroidEntryPoint
@@ -993,6 +996,12 @@ class MainActivity : ComponentActivity() {
                     )
                 }.getOrNull()
             } else null
+            // App-wide Text Size (Appearance > Text Size): one fontScale
+            // multiplier for every sp in this window. Dialogs / sheets / menus
+            // re-apply it in their own windows (see ui/scale/AppTextScale.kt).
+            val textScale by appPreferences.textScale.collectAsState(initial = 1f)
+            CompositionLocalProvider(LocalAppTextScale provides textScale) {
+            ProvideAppTextScale {
             AerioTVTheme(
                 appTheme = theme,
                 customAccent = customAccent,
@@ -1073,6 +1082,8 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+            }
+            }
             }
         }
     }

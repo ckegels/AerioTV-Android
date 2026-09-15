@@ -30,6 +30,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -58,7 +60,11 @@ import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.dpadFocusWash
+import com.aeriotv.android.core.preferences.TEXT_SCALE_MAX
+import com.aeriotv.android.core.preferences.TEXT_SCALE_MIN
 import com.aeriotv.android.ui.theme.AppTheme
+import com.aeriotv.android.ui.tv.dpadFocusEscape
+import kotlin.math.roundToInt
 import com.aeriotv.android.ui.theme.AppearanceMode
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
 
@@ -119,6 +125,7 @@ fun AppearanceSettingsScreen(
     val palette by viewModel.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
     val scaleMovies by viewModel.displayScaleMovies.collectAsStateWithLifecycle(initialValue = 1.0f)
     val scaleLiveTV by viewModel.displayScaleLiveTV.collectAsStateWithLifecycle(initialValue = 1.0f)
+    val textScale by viewModel.textScale.collectAsStateWithLifecycle(initialValue = 1.0f)
     val useCustomAccent by viewModel.useCustomAccent.collectAsStateWithLifecycle(initialValue = false)
     val customAccentHex by viewModel.customAccentHex.collectAsStateWithLifecycle(initialValue = "")
     val showChannelLogos by viewModel.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
@@ -234,6 +241,19 @@ fun AppearanceSettingsScreen(
                     PreviewCard(
                         theme = currentTheme,
                         customAccentHex = customAccentHex.takeIf { useCustomAccent },
+                    )
+                }
+
+                // TEXT SIZE card: one app-wide multiplier on every sp (applied
+                // at the composition root). The Display Scale sliders below
+                // still multiply on top for their own surfaces.
+                settingsCard(
+                    header = "Text Size",
+                    footer = "Scales all text in AerioTV, on top of your device's font size. Changes apply live.",
+                ) {
+                    TextSizeSliderRow(
+                        value = textScale,
+                        onValueChange = viewModel::setTextScale,
                     )
                 }
 
@@ -874,6 +894,55 @@ private val SCALE_SEGMENTS: List<Pair<Float, String>> = listOf(
     1.25f to "125%", 1.50f to "150%", 1.75f to "175%",
 )
 
+/** Text Size stops: 85% .. 150% in 5% steps. */
+private val TEXT_SCALE_STOPS: List<Float> =
+    (0..((TEXT_SCALE_MAX - TEXT_SCALE_MIN) * 20f).roundToInt()).map { TEXT_SCALE_MIN + it * 0.05f }
+
+/**
+ * Text Size row: label left, current percent right, a stepped Material
+ * slider beneath. Same shape as the SteppedSliderRow in App Behaviors and
+ * TV-safe the same way ([dpadFocusEscape]: UP/DOWN leave the slider,
+ * LEFT/RIGHT step one 5% stop).
+ */
+@Composable
+private fun TextSizeSliderRow(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+) {
+    val idx = TEXT_SCALE_STOPS.indices.minByOrNull { kotlin.math.abs(TEXT_SCALE_STOPS[it] - value) } ?: 0
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Text Size",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${(TEXT_SCALE_STOPS[idx] * 100f).roundToInt()}%",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Slider(
+            value = idx.toFloat(),
+            onValueChange = { raw ->
+                val newIdx = raw.roundToInt().coerceIn(0, TEXT_SCALE_STOPS.lastIndex)
+                if (newIdx != idx) onValueChange(TEXT_SCALE_STOPS[newIdx])
+            },
+            valueRange = 0f..TEXT_SCALE_STOPS.lastIndex.toFloat(),
+            steps = (TEXT_SCALE_STOPS.size - 2).coerceAtLeast(0),
+            modifier = Modifier.dpadFocusEscape(),
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
+    }
+}
+
 @Composable
 private fun ScaleSliderRow(
     label: String,
@@ -1020,7 +1089,7 @@ private fun AccentPickerDialog(
     val isValid = sanitized.length == 6 && sanitized.all { it in HEX_CHARS_ACCENT }
     val preview = if (isValid) parseHex(sanitized) else preset
 
-    androidx.compose.material3.AlertDialog(
+    com.aeriotv.android.ui.scale.AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             SettingsDialogTextButton(

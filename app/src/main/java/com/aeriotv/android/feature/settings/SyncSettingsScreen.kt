@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -382,7 +383,7 @@ fun SyncSettingsScreen(
     }
 
     if (pushConfirmOpen) {
-        androidx.compose.material3.AlertDialog(
+        com.aeriotv.android.ui.scale.AlertDialog(
             onDismissRequest = { pushConfirmOpen = false },
             title = { Text("Push Config to Drive?") },
             text = {
@@ -408,7 +409,7 @@ fun SyncSettingsScreen(
     }
 
     if (pullConfirmOpen) {
-        androidx.compose.material3.AlertDialog(
+        com.aeriotv.android.ui.scale.AlertDialog(
             onDismissRequest = { pullConfirmOpen = false },
             title = { Text("Pull Config from Drive?") },
             text = {
@@ -435,7 +436,7 @@ fun SyncSettingsScreen(
     }
 
     if (credsSyncDisclosureOpen) {
-        androidx.compose.material3.AlertDialog(
+        com.aeriotv.android.ui.scale.AlertDialog(
             onDismissRequest = {
                 credsSyncDisclosureOpen = false
                 viewModel.markCredentialsSyncDisclosed()
@@ -468,7 +469,7 @@ fun SyncSettingsScreen(
     }
 
     if (notConfiguredDialogOpen) {
-        androidx.compose.material3.AlertDialog(
+        com.aeriotv.android.ui.scale.AlertDialog(
             onDismissRequest = { notConfiguredDialogOpen = false },
             title = { Text("Drive Sync isn't set up yet") },
             text = {
@@ -616,7 +617,7 @@ private fun SignOutButton(enabled: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .heightIn(min = 44.dp)
             .clip(RoundedCornerShape(50))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
             .border(0.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f), RoundedCornerShape(50))
@@ -660,7 +661,7 @@ private fun SignInWithGoogleButton(enabled: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(50))
             .background(bg)
             .border(1.dp, stroke, RoundedCornerShape(50))

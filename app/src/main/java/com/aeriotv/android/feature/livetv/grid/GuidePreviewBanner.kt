@@ -276,7 +276,14 @@ fun GuidePreviewBanner(
                     var focused by remember { androidx.compose.runtime.mutableStateOf(false) }
                     Text(
                         program.description, fontSize = 11.sp, lineHeight = 14.sp,
-                        color = colors.onBackground.copy(alpha = 0.85f), maxLines = 3, overflow = TextOverflow.Ellipsis,
+                        // The banner height is fixed (drawer math + mini
+                        // baseline), so large Text Sizes trade a description
+                        // line for room instead of pushing the title out the top.
+                        color = colors.onBackground.copy(alpha = 0.85f),
+                        maxLines = androidx.compose.ui.platform.LocalDensity.current.fontScale.let { fs ->
+                            when { fs >= 1.35f -> 1; fs >= 1.1f -> 2; else -> 3 }
+                        },
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
                             // tvOS BannerTextButtonStyle: the platter's inset
                             // is cancelled so the text stays flush with the

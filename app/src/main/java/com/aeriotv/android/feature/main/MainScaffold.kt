@@ -1573,6 +1573,10 @@ private fun FloatingTabBar(
                     text = tab.label,
                     fontSize = 10.sp,
                     lineHeight = 12.sp,
+                    // One line at every Text Size: the bar grows taller with
+                    // the text, a long label ellipsizes instead of wrapping.
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     fontWeight = FontWeight.Medium,
                     color = if (isSel) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,

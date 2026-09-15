@@ -67,6 +67,10 @@ private val Context.appDataStore: DataStore<Preferences> by preferencesDataStore
 const val GUIDE_SCALE_MIN = 0.5f
 const val GUIDE_SCALE_MAX = 2.0f
 
+/** App-wide Text Size bounds (Appearance > Text Size). 5% stops, default 1.0. */
+const val TEXT_SCALE_MIN = 0.85f
+const val TEXT_SCALE_MAX = 1.50f
+
 /**
  * Typed DataStore wrapper, mirroring the iOS @AppStorage registry
  * (project_aeriotv_ios_architecture.md section C). Each key has a Flow getter
@@ -235,6 +239,20 @@ class AppPreferences @Inject constructor(
     }
     suspend fun setDisplayScaleMovies(value: Float) {
         store.edit { it[KEY_DISPLAY_SCALE_MOVIES] = value.toDouble() }
+    }
+
+    /**
+     * App-wide Text Size multiplier (Appearance > Text Size). Applied once at
+     * the composition root (and re-applied inside every dialog / sheet / menu
+     * window) as a fontScale multiplier, so every sp in the app follows it.
+     * [TEXT_SCALE_MIN]..[TEXT_SCALE_MAX], snapped to 5% stops. Default 1.0.
+     * Synced via Drive so the reading size follows the user.
+     */
+    val textScale: Flow<Float> = store.data.map {
+        snapTextScale((it[KEY_TEXT_SCALE] ?: 1.0).toFloat())
+    }
+    suspend fun setTextScale(value: Float) {
+        store.edit { it[KEY_TEXT_SCALE] = snapTextScale(value).toDouble() }
     }
 
     /** iOS `displayScaleLiveTV` parity. 0.85 .. 1.25. Default 1.0. */
@@ -1253,6 +1271,7 @@ class AppPreferences @Inject constructor(
         val data = store.data.first()
         val out = mutableMapOf<String, String>()
         data[KEY_SELECTED_THEME]?.let { out["selectedTheme"] = it }
+        data[KEY_TEXT_SCALE]?.let { out["textScale"] = it.toString() }
         // Appearance mode is the OPPOSITE of defaultLiveTVView: it MUST sync so
         // the user's Dark/Light/System choice follows them to every device.
         data[KEY_APPEARANCE_MODE]?.let { out["appearanceMode"] = it }
@@ -1314,6 +1333,7 @@ class AppPreferences @Inject constructor(
     suspend fun applySyncedPreferences(keys: Map<String, String>) {
         store.edit { prefs ->
             keys["selectedTheme"]?.let { prefs[KEY_SELECTED_THEME] = it }
+            keys["textScale"]?.toFloatOrNull()?.let { prefs[KEY_TEXT_SCALE] = snapTextScale(it).toDouble() }
             keys["appearanceMode"]?.let { prefs[KEY_APPEARANCE_MODE] = it }
             keys["defaultTab"]?.let { prefs[KEY_DEFAULT_TAB] = it }
             keys["timeFormat"]?.let { prefs[KEY_TIME_FORMAT] = it }
@@ -1823,6 +1843,7 @@ class AppPreferences @Inject constructor(
         val KEY_DISPLAY_SCALE_MOVIES = doublePreferencesKey("display_scale_movies")
         val KEY_DISPLAY_SCALE_LIVE_TV = doublePreferencesKey("display_scale_live_tv")
         val KEY_GUIDE_SCALE = doublePreferencesKey("guide_scale")
+        val KEY_TEXT_SCALE = doublePreferencesKey("text_scale")
         val KEY_DEFAULT_TAB = stringPreferencesKey("default_tab")
         val KEY_NETWORK_TIMEOUT = doublePreferencesKey("network_timeout_secs")
         val KEY_MAX_RETRIES = intPreferencesKey("max_retries")
@@ -1877,4 +1898,10 @@ class AppPreferences @Inject constructor(
         val KEY_BG_REFRESH_ENABLED = booleanPreferencesKey("background_refresh_enabled")
         val KEY_BG_REFRESH_INTERVAL_MINS = intPreferencesKey("background_refresh_interval_mins")
     }
+}
+
+/** Clamp to [TEXT_SCALE_MIN]..[TEXT_SCALE_MAX] and snap to the nearest 5% stop. */
+fun snapTextScale(value: Float): Float {
+    val v = if (value.isNaN()) 1f else value.coerceIn(TEXT_SCALE_MIN, TEXT_SCALE_MAX)
+    return kotlin.math.round(v * 20f) / 20f
 }

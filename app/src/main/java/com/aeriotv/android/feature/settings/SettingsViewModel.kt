@@ -52,6 +52,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setDisplayScaleMovies(value) }
     }
 
+    /** App-wide Text Size (Appearance > Text Size). */
+    val textScale: Flow<Float> = prefs.textScale
+    fun setTextScale(value: Float) {
+        viewModelScope.launch { prefs.setTextScale(value) }
+    }
+
     val useCustomAccent: Flow<Boolean> = prefs.useCustomAccent
     fun setUseCustomAccent(value: Boolean) {
         viewModelScope.launch { prefs.setUseCustomAccent(value) }

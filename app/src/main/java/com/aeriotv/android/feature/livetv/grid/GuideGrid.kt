@@ -639,9 +639,12 @@ private fun GridRow(
     // tvOS: a 1 pt hairline gap between cells and rows, nothing wider.
     val seam = 1f
     val padH = 8f
+    val appTextScale = com.aeriotv.android.ui.scale.LocalAppTextScale.current
     // Text layouts are measured once per (cell, width) and drawn many times:
     // measuring through TextMeasurer on every draw was ~1 ms per row.
-    val textCache = remember(state.rows, row, showBadges, showSubtitles, clockMode, rail) { HashMap<Long, CellText>() }
+    // Keyed on fontScale too: cached layouts are measured in sp, so a live
+    // Text Size change must re-measure instead of drawing stale sizes.
+    val textCache = remember(state.rows, row, showBadges, showSubtitles, clockMode, rail, LocalDensity.current.fontScale) { HashMap<Long, CellText>() }
     val rangeCache = remember(state.rows, row, clockMode) { HashMap<Long, String>() }
     val railWidthPx = with(LocalDensity.current) { railWidth.toPx() }
     val logos = LocalLogoCache.current
@@ -826,7 +829,9 @@ private fun GridRow(
                     // Phone rows (98dp, Logan 2026-09-05 / EPGGuideView.swift)
                     // have room for TWO description lines under the title and
                     // subtitle; the 72dp / TV rows keep one.
-                    val descLines = if (size.height >= 90.dp.toPx()) 2 else 1
+                    // Threshold follows the Text Size so the phone row (98dp x
+                    // Text Size) keeps its two lines at every stop.
+                    val descLines = if (size.height >= 90.dp.toPx() * appTextScale) 2 else 1
                     val key = ((cell.startMillis * 31 + textW) * 4 + descLines) * 2 + (if (compact) 1 else 0)
                     val text = textCache.getOrPut(key) {
                         fun measure(t: String, st: TextStyle, maxH: Float, ellipsis: Boolean = true, lines: Int = 1) = textMeasurer.measure(

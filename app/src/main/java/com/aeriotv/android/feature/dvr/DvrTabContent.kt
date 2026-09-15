@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,10 +36,10 @@ import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -225,7 +226,7 @@ fun DvrTabContent(
                     Box(
                         modifier = Modifier
                             .padding(start = 8.dp)
-                            .height(36.dp)
+                            .heightIn(min = 36.dp)
                             .onFocusChanged { clearFocused = it.isFocused }
                             .clip(CircleShape)
                             .background(
@@ -576,7 +577,7 @@ private fun FilterPill(
         var focused by remember { mutableStateOf(false) }
         Box(
             modifier = Modifier
-                .height(36.dp)
+                .heightIn(min = 36.dp)
                 .onFocusChanged { focused = it.isFocused }
                 .clip(CircleShape)
                 .background(

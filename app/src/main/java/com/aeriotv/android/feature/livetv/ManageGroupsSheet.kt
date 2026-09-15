@@ -54,7 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.aeriotv.android.ui.scale.Dialog
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 

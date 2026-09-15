@@ -726,7 +726,7 @@ fun AerioTVNavHost(
                 }
 
                 if (welcomeNotConfiguredDialog) {
-                    androidx.compose.material3.AlertDialog(
+                    com.aeriotv.android.ui.scale.AlertDialog(
                         onDismissRequest = { welcomeNotConfiguredDialog = false },
                         title = { androidx.compose.material3.Text("Drive Sync isn't set up yet") },
                         text = {
