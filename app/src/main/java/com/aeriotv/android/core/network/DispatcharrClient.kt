@@ -446,18 +446,37 @@ class DispatcharrClient @Inject constructor() {
         val response = client.get(url) { applyAuth(apiKey) }
         if (!response.status.isSuccess()) return@runCatching null
         val root: JsonElement = response.body()
-        // The payload has been both an object with a system_settings child and
-        // a flat list of setting rows across versions; accept either, and a
-        // top-level catchup_enabled too.
-        fun fromObject(obj: JsonObject?): Boolean? =
-            (obj?.get("catchup_enabled") as? JsonPrimitive)?.booleanOrNull
+        // MEASURED against Dispatcharr 0.31.0 (2026-09-15): the endpoint answers
+        // with a flat ARRAY of setting-GROUP rows, {id, key, name, value}, where
+        // value is the group's object. The flag lives at
+        //   [{ "key": "system_settings", "value": { "catchup_enabled": true } }]
+        // Older shapes (a plain object, or one row per setting) are still
+        // accepted. Anything unrecognized stays null = Unknown, never a denial.
+        fun boolOf(element: JsonElement?): Boolean? = (element as? JsonPrimitive)?.let { v ->
+            v.booleanOrNull ?: when (v.contentOrNull?.lowercase()) {
+                "true", "1" -> true
+                "false", "0" -> false
+                else -> null
+            }
+        }
+        fun fromObject(obj: JsonObject?): Boolean? = boolOf(obj?.get("catchup_enabled"))
+        fun fromRow(row: JsonObject): Boolean? {
+            val key = (row["key"] as? JsonPrimitive)?.contentOrNull
+            // One row per setting: {"key":"catchup_enabled","value":true|"true"}.
+            if (key == "catchup_enabled") return boolOf(row["value"])
+            // One row per GROUP: the flag sits inside the group's value object.
+            return fromObject(row["value"] as? JsonObject)
+        }
         when (root) {
             is JsonObject ->
                 fromObject(root["system_settings"] as? JsonObject) ?: fromObject(root)
-            is JsonArray -> root.asSequence()
-                .mapNotNull { it as? JsonObject }
-                .firstOrNull { (it["key"] as? JsonPrimitive)?.contentOrNull == "catchup_enabled" }
-                ?.let { row -> (row["value"] as? JsonPrimitive)?.let { v -> v.booleanOrNull ?: (v.contentOrNull?.lowercase() == "true") } }
+            is JsonArray -> {
+                val rows = root.mapNotNull { it as? JsonObject }
+                // Prefer the canonical group, then any row that carries the flag.
+                rows.firstOrNull { (it["key"] as? JsonPrimitive)?.contentOrNull == "system_settings" }
+                    ?.let { fromRow(it) }
+                    ?: rows.firstNotNullOfOrNull { fromRow(it) }
+            }
             else -> null
         }
     }.getOrNull()
