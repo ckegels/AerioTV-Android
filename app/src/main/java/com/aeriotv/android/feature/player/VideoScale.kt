@@ -178,6 +178,13 @@ fun Modifier.videoScalePinch(
  */
 @Composable
 fun BoxScope.VideoScaleLabelOverlay(enabled: Boolean = true) {
+    // The brightness / volume edge-slide indicator rides along here rather than
+    // getting its own line in each player: both players already host this
+    // overlay under exactly the right gate (touch device, not in PiP), and
+    // VODPlayerScreen cannot take another call - it is at the JVM register
+    // limit. It also owns restoring the app's brightness override on dispose,
+    // so it must unmount with the player.
+    PlayerEdgeAdjustOverlay(enabled = enabled)
     if (!enabled) return
     // Ignore whatever a previous player instance left behind: only a pinch that
     // happens while this overlay is composed may raise the label.

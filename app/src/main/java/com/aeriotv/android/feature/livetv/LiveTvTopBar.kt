@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,7 +43,7 @@ import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.ViewSidebar
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -177,7 +180,7 @@ fun LiveTvTopBar(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .height(56.dp)
+            .heightIn(min = 56.dp)
             .background(MaterialTheme.colorScheme.background),
     ) {
         val textMeasurer = rememberTextMeasurer()
@@ -262,7 +265,7 @@ fun LiveTvPillsRow(
         state = pillListState,
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp),
+            .heightIn(min = 56.dp),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -459,7 +462,7 @@ fun LiveTvPhoneHeaderRow(
                 )
                 Text(
                     text = channelCount.toString(),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.subtext(),
                     color = MaterialTheme.colorScheme.tertiary,
                     maxLines = 1,
                 )
@@ -582,7 +585,7 @@ private fun LiveTvHeaderActions(
                     text = {
                         Text(
                             text = mode.label,
-                            color = if (mode == sortMode) MaterialTheme.colorScheme.primary
+                            color = if (mode == sortMode) MaterialTheme.colorScheme.textAccent
                             else MaterialTheme.colorScheme.onSurface,
                             fontWeight = if (mode == sortMode) FontWeight.SemiBold
                             else FontWeight.Normal,
@@ -635,7 +638,7 @@ private fun LiveTvHeaderPillStrip(
     }
     LazyRow(
         state = pillListState,
-        modifier = modifier.height(38.dp),
+        modifier = modifier.heightIn(min = 38.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

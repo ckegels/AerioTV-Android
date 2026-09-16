@@ -411,6 +411,36 @@ object DatabaseModule {
     }
 
     /**
+     * v33: per-user capability SNAPSHOT (Dispatcharr granular permissions).
+     *
+     * Stores what /api/accounts/users/me/ actually said about THIS user -- the
+     * staff / superuser flags and the FULL custom_properties JSON -- plus when
+     * it was read, under which derivation schema, and whether the last probe
+     * failed. Derivation then happens on read, so a new Dispatcharr permission
+     * key needs no further migration.
+     *
+     * Every added column is NOT NULL with a SQL default that MUST match the
+     * entity's `@ColumnInfo(defaultValue = ...)`, or Room rejects the schema on
+     * the first post-upgrade open. `dispatcharrCapabilitiesSchema DEFAULT 0` is
+     * deliberately BELOW CAPABILITIES_SCHEMA so every existing row reads as
+     * "never probed" (all capabilities Unknown = nothing hidden) and is
+     * force-re-probed once on the next launch. That is the repair for users
+     * stuck at view-only DVR under the old hard gates. The pre-existing
+     * dispatcharrDvrAccess / catchup / vod columns are left untouched.
+     */
+    private val MIGRATION_32_33 = object : Migration(32, 33) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `playlists` ADD COLUMN `dispatcharrIsStaff` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `playlists` ADD COLUMN `dispatcharrIsSuperuser` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `playlists` ADD COLUMN `dispatcharrCustomProperties` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE `playlists` ADD COLUMN `dispatcharrCapabilitiesFetchedAt` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `playlists` ADD COLUMN `dispatcharrCapabilitiesSchema` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `playlists` ADD COLUMN `dispatcharrCapabilitiesStale` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `playlists` ADD COLUMN `dispatcharrSystemCatchupEnabled` INTEGER NOT NULL DEFAULT -1")
+        }
+    }
+
+    /**
      * Persisted VOD catalog (GH #109): the Movies / TV Shows library moves
      * out of memory and the snapshot JSON into these tables, so a 100k+ title
      * account no longer hits a row cap or runs a TV box out of heap. New
@@ -418,7 +448,7 @@ object DatabaseModule {
      * OnDemandViewModel.startInitialLoads). The SQL mirrors what Room
      * generates for VodCatalogEntities.kt exactly, or schema validation fails.
      */
-    private val MIGRATION_32_33 = object : Migration(32, 33) {
+    private val MIGRATION_33_34 = object : Migration(33, 34) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL(
                 "CREATE TABLE IF NOT EXISTS `vod_title` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
@@ -454,7 +484,7 @@ object DatabaseModule {
             // exists. Destructive fallback is scoped to ONLY pre-v10 dev builds
             // so an unmapped future migration can never silently wipe a real
             // user's saved servers and credentials in the field.
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33)
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34)
             .fallbackToDestructiveMigrationFrom(true, 1, 2, 3, 4, 5, 6, 7, 8, 9)
             .build()
 

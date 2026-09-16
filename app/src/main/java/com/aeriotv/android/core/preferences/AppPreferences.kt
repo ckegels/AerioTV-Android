@@ -59,6 +59,24 @@ private val Context.appDataStore: DataStore<Preferences> by preferencesDataStore
                     }
                 override suspend fun cleanUp() {}
             },
+            // One-time reset of the learned live start buffers (2026-09-15).
+            // Stalls caused by Dispatcharr stream switches fed the bursty-feed
+            // learner and pinned channels at the 10 s start gate, slowing every
+            // tune. Future learning ignores switch-window stalls; this clears
+            // what was already polluted.
+            object : DataMigration<Preferences> {
+                private val clearedFlag =
+                    booleanPreferencesKey("live_start_buffer_switch_reset_v1")
+                override suspend fun shouldMigrate(currentData: Preferences): Boolean =
+                    currentData[clearedFlag] != true
+                override suspend fun migrate(currentData: Preferences): Preferences =
+                    currentData.toMutablePreferences().apply {
+                        remove(stringPreferencesKey("live_start_buffer_ms"))
+                        remove(stringPreferencesKey("live_start_buffer_at_ms"))
+                        set(clearedFlag, true)
+                    }
+                override suspend fun cleanUp() {}
+            },
         )
     },
 )
@@ -66,6 +84,14 @@ private val Context.appDataStore: DataStore<Preferences> by preferencesDataStore
 /** Guide timeline zoom bounds. 0.5x = twice the hours on screen, 2x = half. */
 const val GUIDE_SCALE_MIN = 0.5f
 const val GUIDE_SCALE_MAX = 2.0f
+
+/** App-wide Text Size bounds (Appearance > Text Size). 5% stops, default 1.0. */
+const val TEXT_SCALE_MIN = 0.85f
+const val TEXT_SCALE_MAX = 1.50f
+
+/** Subtext Size bounds (Appearance > Subtext Size). 5% stops, default 1.0. */
+const val SUBTEXT_SCALE_MIN = 0.85f
+const val SUBTEXT_SCALE_MAX = 1.50f
 
 /**
  * Typed DataStore wrapper, mirroring the iOS @AppStorage registry
@@ -163,6 +189,18 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * Settings > Appearance > "Rounded corners on logos and artwork".
+     * Channel logos and program artwork are rounded to match the corner
+     * radius of the card or cell they sit in; off makes them square.
+     * Movies / TV Shows / DVR poster art is a separate surface and is NOT
+     * affected. Default ON. See core/ui/ArtworkCorners.kt.
+     */
+    val roundedArtwork: Flow<Boolean> = store.data.map { it[KEY_ROUNDED_ARTWORK] ?: true }
+    suspend fun setRoundedArtwork(value: Boolean) {
+        store.edit { it[KEY_ROUNDED_ARTWORK] = value }
+    }
+
+    /**
      * Settings > Appearance > Time Format: "system" (default, follows the
      * device's 24-hour setting), "12", or "24". Drive-synced as "timeFormat",
      * the same key Apple uses.
@@ -235,6 +273,44 @@ class AppPreferences @Inject constructor(
     }
     suspend fun setDisplayScaleMovies(value: Float) {
         store.edit { it[KEY_DISPLAY_SCALE_MOVIES] = value.toDouble() }
+    }
+
+    /**
+     * App-wide Text Size multiplier (Appearance > Text Size). Applied once at
+     * the composition root (and re-applied inside every dialog / sheet / menu
+     * window) as a fontScale multiplier, so every sp in the app follows it.
+     * [TEXT_SCALE_MIN]..[TEXT_SCALE_MAX], snapped to 5% stops. Default 1.0.
+     * Synced via Drive so the reading size follows the user.
+     */
+    val textScale: Flow<Float> = store.data.map {
+        snapTextScale((it[KEY_TEXT_SCALE] ?: 1.0).toFloat())
+    }
+    suspend fun setTextScale(value: Float) {
+        store.edit { it[KEY_TEXT_SCALE] = snapTextScale(value).toDouble() }
+    }
+
+    /**
+     * Subtext Size multiplier (Appearance > Subtext Size). Scales ONLY
+     * secondary copy (descriptions, subtitles, metadata, captions) on top of
+     * [textScale]. Same 85%..150% range and 5% stops. Default 1.0. Synced.
+     */
+    val subtextScale: Flow<Float> = store.data.map {
+        snapTextScale((it[KEY_SUBTEXT_SCALE] ?: 1.0).toFloat())
+    }
+    suspend fun setSubtextScale(value: Float) {
+        store.edit { it[KEY_SUBTEXT_SCALE] = snapTextScale(value).toDouble() }
+    }
+
+    /**
+     * Text Contrast (Appearance > Text Contrast). 0.0 = the theme's dimmed /
+     * accent-tinted text as designed, 1.0 = plain white (dark) / black (light)
+     * text. 10% stops. Default 0.0. Synced.
+     */
+    val textContrast: Flow<Float> = store.data.map {
+        snapTextContrast((it[KEY_TEXT_CONTRAST] ?: 0.0).toFloat())
+    }
+    suspend fun setTextContrast(value: Float) {
+        store.edit { it[KEY_TEXT_CONTRAST] = snapTextContrast(value).toDouble() }
     }
 
     /** iOS `displayScaleLiveTV` parity. 0.85 .. 1.25. Default 1.0. */
@@ -316,6 +392,38 @@ class AppPreferences @Inject constructor(
     val appleTVChannelFlip: Flow<Boolean> = store.data.map { it[KEY_APPLE_TV_CHANNEL_FLIP] ?: true }
     suspend fun setAppleTVChannelFlip(value: Boolean) {
         store.edit { it[KEY_APPLE_TV_CHANNEL_FLIP] = value }
+    }
+
+    /**
+     * In-Player Gestures (phone and tablet only): a vertical slide along one
+     * screen edge of the fullscreen player adjusts screen brightness, and the
+     * other edge adjusts media volume.
+     *
+     * Both default OFF: the player already owns the vertical axis (channel
+     * flip) and the top strip (swipe down to minimize), so these only exist
+     * for users who ask for them. Device-local (not in the sync snapshot) -
+     * brightness and volume are per-device, and a TV has neither gesture.
+     */
+    val playerBrightnessGesture: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_BRIGHTNESS_GESTURE] ?: false }
+    suspend fun setPlayerBrightnessGesture(value: Boolean) {
+        store.edit { it[KEY_PLAYER_BRIGHTNESS_GESTURE] = value }
+    }
+
+    val playerVolumeGesture: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_VOLUME_GESTURE] ?: false }
+    suspend fun setPlayerVolumeGesture(value: Boolean) {
+        store.edit { it[KEY_PLAYER_VOLUME_GESTURE] = value }
+    }
+
+    /**
+     * Which edge brightness lives on: [PLAYER_EDGE_LEFT] or
+     * [PLAYER_EDGE_RIGHT]. Volume always takes the other edge.
+     */
+    val playerBrightnessEdge: Flow<String> =
+        store.data.map { it[KEY_PLAYER_BRIGHTNESS_EDGE] ?: PLAYER_EDGE_LEFT }
+    suspend fun setPlayerBrightnessEdge(value: String) {
+        store.edit { it[KEY_PLAYER_BRIGHTNESS_EDGE] = value }
     }
 
     /**
@@ -498,6 +606,48 @@ class AppPreferences @Inject constructor(
     }
     suspend fun autoRecoverFrozenStreamsOnce(): Boolean =
         store.data.first()[KEY_AUTO_RECOVER_FROZEN_STREAMS] ?: true
+
+    /**
+     * Player Info Card (App Behaviors, Apple-app parity): which elements the
+     * in-player program info card draws while the chrome is showing. These
+     * affect ONLY that card -- never the guide, channel list, mini player,
+     * notifications or cast UI. All default true; device-local, not synced.
+     */
+    val playerCardShowChannelLogo: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_CHANNEL_LOGO] ?: true }
+    suspend fun setPlayerCardShowChannelLogo(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_CHANNEL_LOGO] = value }
+    }
+
+    val playerCardShowChannelName: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_CHANNEL_NAME] ?: true }
+    suspend fun setPlayerCardShowChannelName(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_CHANNEL_NAME] = value }
+    }
+
+    val playerCardShowProgramName: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_PROGRAM_NAME] ?: true }
+    suspend fun setPlayerCardShowProgramName(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_PROGRAM_NAME] = value }
+    }
+
+    val playerCardShowProgramTime: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_PROGRAM_TIME] ?: true }
+    suspend fun setPlayerCardShowProgramTime(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_PROGRAM_TIME] = value }
+    }
+
+    val playerCardShowProgramSubtitle: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_PROGRAM_SUBTITLE] ?: true }
+    suspend fun setPlayerCardShowProgramSubtitle(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_PROGRAM_SUBTITLE] = value }
+    }
+
+    val playerCardShowProgramDescription: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_PROGRAM_DESCRIPTION] ?: true }
+    suspend fun setPlayerCardShowProgramDescription(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_PROGRAM_DESCRIPTION] = value }
+    }
 
     /**
      * iOS TMDBPosters parity (Aerio VODService.swift). Opt-in, OFF by default:
@@ -1253,6 +1403,9 @@ class AppPreferences @Inject constructor(
         val data = store.data.first()
         val out = mutableMapOf<String, String>()
         data[KEY_SELECTED_THEME]?.let { out["selectedTheme"] = it }
+        data[KEY_TEXT_SCALE]?.let { out["textScale"] = it.toString() }
+        data[KEY_SUBTEXT_SCALE]?.let { out["subtextScale"] = it.toString() }
+        data[KEY_TEXT_CONTRAST]?.let { out["textContrast"] = it.toString() }
         // Appearance mode is the OPPOSITE of defaultLiveTVView: it MUST sync so
         // the user's Dark/Light/System choice follows them to every device.
         data[KEY_APPEARANCE_MODE]?.let { out["appearanceMode"] = it }
@@ -1314,6 +1467,9 @@ class AppPreferences @Inject constructor(
     suspend fun applySyncedPreferences(keys: Map<String, String>) {
         store.edit { prefs ->
             keys["selectedTheme"]?.let { prefs[KEY_SELECTED_THEME] = it }
+            keys["textScale"]?.toFloatOrNull()?.let { prefs[KEY_TEXT_SCALE] = snapTextScale(it).toDouble() }
+            keys["subtextScale"]?.toFloatOrNull()?.let { prefs[KEY_SUBTEXT_SCALE] = snapTextScale(it).toDouble() }
+            keys["textContrast"]?.toFloatOrNull()?.let { prefs[KEY_TEXT_CONTRAST] = snapTextContrast(it).toDouble() }
             keys["appearanceMode"]?.let { prefs[KEY_APPEARANCE_MODE] = it }
             keys["defaultTab"]?.let { prefs[KEY_DEFAULT_TAB] = it }
             keys["timeFormat"]?.let { prefs[KEY_TIME_FORMAT] = it }
@@ -1762,6 +1918,7 @@ class AppPreferences @Inject constructor(
         val KEY_SHOW_CHANNEL_NUMBERS = booleanPreferencesKey("ui_show_channel_numbers")
         val KEY_SHOW_CHANNEL_NAMES = booleanPreferencesKey("ui_show_channel_names")
         val KEY_SHOW_PROGRAM_SUBTITLES = booleanPreferencesKey("ui_show_program_subtitles")
+        val KEY_ROUNDED_ARTWORK = booleanPreferencesKey("ui_rounded_artwork")
         val KEY_TIME_FORMAT = stringPreferencesKey("ui_time_format")
         val KEY_HIDDEN_EPG_BADGES = stringPreferencesKey("ui_hidden_epg_badges")
         val KEY_SHOW_EPG_BADGES_TV = booleanPreferencesKey("ui_show_epg_badges_tv")
@@ -1774,6 +1931,9 @@ class AppPreferences @Inject constructor(
         val KEY_AUTO_ROTATE = booleanPreferencesKey("app_behaviors_auto_rotate")
         val KEY_DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
         val KEY_APPLE_TV_CHANNEL_FLIP = booleanPreferencesKey("app_behaviors_apple_tv_channel_flip")
+        val KEY_PLAYER_BRIGHTNESS_GESTURE = booleanPreferencesKey("in_player_gesture_brightness")
+        val KEY_PLAYER_VOLUME_GESTURE = booleanPreferencesKey("in_player_gesture_volume")
+        val KEY_PLAYER_BRIGHTNESS_EDGE = stringPreferencesKey("in_player_gesture_brightness_edge")
         val KEY_REMOTE_CONTROL_MAP = stringPreferencesKey("remote_control_map")
         val KEY_SYNC_REMOTE_CONTROL_MAP = booleanPreferencesKey("sync_remote_control_map")
         val KEY_GUIDE_GROUP_SELECTOR = stringPreferencesKey("guide_group_selector")
@@ -1789,6 +1949,19 @@ class AppPreferences @Inject constructor(
         val KEY_MATCH_CONTENT_RESOLUTION = booleanPreferencesKey("match_content_resolution")
         val KEY_AUTO_RECOVER_FROZEN_STREAMS =
             booleanPreferencesKey("app_behaviors_auto_recover_frozen_streams")
+        // Player Info Card element toggles (App Behaviors); device-local.
+        val KEY_PLAYER_CARD_CHANNEL_LOGO =
+            booleanPreferencesKey("player_card_show_channel_logo")
+        val KEY_PLAYER_CARD_CHANNEL_NAME =
+            booleanPreferencesKey("player_card_show_channel_name")
+        val KEY_PLAYER_CARD_PROGRAM_NAME =
+            booleanPreferencesKey("player_card_show_program_name")
+        val KEY_PLAYER_CARD_PROGRAM_TIME =
+            booleanPreferencesKey("player_card_show_program_time")
+        val KEY_PLAYER_CARD_PROGRAM_SUBTITLE =
+            booleanPreferencesKey("player_card_show_program_subtitle")
+        val KEY_PLAYER_CARD_PROGRAM_DESCRIPTION =
+            booleanPreferencesKey("player_card_show_program_description")
         // Synced via Drive (snapshotSyncablePreferences) -- the user's own key.
         val KEY_PROGRAM_POSTERS_TMDB_ENABLED =
             booleanPreferencesKey("app_behaviors_program_posters_tmdb_enabled")
@@ -1823,6 +1996,9 @@ class AppPreferences @Inject constructor(
         val KEY_DISPLAY_SCALE_MOVIES = doublePreferencesKey("display_scale_movies")
         val KEY_DISPLAY_SCALE_LIVE_TV = doublePreferencesKey("display_scale_live_tv")
         val KEY_GUIDE_SCALE = doublePreferencesKey("guide_scale")
+        val KEY_TEXT_SCALE = doublePreferencesKey("text_scale")
+        val KEY_SUBTEXT_SCALE = doublePreferencesKey("subtext_scale")
+        val KEY_TEXT_CONTRAST = doublePreferencesKey("text_contrast")
         val KEY_DEFAULT_TAB = stringPreferencesKey("default_tab")
         val KEY_NETWORK_TIMEOUT = doublePreferencesKey("network_timeout_secs")
         val KEY_MAX_RETRIES = intPreferencesKey("max_retries")
@@ -1878,3 +2054,21 @@ class AppPreferences @Inject constructor(
         val KEY_BG_REFRESH_INTERVAL_MINS = intPreferencesKey("background_refresh_interval_mins")
     }
 }
+
+/** Clamp to [TEXT_SCALE_MIN]..[TEXT_SCALE_MAX] and snap to the nearest 5% stop. */
+fun snapTextScale(value: Float): Float {
+    val v = if (value.isNaN()) 1f else value.coerceIn(TEXT_SCALE_MIN, TEXT_SCALE_MAX)
+    return kotlin.math.round(v * 20f) / 20f
+}
+
+/** Clamp to 0..1 and snap to the nearest 10% stop (Text Contrast). */
+fun snapTextContrast(value: Float): Float {
+    val v = if (value.isNaN()) 0f else value.coerceIn(0f, 1f)
+    return kotlin.math.round(v * 10f) / 10f
+}
+
+/** Brightness slides on the left edge of the player; volume on the right. */
+const val PLAYER_EDGE_LEFT = "left"
+
+/** Brightness slides on the right edge of the player; volume on the left. */
+const val PLAYER_EDGE_RIGHT = "right"

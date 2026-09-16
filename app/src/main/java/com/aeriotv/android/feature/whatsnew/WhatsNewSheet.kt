@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.whatsnew
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -215,13 +217,13 @@ private fun WhatsNewRow(
             text = item.title,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
         )
         if (item.body.isNotBlank()) {
             Spacer(Modifier.height(2.dp))
             Text(
                 text = item.body,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -293,40 +295,28 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Mini player on phones",
-            body = "Swipe down from the top of the live player to shrink it into a floating in-app mini player. Movies, episodes, recordings and catch-up minimize to it too, and picking a channel tunes it right in the mini.",
+            title = "Switch Stream stays connected",
+            body = "Switching a channel's stream now keeps one connection, so the channel no longer drops or falls back to the stream you switched away from.",
         ),
         WhatsNewItem(
-            title = "Skip Intervals",
-            body = "Choose how far skip back and skip forward jump for live, DVR and on demand.",
+            title = "Your Dispatcharr permissions",
+            body = "The app now follows what your own Dispatcharr account can do instead of assuming an admin. DVR, Movies and TV Shows appear when your account has access, and recording works for any account allowed to manage the DVR.",
         ),
         WhatsNewItem(
-            title = "Smarter Reconnecting",
-            body = "Reconnecting shows only when playback actually stalls, appears quickly when the server stops a stream, and backs off while a channel is stopping. Changing channels or swapping a multiview tile now closes the old connection.",
+            title = "Clear connection limit notices",
+            body = "When a stream is refused because your account or the provider is out of connections, the player says so and offers Retry instead of failing quietly.",
         ),
         WhatsNewItem(
-            title = "Default Group and Recently Watched",
-            body = "Pick the group Live TV opens on in App Behaviors. Recently Watched lists your last 25 channels; turn it on in Manage Groups. The selected group is remembered per playlist.",
+            title = "Steadier live playback",
+            body = "A channel that keeps ending now waits longer between attempts instead of fighting other devices for the slot, and a slow channel gets more time to start before another stream is tried.",
         ),
         WhatsNewItem(
-            title = "Hide movies and series",
-            body = "Long-press any title to hide it. Hidden titles live in the Filter dialog and sync with your watchlist.",
+            title = "Player Info Card",
+            body = "Choose what appears on the info card in the player, from the channel logo and name to the program name, time, subtitle and description. Find it in Settings > App Behaviors.",
         ),
         WhatsNewItem(
-            title = "Video Scale in the player",
-            body = "Fit, Fill and Stretch replace Aspect Ratio, with pinch to scale on phones and tablets.",
-        ),
-        WhatsNewItem(
-            title = "More audio formats decoded",
-            body = "More audio formats now decode in the app when the device cannot.",
-        ),
-        WhatsNewItem(
-            title = "TV guide sidebar and remote keys",
-            body = "A Sidebar layout setting (Overlay or Shift guide) in Manage Groups, group previews on focus with Back restoring your group, and six remappable guide keys.",
-        ),
-        WhatsNewItem(
-            title = "Android TV polish",
-            body = "A second Back closes playback, long Left/Right scrubs on demand with controls hidden, Up from the first row reaches the tabs, the mini player steps aside on Settings, and exiting catch-up returns to the guide. The on demand hero now shows only for Continue Watching.",
+            title = "Program art in the guide",
+            body = "Artwork keeps its own shape, so landscape stays landscape and posters stay posters, and it grows with the app-wide Text Size setting.",
         ),
     )
 }

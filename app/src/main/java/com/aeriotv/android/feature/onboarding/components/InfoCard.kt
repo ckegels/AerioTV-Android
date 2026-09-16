@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.onboarding.components
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -78,7 +79,7 @@ fun SourceTypeCard(
                 Spacer(Modifier.size(2.dp))
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -123,7 +124,7 @@ fun InfoBanner(
         )
         Text(
             text = text,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

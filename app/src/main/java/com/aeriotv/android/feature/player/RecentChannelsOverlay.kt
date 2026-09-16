@@ -17,6 +17,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import coil3.toBitmap
 import com.aeriotv.android.core.data.M3UChannel
 
 /**
@@ -156,7 +163,7 @@ internal fun ChannelPickRow(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(PICKER_ROW_CORNER))
             .background(
                 when {
                     focused -> Color.White.copy(alpha = 0.18f)
@@ -166,18 +173,65 @@ internal fun ChannelPickRow(
             .border(
                 width = 2.dp,
                 color = if (focused) accent else Color.Transparent,
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(PICKER_ROW_CORNER),
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .focusable(interactionSource = interaction)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         if (channel.tvgLogo.isNotBlank()) {
-            AsyncImage(
-                model = channel.tvgLogo,
-                contentDescription = null,
-                modifier = Modifier.size(width = 52.dp, height = 34.dp),
-            )
+            // Clip the IMAGE's drawn bounds, not the slot: the art is Fit,
+            // so clipping the slot would round empty space and leave the logo
+            // square (Logan 2026-09-16). Radius read from the row's own shape.
+            // Plain Box + onSizeChanged, never BoxWithConstraints: a
+            // SubcomposeLayout throws if any ancestor ever measures intrinsics.
+            var slotPx by remember { mutableStateOf(IntSize.Zero) }
+            val density = LocalDensity.current
+            Box(
+                modifier = Modifier
+                    .size(width = 52.dp, height = 34.dp)
+                    .onSizeChanged { slotPx = it },
+                contentAlignment = Alignment.Center,
+            ) {
+                // SHARED rules (core/ui/ChannelBadge.kt): the fitted image
+                // rect and the corner rule, so this tile cannot drift from the
+                // list row or the guide rail.
+                var logoAspect by remember(channel.tvgLogo) { mutableStateOf(0f) }
+                val fitted = com.aeriotv.android.core.ui.fitArtwork(
+                    slotWidth = slotPx.width.toFloat(),
+                    slotHeight = slotPx.height.toFloat(),
+                    imageWidth = if (logoAspect > 0f) logoAspect else 0f,
+                    imageHeight = if (logoAspect > 0f) 1f else 0f,
+                )
+                val shape = com.aeriotv.android.core.ui.artworkFittedShape(
+                    fitted = fitted,
+                    container = PICKER_ROW_CORNER,
+                    isTile = com.aeriotv.android.core.ui.ArtworkTile
+                        .verdict(channel.tvgLogo) == true,
+                )
+                AsyncImage(
+                    model = channel.tvgLogo,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    onSuccess = { state ->
+                        val w = state.result.image.width.toFloat()
+                        val h = state.result.image.height.toFloat()
+                        if (w > 0f && h > 0f) logoAspect = w / h
+                        com.aeriotv.android.core.ui.ArtworkTile
+                            .sample(channel.tvgLogo, state.result.image.toBitmap())
+                    },
+                    modifier = if (logoAspect <= 0f) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                            .size(
+                                with(density) { fitted.width.toDp() },
+                                with(density) { fitted.height.toDp() },
+                            )
+                            .clip(shape)
+                    },
+                )
+            }
         } else {
             Spacer(Modifier.size(width = 52.dp, height = 34.dp))
         }
@@ -221,3 +275,7 @@ internal fun ChannelPickRow(
         }
     }
 }
+
+/** The picker row's own corner radius. The row background, its focus border and
+ *  the channel logo all read this one value. */
+private val PICKER_ROW_CORNER = 10.dp

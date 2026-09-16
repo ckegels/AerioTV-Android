@@ -67,7 +67,7 @@ fun AerioTVTheme(
     // washed pastel, so in light mode we both pull the tint toward the dark ink
     // AND raise the alpha to earn real contrast (the accent is already the
     // darkened light-mode accent here).
-    val textSecondary = if (isDark) {
+    val baseTextSecondary = if (isDark) {
         effectivePrimary.copy(alpha = if (isTv) 0.75f else 0.65f)
     } else {
         lerp(effectivePrimary, textPrimary, 0.20f).copy(alpha = 0.90f)
@@ -77,11 +77,25 @@ fun AerioTVTheme(
     // for channel numbers, time ranges, and hints so they recede behind the
     // title/description hierarchy. Carried on Material3's otherwise-unused
     // `tertiary` slot; reach it via `MaterialTheme.colorScheme.tertiary`.
-    val textTertiary = if (isDark) {
+    val baseTextTertiary = if (isDark) {
         effectivePrimary.copy(alpha = if (isTv) 0.45f else 0.28f)
     } else {
         lerp(effectivePrimary, textPrimary, 0.15f).copy(alpha = 0.65f)
     }
+
+    // Text Contrast (Appearance > Text Contrast, see TextContrast.kt): blends
+    // the TEXT tokens toward plain white (dark) / black (light). 0 = the
+    // original values above, untouched. primary stays as-is (it also paints
+    // fills and rings); accent TEXT goes through colorScheme.textAccent.
+    val textContrast = LocalTextContrast.current
+    val baseTextColors = BaseTextColors(
+        secondary = baseTextSecondary,
+        tertiary = baseTextTertiary,
+        accent = effectivePrimary,
+    )
+    val textSecondary = contrastBlend(baseTextSecondary, textContrast, isDark)
+    val textTertiary = contrastBlend(baseTextTertiary, textContrast, isDark)
+    val textAccent = contrastBlend(effectivePrimary, textContrast, isDark)
 
     val colorScheme = if (isDark) {
         darkColorScheme(
@@ -136,7 +150,12 @@ fun AerioTVTheme(
         }
     }
 
-    CompositionLocalProvider(LocalAppTheme provides appTheme) {
+    CompositionLocalProvider(
+        LocalAppTheme provides appTheme,
+        LocalIsDarkTheme provides isDark,
+        LocalBaseTextColors provides baseTextColors,
+        LocalTextAccent provides textAccent,
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = aerioTypography(isTv),

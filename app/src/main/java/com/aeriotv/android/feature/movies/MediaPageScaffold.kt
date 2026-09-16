@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.movies
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -34,6 +36,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -120,8 +124,17 @@ fun <T> MediaPageScaffold(
     val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     // Opening search scrolls the header (and the field under it) to the top
     // so the results land in view, then focuses the field for the keyboard.
+    //
+    // Latched on a real open, not on the raw flag: this effect re-runs from
+    // scratch every time the page re-enters composition, so a page that came
+    // back with search already open used to re-focus the field and pop the
+    // keyboard (the minimize / PiP return path). Same idiom as
+    // OnDemandTabContent's focusOnExpand latch.
+    var searchWasActive by remember { mutableStateOf(searchActive) }
     LaunchedEffect(searchActive) {
-        if (searchActive) {
+        val justOpened = searchActive && !searchWasActive
+        searchWasActive = searchActive
+        if (justOpened) {
             gridState.animateScrollToItem(headerIndex)
             runCatching { searchFocus.requestFocus() }
         }
@@ -290,7 +303,7 @@ private fun LibraryHeader(
         ) {
             Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
             Text(
-                count.toString(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                count.toString(), fontSize = 12.sp.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 modifier = Modifier.padding(bottom = 1.dp),
             )
         }
@@ -340,7 +353,7 @@ private fun SearchPillField(
         cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
         modifier = modifier
             .fillMaxWidth()
-            .height(44.dp),
+            .heightIn(min = 44.dp),
         decorationBox = { inner ->
             androidx.compose.material3.OutlinedTextFieldDefaults.DecorationBox(
                 value = query,

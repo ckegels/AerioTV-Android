@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.miniplayer
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -77,7 +79,9 @@ fun CastMiniController(
         Box(
             modifier = Modifier
                 .size(40.dp)
-                .clip(RoundedCornerShape(6.dp))
+                // Keeps its own tile corners; square when the user turns
+                // Appearance > Rounded corners off.
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = artUri))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -109,7 +113,7 @@ fun CastMiniController(
             programmeTitle?.takeIf { it.isNotBlank() }?.let {
                 Text(
                     text = it,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -119,7 +123,7 @@ fun CastMiniController(
                 text = subtitle
                     ?: if (!deviceName.isNullOrBlank()) "Casting to $deviceName" else "Tap to control",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.textAccent,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -142,3 +146,7 @@ fun CastMiniController(
         }
     }
 }
+
+/** The logo tile's own corner radius. The tile and the art inside it read this
+ *  one value, so they cannot drift. */
+private val LOGO_TILE_CORNER = 6.dp

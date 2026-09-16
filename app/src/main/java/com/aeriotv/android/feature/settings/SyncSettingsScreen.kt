@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
 import android.app.Activity
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -382,7 +384,7 @@ fun SyncSettingsScreen(
     }
 
     if (pushConfirmOpen) {
-        androidx.compose.material3.AlertDialog(
+        com.aeriotv.android.ui.scale.AlertDialog(
             onDismissRequest = { pushConfirmOpen = false },
             title = { Text("Push Config to Drive?") },
             text = {
@@ -408,7 +410,7 @@ fun SyncSettingsScreen(
     }
 
     if (pullConfirmOpen) {
-        androidx.compose.material3.AlertDialog(
+        com.aeriotv.android.ui.scale.AlertDialog(
             onDismissRequest = { pullConfirmOpen = false },
             title = { Text("Pull Config from Drive?") },
             text = {
@@ -435,7 +437,7 @@ fun SyncSettingsScreen(
     }
 
     if (credsSyncDisclosureOpen) {
-        androidx.compose.material3.AlertDialog(
+        com.aeriotv.android.ui.scale.AlertDialog(
             onDismissRequest = {
                 credsSyncDisclosureOpen = false
                 viewModel.markCredentialsSyncDisclosed()
@@ -468,7 +470,7 @@ fun SyncSettingsScreen(
     }
 
     if (notConfiguredDialogOpen) {
-        androidx.compose.material3.AlertDialog(
+        com.aeriotv.android.ui.scale.AlertDialog(
             onDismissRequest = { notConfiguredDialogOpen = false },
             title = { Text("Drive Sync isn't set up yet") },
             text = {
@@ -530,7 +532,7 @@ private fun SignedOutWelcomeBanner() {
                 text = "Select Sign in with Google below to connect your account. AerioTV will " +
                     "then keep your playlists, watch progress, reminders, and preferences in " +
                     "sync across every device signed into the same Google account.",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -549,7 +551,7 @@ private fun DeveloperConfigHint() {
         text = "This build doesn't have a Google Cloud OAuth client configured, so " +
             "Sign in with Google is disabled. Add GOOGLE_DRIVE_WEB_CLIENT_ID to " +
             "local.properties and register the signing-cert SHA-1 in the same Cloud project.",
-        style = MaterialTheme.typography.labelSmall,
+        style = MaterialTheme.typography.labelSmall.subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f),
         modifier = Modifier.padding(horizontal = 4.dp),
     )
@@ -599,7 +601,7 @@ private fun AccountRow(signedIn: Boolean, email: String) {
                     signedIn -> "Account connected"
                     else -> "Sign in to start syncing across devices"
                 },
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -616,7 +618,7 @@ private fun SignOutButton(enabled: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .heightIn(min = 44.dp)
             .clip(RoundedCornerShape(50))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
             .border(0.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f), RoundedCornerShape(50))
@@ -660,7 +662,7 @@ private fun SignInWithGoogleButton(enabled: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(50))
             .background(bg)
             .border(1.dp, stroke, RoundedCornerShape(50))

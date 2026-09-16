@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.search
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -293,7 +295,7 @@ private fun ResultRow(result: SearchViewModel.Result, onClick: () -> Unit) {
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = if (result is SearchViewModel.Result.Epg && result.isLive) {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.textAccent
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },
@@ -304,7 +306,7 @@ private fun ResultRow(result: SearchViewModel.Result, onClick: () -> Unit) {
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = display.detail,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -386,7 +388,7 @@ private fun CenterMessage(icon: ImageVector, title: String, subtitle: String? = 
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 )
             }

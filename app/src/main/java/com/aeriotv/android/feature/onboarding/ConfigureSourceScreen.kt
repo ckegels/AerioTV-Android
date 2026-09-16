@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.onboarding
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.core.data.db.entity.sanitizeGuideDays
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -34,8 +37,6 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Sell
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -62,7 +63,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -75,6 +75,8 @@ import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.dpadFocusWash
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
+import com.aeriotv.android.ui.textfield.SecretRevealIconButton
+import com.aeriotv.android.ui.textfield.rememberSecretRevealState
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
 import com.aeriotv.android.ui.tv.dpadFocusEscape
 import com.aeriotv.android.ui.tv.tvFormFieldInput
@@ -285,7 +287,7 @@ fun ConfigureSourceScreen(
                 enabled = !state.isLoading && validation == null,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(54.dp)
+                    .heightIn(min = 54.dp)
                     .dpadFocusRing(RoundedCornerShape(50)),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -361,12 +363,21 @@ private fun DispatcharrFields(
     when (authMode) {
         DispatcharrAuthMode.ApiKey -> {
             LabeledField(label = "Admin API Key") {
+                val apiKeyReveal = rememberSecretRevealState()
                 IconTextField(
                     value = state.apiKey,
                     onValueChange = viewModel::onApiKeyChange,
                     placeholder = "Paste your admin API key",
                     leading = Icons.Filled.Key,
-                    visualTransformation = PasswordVisualTransformation(),
+                    visualTransformation = apiKeyReveal.transformation,
+                    trailing = {
+                        SecretRevealIconButton(
+                            state = apiKeyReveal,
+                            iconSize = 18.dp,
+                            contentLabel = "API key",
+                        )
+                    },
+                    trailingFocused = { apiKeyReveal.controlFocused },
                     enabled = !state.isLoading,
                 )
             }
@@ -397,7 +408,7 @@ private fun DispatcharrFields(
             Text(
                 text = "Use your Dispatcharr Dashboard password (System -> Users -> Account tab), " +
                         "not your Dispatcharr XC password.",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             InfoBanner(
@@ -534,7 +545,7 @@ private fun ImportFileLink(label: String, onClick: () -> Unit) {
     Text(
         text = label,
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.textAccent,
         fontWeight = FontWeight.Medium,
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -597,7 +608,7 @@ private fun LanUrlField(state: PlaylistViewModel.UiState, viewModel: PlaylistVie
     Text(
         text = "AerioTV uses this URL automatically whenever your server is reachable on " +
                 "the local network, and the public one above otherwise. No setup needed.",
-        style = MaterialTheme.typography.bodySmall,
+        style = MaterialTheme.typography.bodySmall.subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
@@ -624,15 +635,21 @@ private fun IconTextField(
     enabled: Boolean,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailing: @Composable (() -> Unit)? = null,
+    // True while the trailing control (the reveal eye) holds D-pad focus, so
+    // the field leaves OK alone and the button can actually be clicked.
+    trailingFocused: () -> Boolean = { false },
     keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = aerioTextFieldKeyboardOptions(),
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier.fillMaxWidth()
-            .tvFormFieldInput(horizontalFocusEscape = trailing != null),
+            .tvFormFieldInput(
+                horizontalFocusEscape = trailing != null,
+                okSuppressed = trailingFocused,
+            ),
         singleLine = true,
-        placeholder = { Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        placeholder = { Text(placeholder, style = androidx.compose.material3.LocalTextStyle.current.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant) },
         leadingIcon = {
             Icon(
                 imageVector = leading,
@@ -657,7 +674,7 @@ private fun PasswordField(
     placeholder: String,
     enabled: Boolean,
 ) {
-    var visible by remember { mutableStateOf(false) }
+    val reveal = rememberSecretRevealState()
     LabeledField(label = label) {
         IconTextField(
             value = value,
@@ -665,20 +682,15 @@ private fun PasswordField(
             placeholder = placeholder,
             leading = Icons.Outlined.Lock,
             enabled = enabled,
-            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+            visualTransformation = reveal.transformation,
             trailing = {
-                IconButton(
-                    onClick = { visible = !visible },
-                    modifier = Modifier.dpadFocusRing(CircleShape),
-                ) {
-                    Icon(
-                        imageVector = if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                        contentDescription = if (visible) "Hide password" else "Show password",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
+                SecretRevealIconButton(
+                    state = reveal,
+                    iconSize = 18.dp,
+                    contentLabel = "password",
+                )
             },
+            trailingFocused = { reveal.controlFocused },
         )
     }
 }
@@ -837,7 +849,7 @@ private fun VodEnabledRow(
         }
         Text(
             text = "When off, this playlist's movies and TV shows aren't loaded into On Demand. Useful if you only want Live TV from this server, or if you have a second playlist that already provides On Demand. You can change this later in Settings.",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
@@ -885,7 +897,7 @@ private fun DvrDestinationRow(
         }
         Text(
             text = "Where recordings are saved by default. Server recording requires a Dispatcharr admin account. You can change this later in Settings > DVR.",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
@@ -932,7 +944,7 @@ private fun GuideHistoryRow(
         }
         Text(
             text = "How many days of guide data to load, back and ahead. Dispatcharr only; other sources show what their guide carries.",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )

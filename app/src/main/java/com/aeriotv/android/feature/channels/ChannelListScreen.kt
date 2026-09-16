@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.channels
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.core.ui.subtitleIsRedundant
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
@@ -21,12 +23,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -66,7 +74,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -103,6 +111,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -214,6 +223,10 @@ fun ChannelListScreen(
     // always-on field, so the channel list gets full height until the user
     // opts into searching. Closing it clears the query.
     var searchActive by remember { mutableStateOf(false) }
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {
+        searchActive = false
+        viewModel.onSearchQueryChange("")
+    }
     val isTv = rememberIsTvDevice()
     // Phone group selector (Logan 2026-09-05, Apple parity): the slide-in
     // drawer by default, the pill strip when the user picks "pills". TV keeps
@@ -462,7 +475,7 @@ fun ChannelListScreen(
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
+                    .heightIn(min = 56.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -879,7 +892,7 @@ internal fun SortMenu(
                         Text(
                             text = mode.label,
                             color = if (mode == currentMode)
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.colorScheme.textAccent
                             else
                                 MaterialTheme.colorScheme.onSurface,
                             fontWeight = if (mode == currentMode) FontWeight.SemiBold else FontWeight.Normal,
@@ -950,6 +963,83 @@ internal fun ChannelRow(
     var focused by remember { mutableStateOf(false) }
     val menuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
     val isTv = rememberIsTvDevice()
+    // Channel List Options -> Show Channel Names. Hides the name line in the
+    // row AND drives how much room the logo slot claims, the same signal the
+    // guide rail reads.
+    val showChannelName = com.aeriotv.android.core.ui.LocalGuideRailPrefs.current.names
+    // Both the number column and the name are hidden: the logo takes the whole
+    // row height.
+    val growLogoFull = showLogo && !showNumber && !showChannelName
+
+    // Channel-number column width. Measured from the widest number this row
+    // could have to show, at the CURRENT Text Size, so the number is always one
+    // line and is never truncated. The floor is [ROW_NUMBER_REFERENCE] (four
+    // digits plus the .5 sub-channel form); a longer number widens its own row
+    // rather than clipping. Text measurement is cheap and cached by the
+    // measurer, and the result is remembered per number + text style.
+    val numberStyle = MaterialTheme.typography.labelMedium
+    val numberMeasurer = rememberTextMeasurer()
+    val numberDensity = LocalDensity.current
+    val numberText = channel.channelNumber.orEmpty()
+    val numberColumnWidth = remember(numberText, numberStyle, numberDensity) {
+        val widest =
+            if (numberText.length > ROW_NUMBER_REFERENCE.length) numberText
+            else ROW_NUMBER_REFERENCE
+        val measured = numberMeasurer.measure(
+            text = widest,
+            style = numberStyle,
+            maxLines = 1,
+            softWrap = false,
+        ).size.width
+        with(numberDensity) { measured.toDp() }
+    }
+
+    // UNIFORM ROW HEIGHT (Logan 2026-09-16). Every Live TV row is the height
+    // of the TALLEST layout - name line, program title, subtitle line, two
+    // description lines, the 4 dp gap and the 2 dp progress bar - and a row
+    // with less text leaves those slots blank instead of collapsing. Uniform
+    // rows mean uniform logo slots, so an event logo is the same size in a
+    // row with a long description and in a row with none.
+    //
+    // Derived from the SAME text styles the row renders with, measured at the
+    // current Text Size / Subtext Size, never a hardcoded dp: 150 percent
+    // still fits because the measurement grows with it.
+    val nameSlotStyle = MaterialTheme.typography.bodyLarge
+    val titleSlotStyle = MaterialTheme.typography.bodyMedium
+    val bodySlotStyle = MaterialTheme.typography.bodySmall.subtext()
+    val subtitlesOn = LocalShowProgramSubtitles.current
+    val rowSlots = remember(
+        nameSlotStyle, titleSlotStyle, bodySlotStyle, numberDensity,
+        showChannelName, phoneRow, subtitlesOn,
+    ) {
+        fun lines(style: androidx.compose.ui.text.TextStyle, count: Int): Int =
+            numberMeasurer.measure(
+                text = List(count) { " " }.joinToString("\n"),
+                style = style,
+                maxLines = count,
+            ).size.height
+        // Names off: the slot still has to clear the favorite star / catch-up
+        // clock, which some rows have and some do not.
+        val name = if (showChannelName) lines(nameSlotStyle, 1)
+        else with(numberDensity) { ROW_ICON_LINE.roundToPx() }
+        val subtitle = if (phoneRow && subtitlesOn) lines(bodySlotStyle, 1) else 0
+        val total = name + lines(titleSlotStyle, 1) + subtitle + lines(bodySlotStyle, 2) +
+            with(numberDensity) { (ROW_PROGRESS_GAP + ROW_PROGRESS_HEIGHT).roundToPx() }
+        with(numberDensity) { ChannelRowSlots(name.toDp(), subtitle > 0, total.toDp()) }
+    }
+
+    // LEADING COLUMN WIDTH. The number now sits UNDER the logo, so no state
+    // has a separate number column and the logo always gets the whole width.
+    //  - both hidden (no number, no name): the full-bleed slot, unchanged.
+    //  - logo present: the width the old number column + gap + logo slot
+    //    occupied together, so the row's overall layout and the text column
+    //    are untouched while the logo itself gets noticeably larger.
+    //  - number only (logos off): just the measured number, nothing wider.
+    val leadColumnWidth = when {
+        !showLogo -> numberColumnWidth
+        growLogoFull -> ROW_LOGO_FULL_WIDTH
+        else -> ROW_LEAD_WIDTH.coerceAtLeast(numberColumnWidth)
+    }
     // Shared by the phone menu item and the TV dialog action: record the
     // now-airing programme, or a 1-hour ad-hoc block when EPG is missing.
     val recordFromMenu = {
@@ -1006,7 +1096,7 @@ internal fun ChannelRow(
             // No focus pop-out on TV: the channel row keeps its size and shows
             // focus via the primary border below (a scaled-up list row reads as
             // jumpy at 10 feet). Phone rows never focus, so this was a no-op there.
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(CHANNEL_ROW_CORNER))
             .background(baseSurface)
             .then(if (tintWash != null) Modifier.background(tintWash) else Modifier)
             .then(
@@ -1018,18 +1108,23 @@ internal fun ChannelRow(
                 if (focused) Modifier.border(
                     2.dp,
                     MaterialTheme.colorScheme.primary,
-                    RoundedCornerShape(12.dp),
+                    RoundedCornerShape(CHANNEL_ROW_CORNER),
                 ) else Modifier.border(
                     1.dp,
                     MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-                    RoundedCornerShape(12.dp),
+                    RoundedCornerShape(CHANNEL_ROW_CORNER),
                 ),
             ),
     ) {
         Box {
+            // IntrinsicSize.Min makes the row measure to the (unchanged) info
+            // column, so the row height is still driven by the text column and
+            // is identical to before. The leading logo/number column then
+            // fills exactly that height.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
                     .combinedClickable(
                         // menuGuard.wrap: the spurious OK-release after a TV
                         // long-press can land back on this row and would
@@ -1044,64 +1139,39 @@ internal fun ChannelRow(
                     reorderHandle()
                     Spacer(Modifier.width(8.dp))
                 }
-                // GH #19: the whole 28dp number column collapses when numbers
-                // are off, so the logo/name reclaim the width.
-                if (showNumber) {
-                    Box(
-                        modifier = Modifier.width(28.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        channel.channelNumber?.let { num ->
-                            Text(
-                                text = num.toString(),
-                                style = MaterialTheme.typography.labelMedium,
-                                // iOS parity: numbers sit on the DIM textTertiary
-                                // rung (ChannelListView.swift iOSRow .textTertiary)
-                                // so they recede behind name/title.
-                                color = MaterialTheme.colorScheme.tertiary,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(8.dp))
-                }
-
-                // Channel logo — matches iOS ChannelListView.swift:1754-1758
-                // `CachedLogoImage(width: 38, height: 26)` on iPhone. The
-                // logo sits directly on the row's gradient surface with no
-                // background tile: tvg-logo art is already designed to be
-                // overlaid on dark surfaces (most ship transparent PNGs or
-                // tightly-cropped raster), and the iOS canon screenshot the
-                // user provided shows ESPN/NBC/NFL logos floating directly
-                // on the card. The container is wider than tall so wider
-                // logos like NBC Sports fit comfortably without cropping.
-                if (showLogo) {
-                    Box(
-                        modifier = Modifier
-                            .width(50.dp)
-                            .height(32.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (channel.tvgLogo.isNotBlank()) {
-                            AsyncImage(
-                                model = channel.tvgLogo,
-                                contentDescription = null,
-                                // Fit preserves aspect ratio and centers within
-                                // the 50x32 container, matching iOS SwiftUI's
-                                // default Image.resizable + scaledToFit() pair.
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .width(50.dp)
-                                    .height(32.dp),
-                            )
-                        } else {
-                            Text(
-                                text = channel.name.take(2).uppercase(),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                    }
+                // LEADING COLUMN: logo on top, channel number centered
+                // UNDERNEATH it (Logan 2026-09-16). The number never sits
+                // beside the logo any more, so it can never compete for width
+                // and can never wrap, and the logo gets the column's FULL
+                // width in every state. Same stack on phone, tablet and TV,
+                // and the guide rail draws the same order.
+                // LEADING COLUMN: the SHARED ChannelBadge (core/ui) -
+                // logo on top, channel number centered underneath it. The list
+                // row keeps the channel name in its text column, so the badge
+                // is asked for showName = false here; the guide rail renders
+                // the same badge geometry with the name on.
+                if (showLogo || showNumber) {
+                    com.aeriotv.android.core.ui.ChannelBadge(
+                        logoModel = channel.tvgLogo.takeIf { it.isNotBlank() },
+                        numberText = channel.channelNumber,
+                        nameText = null,
+                        showLogo = showLogo,
+                        showNumber = showNumber,
+                        showName = false,
+                        // The surface owns the slot width; the row measures at
+                        // IntrinsicSize.Min so the badge fills the height the
+                        // text column set.
+                        slotWidth = leadColumnWidth,
+                        containerCorner = CHANNEL_ROW_CORNER,
+                        numberStyle = numberStyle,
+                        // iOS parity: numbers sit on the DIM textTertiary rung
+                        // so they recede behind the name/title.
+                        numberColor = MaterialTheme.colorScheme.tertiary,
+                        fallbackText = channel.name.take(2).uppercase(),
+                        fallbackStyle = MaterialTheme.typography.labelMedium
+                            .copy(fontWeight = FontWeight.Bold),
+                        fallbackColor = MaterialTheme.colorScheme.textAccent,
+                    )
                     Spacer(Modifier.width(12.dp))
                 }
 
@@ -1122,23 +1192,33 @@ internal fun ChannelRow(
                 // stays empty") but enforces measurement parity Android-
                 // side, which iOS gets for free from its SwiftUI VStack
                 // layout pass.
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = channel.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
+                Column(modifier = Modifier.weight(1f).height(rowSlots.totalHeight)) {
+                    // Show Channel Names OFF: the name line is not rendered at
+                    // all, so the program title moves up into its place. The
+                    // favorite star and catch-up clock stay on this line (they
+                    // are channel state, not the name), and with both absent
+                    // the Row measures to zero height and disappears.
+                    Row(
+                        modifier = Modifier.height(rowSlots.nameHeight),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (showChannelName) {
+                            Text(
+                                text = channel.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
                         // Favorite star beside the name, like the guide's
                         // channel column (Logan 2026-09-05, Apple
                         // ChannelListView.swift:3064-3070: filled star, 10pt
                         // semibold on compact, warning tint).
                         if (isFavorite) {
-                            Spacer(Modifier.width(5.dp))
+                            if (showChannelName) Spacer(Modifier.width(5.dp))
                             Icon(
                                 imageVector = Icons.Filled.Star,
                                 contentDescription = "Favorite",
@@ -1150,7 +1230,7 @@ internal fun ChannelRow(
                         // guide rail): a small history clock beside the name
                         // whenever this channel has a replayable archive.
                         if (channel.hasCatchup) {
-                            Spacer(Modifier.width(6.dp))
+                            if (showChannelName || isFavorite) Spacer(Modifier.width(6.dp))
                             Icon(
                                 imageVector = Icons.Filled.History,
                                 contentDescription = "Catch-up available",
@@ -1182,7 +1262,7 @@ internal fun ChannelRow(
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 text = formatRemaining(nowProgramme),
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelMedium.subtext(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                             )
@@ -1197,12 +1277,14 @@ internal fun ChannelRow(
                             }
                         }
                     }
-                    if (phoneRow && subtitle != null) {
+                    if (rowSlots.hasSubtitleLine) {
                         // iPhone: the sub-title is its own italic line above the
                         // description (ChannelListView.swift:3094-3100).
                         Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodySmall,
+                            // Blank when this program has no sub-title: the
+                            // LINE stays, so the rows below it still align.
+                            text = subtitle ?: " ",
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1220,20 +1302,20 @@ internal fun ChannelRow(
                             subtitle.takeIf { !phoneRow },
                             nowProgramme?.description?.takeIf { it.isNotBlank() },
                         ).joinToString(" · ").ifBlank { " " },
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         minLines = 2,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.size(4.dp))
+                    Spacer(Modifier.size(ROW_PROGRESS_GAP))
                     if (nowProgramme != null) {
                         EpgProgressBar(nowProgramme)
                     } else {
                         // Transparent placeholder keeps the 2 dp progress-
                         // bar slot reserved so all rows align even when
                         // EPG hasn't loaded for this channel.
-                        Spacer(Modifier.height(2.dp))
+                        Spacer(Modifier.height(ROW_PROGRESS_HEIGHT))
                     }
                 }
 
@@ -1244,7 +1326,7 @@ internal fun ChannelRow(
                     if (!phoneRow) nowProgramme?.let {
                         Text(
                             text = formatRemaining(it),
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelMedium.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -1480,7 +1562,7 @@ private fun ChannelGuidePanel(
         if (recentlyAired.isEmpty() && upcoming.isEmpty()) {
             Text(
                 text = "No upcoming schedule available",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             )
@@ -1496,18 +1578,24 @@ private fun ChannelGuidePanel(
                 items(recentlyAired.size) { i ->
                     val programme = recentlyAired[i]
                     val replayable = channel.canReplay(programme, now)
+                    val watchPast: (() -> Unit)? = if (replayable && onWatchPast != null) {
+                        { onWatchPast(programme) }
+                    } else {
+                        null
+                    }
                     UpcomingProgrammeRow(
                         programme = programme,
                         channelName = channelName,
                         channelId = channelId,
                         isPast = true,
                         replayable = replayable,
-                        onWatch = if (replayable && onWatchPast != null) {
-                            { onWatchPast(programme) }
-                        } else {
-                            null
-                        },
-                        onTap = { onShowProgramInfo(programme.toInfoTarget(channelName, channelDispatcharrId)) },
+                        onWatch = watchPast,
+                        // A single tap / OK on a replayable aired programme
+                        // plays it from the start; the long-press menu still
+                        // carries Program Info and everything else. Rows
+                        // outside the archive window keep opening the info sheet.
+                        onTap = watchPast
+                            ?: { onShowProgramInfo(programme.toInfoTarget(channelName, channelDispatcharrId)) },
                         onShowRecord = { onShowRecord(programme.toInfoTarget(channelName, channelDispatcharrId)) },
                     )
                 }
@@ -1543,7 +1631,7 @@ private fun ChannelGuidePanel(
                                 )
                                 Text(
                                     text = "Previously aired",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    style = MaterialTheme.typography.labelSmall.subtext(),
                                     color = MaterialTheme.colorScheme.tertiary,
                                 )
                                 Icon(
@@ -1660,7 +1748,7 @@ private fun UpcomingProgrammeRow(
                 }?.let { sub ->
                     Text(
                         text = sub,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontStyle = FontStyle.Italic,
                         maxLines = 1,
@@ -1670,7 +1758,7 @@ private fun UpcomingProgrammeRow(
                 if (programme.description.isNotBlank()) {
                     Text(
                         text = programme.description,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
@@ -1773,3 +1861,49 @@ private fun formatTimeRange(programme: EPGProgramme): String {
     val end = timeFormat.format(java.util.Date(programme.endMillis))
     return "$start – $end"
 }
+
+/**
+ * The channel row card's OWN corner radius. The card clip, both focus borders
+ * and the channel logo all read this one value, so the logo's corners can
+ * never drift from the card's (Logan 2026-09-16).
+ */
+internal val CHANNEL_ROW_CORNER = 12.dp
+
+/**
+ * Leading column width whenever a logo is shown and the row is not in the
+ * both-hidden full-bleed state: the 28 dp number column + its 8 dp gap + the
+ * 50 dp logo slot the row used to spend side by side, now all given to the
+ * logo. The row's total leading footprint, and therefore the text column, is
+ * unchanged. Never narrower than the measured number underneath it.
+ */
+private val ROW_LEAD_WIDTH = 86.dp
+
+/**
+ * Floor for the measured channel-number column: the shared widest-number
+ * reference (four digits plus the decimal sub-channel form Dispatcharr can
+ * emit). The column never comes out narrower than this string renders at the
+ * user's Text Size.
+ */
+private const val ROW_NUMBER_REFERENCE =
+    com.aeriotv.android.core.ui.CHANNEL_NUMBER_REFERENCE
+// Numbers AND names both hidden: the slot is the row's full content height
+// (~80 dp at the default Text Size, more when it is scaled up) and this max
+// width, so a portrait cover or a square badge has room to scale up while a
+// wide logo still fits. The info column keeps its layout to the right.
+private val ROW_LOGO_FULL_WIDTH = 96.dp
+
+/** Gap above the progress bar, and the bar's own height. Both reserved on
+ *  every row so the bars line up across the list. */
+private val ROW_PROGRESS_GAP = 4.dp
+private val ROW_PROGRESS_HEIGHT = 2.dp
+
+/** Height the name line still needs when names are OFF: the favorite star /
+ *  catch-up clock glyphs live on that line and are per-channel. */
+private val ROW_ICON_LINE = 14.dp
+
+/** The row's reserved slots, measured from the row's own text styles. */
+private data class ChannelRowSlots(
+    val nameHeight: Dp,
+    val hasSubtitleLine: Boolean,
+    val totalHeight: Dp,
+)

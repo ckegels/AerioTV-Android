@@ -37,7 +37,6 @@ import java.util.concurrent.TimeUnit
 import com.aeriotv.android.BuildConfig
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,13 +46,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Media3 ExoPlayer holder mirroring [MPVPlayerHolder]'s lifetime contract.
@@ -84,6 +81,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class AerioExoPlayerHolder @Inject constructor(
     private val timeshift: dagger.Lazy<com.aeriotv.android.core.timeshift.TimeshiftController>,
     private val appPreferences: com.aeriotv.android.core.preferences.AppPreferences,
+    private val firstByteLearner: com.aeriotv.android.core.preferences.LiveFirstByteLearner,
 ) {
 
     var player: ExoPlayer? = null
@@ -227,9 +225,39 @@ class AerioExoPlayerHolder @Inject constructor(
         // lands, so the deadline is cancelled from there rather than by a second
         // counter.
         tracer.onFirstByte = { liveFailover.noteFirstByte() }
+        // Bytes still arriving, however slowly: push the silent-start deadline
+        // out instead of walking off a working-but-slow upstream (Glitzbr
+        // 2026-09-15, an OTA HDHomeRun feed that degraded to 0.68 of real time).
+        tracer.onByteActivity = { liveFailover.noteBytes() }
+        // Per-channel learned time-to-first-byte, persisted exactly like the
+        // learned hold-back: an OTA tuner that always takes 20 s to lock earns a
+        // longer silent-start budget on later tunes.
+        prefScope.launch { cachedFirstByteMs = firstByteLearner.allOnce() }
+        liveFailover.learnedFirstByteMs = { id -> learnedFirstByteFor(id) }
+        liveFailover.onLearnFirstByte = { id, ms ->
+            prefScope.launch { cachedFirstByteMs = firstByteLearner.record(id, ms) }
+        }
         // Every member stream answered and none delivered: hand over to the
         // standing Task #150 retry / unavailable ladder.
         liveFailover.onExhausted = { markStreamUnavailable() }
+    }
+
+    /** Learned time-to-first-byte per channel, mirrored in memory so the
+     *  failover can read it without blocking the tune path. */
+    @Volatile
+    private var cachedFirstByteMs:
+        Map<String, com.aeriotv.android.core.preferences.LearnedFirstByte> = emptyMap()
+
+    /** This channel's learned time-to-first-byte, or null when unknown or
+     *  decayed past the learner's TTL (a one-off slow start must not stretch
+     *  the budget forever). */
+    private fun learnedFirstByteFor(channelId: String): Int? {
+        val entry = cachedFirstByteMs[channelId] ?: return null
+        val age = System.currentTimeMillis() - entry.learnedAtMs
+        if (age > com.aeriotv.android.core.preferences.LiveFirstByteLearner.LEARNED_TTL_MS) {
+            return null
+        }
+        return entry.ms.takeIf { it > 0 }
     }
 
     /**
@@ -249,6 +277,16 @@ class AerioExoPlayerHolder @Inject constructor(
     private fun learnStartBuffer(snapshot: PlaybackTracer.FeedStallSnapshot) {
         if (!snapshot.isLive) return
         val channelId = currentChannelIdForRebuild ?: return
+        // A stream switch (its window, a skip, or the watch) and a same-channel
+        // re-prime both stall by construction; that is not the feed's shape.
+        // Learning from them pinned channels at the 10 s gate (2026-09-15).
+        val now = SystemClock.elapsedRealtime()
+        if (inSwitchWindow() || switchWatchJob?.isActive == true ||
+            (sameChannelReopenAtMs != 0L && now - sameChannelReopenAtMs < SAME_CHANNEL_LEARN_QUIET_MS)
+        ) {
+            Log.i(TAG, "[HOLDBACK] ch=${snapshot.channelName} stall ignored: stream switch or same-channel re-prime")
+            return
+        }
         // Real time is a MEDIA-time question, not a bitrate one: a live
         // picture's bitrate swings with its content, so comparing the trailing
         // byte rate against the tune's own byte rate ignored two genuinely
@@ -363,12 +401,18 @@ class AerioExoPlayerHolder @Inject constructor(
      */
     private fun onLiveUnderrun(reason: String) {
         if (!resumeGateEligible()) return
+        if (SystemClock.elapsedRealtime() < switchJumpGraceUntilMs) {
+            Log.i(TAG, "[HOLDBACK] resume gate skipped: just jumped to a switched stream ($reason)")
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         val sinceLast = now - lastLiveUnderrunAtMs
         val repeat = lastLiveUnderrunAtMs != 0L && sinceLast <= REPEAT_STALL_WINDOW_MS
         val cooled = lastRejoinAtMs == 0L || now - lastRejoinAtMs >= REJOIN_COOLDOWN_MS
         lastLiveUnderrunAtMs = now
-        if (repeat && cooled && tryRejoin(now)) return
+        if (repeat && cooled && inSwitchWindow()) {
+            Log.i(TAG, "[RECOVER] suppressed reload during switch window (reason=rejoin $reason)")
+        } else if (repeat && cooled && tryRejoin(now)) return
         armResumeGate(reason)
     }
 
@@ -616,109 +660,269 @@ class AerioExoPlayerHolder @Inject constructor(
     private val watchdogPollMs = 1_000L
     private val maxConsecutiveReloads = 3
 
-    // ---- shared keepalive re-prime (manual Switch Stream + live follow-poller) ----
+    // ---- stream switch follow + single re-prime (manual Switch Stream, follow-poller, LAN/WAN) ----
     private val reprimeMutex = Mutex()
     @Volatile private var reprimeInFlight = false
-    /** True while a keepalive re-prime is mid-flight; the follow-poller parks on it. */
+    /** True while a switch follow or re-prime is mid-flight; the follow-poller parks on it. */
     val isReprimeInFlight: Boolean get() = reprimeInFlight
 
-    /** The re-prime's second connection, while it is open. Cancelled by a
-     *  re-prime's own finally and by [playUrl] (different url), [stop] and
-     *  [destroy]: the read loop is blocking, so cancelling the coroutine alone
-     *  kept reading the old channel for as long as the feed stayed steady. */
-    private class KeepaliveConn(
-        val url: String,
-        val job: Job,
-        val conn: java.util.concurrent.atomic.AtomicReference<java.net.HttpURLConnection?>,
-    )
-    @Volatile private var activeKeepalive: KeepaliveConn? = null
+    /** Bumped by every [playUrl]. A switch follow that sees it move knows some
+     *  other path (watchdog, error reload, 503 backoff) already re-primed. */
+    @Volatile private var primeGeneration = 0L
 
-    /** Cancel the keepalive job AND disconnect its socket (off the main
-     *  thread; disconnect can do I/O). [exceptUrl] spares the keepalive of an
-     *  in-flight re-prime of that same url, whose own playUrl lands here. */
-    private fun cancelKeepalive(exceptUrl: String? = null) {
-        val k = activeKeepalive ?: return
-        if (exceptUrl != null && k.url == exceptUrl) return
-        activeKeepalive = null
-        k.job.cancel()
-        watchdogScope.launch(Dispatchers.IO) { runCatching { k.conn.get()?.disconnect() } }
+    /** The live raw-TS source currently primed, wrapped so a stream switch can
+     *  hard-switch onto the new stream on the same connection. Main thread. */
+    private var switchSkipSource: SwitchSkipMediaSource? = null
+
+    /** Until this elapsedRealtime, an underrun right after a switch jump does
+     *  not arm the resume gate: the jump leaves a thin cushion by design and
+     *  the next burst is already loading. */
+    private var switchJumpGraceUntilMs = 0L
+
+    /** Until this elapsedRealtime a stream switch is settling: Dispatcharr may
+     *  still be connecting the new upstream (JayK: ~20 s of silence while the
+     *  provider retried). A same-channel reopen in that window hits
+     *  stream_limit before the server notices the old socket close, stops the
+     *  channel and restarts it on the default stream. So only a player error
+     *  (or the follow-poller's confirmed dead session) may reopen in it. */
+    @Volatile private var switchWindowUntilMs = 0L
+
+    private fun inSwitchWindow(): Boolean = SystemClock.elapsedRealtime() < switchWindowUntilMs
+
+    /** Wrap a freshly built live source for [followStreamSwitch]. Non raw-TS
+     *  sources pass through untouched. */
+    private fun wrapForSwitchSkip(url: String, source: MediaSource): MediaSource {
+        if (!isRawTsUrl(url)) {
+            switchSkipSource = null
+            return source
+        }
+        return SwitchSkipMediaSource(source).also { switchSkipSource = it }
+    }
+
+    // ---- same-channel reopen 503 quick retry ----
+    // JayK (Dispatcharr log): on a same-channel reconnect the server may still
+    // count the old client (it has not noticed the close yet), so at
+    // stream_limit 1 it terminates that one, the channel stops (shutdown delay
+    // 0) and our new request is answered 503 ("became unavailable during
+    // setup" / "Channel is stopping"). One quick retry once the server has
+    // settled usually lands; only then does the normal 503 handling run.
+    private var lastReopenUrl: String? = null
+    private var lastReopenChannelId: String? = null
+    private var sameChannelReopenAtMs = 0L
+    private var sameChannelQuickRetryUsed = false
+
+    /** Record a source (re)open. Same channel (id or url) stamps the reopen
+     *  time; a different channel clears it and the quick retry budget. */
+    private fun noteSourceOpen(url: String, channelId: String?) {
+        val same = url == lastReopenUrl || (channelId != null && channelId == lastReopenChannelId)
+        if (same) {
+            sameChannelReopenAtMs = SystemClock.elapsedRealtime()
+        } else {
+            sameChannelReopenAtMs = 0L
+            sameChannelQuickRetryUsed = false
+        }
+        lastReopenUrl = url
+        if (channelId != null) lastReopenChannelId = channelId
     }
 
     /**
-     * Re-prime the SAME proxy [url], holding a SECOND bare AllowAny GET to it open
-     * across the flush so the channel's client count never hits 0. The server's
-     * stop_channel (default channel_shutdown_delay=0) otherwise deletes
-     * channel_stream:{id} and the reconnect cold-resolves to the channel DEFAULT
-     * stream. This forces ProgressiveMediaSource to re-sync onto a stream
-     * Dispatcharr swapped in place (manual change_stream, WebUI switch, or
-     * automatic failover -- all keep our connection open + only mutate
-     * metadata.url, so ExoPlayer never self-flushes).
+     * Re-prime [url] on ONE connection: [playUrl] retires the old source's
+     * Calls on the playback looper before the new source's loader opens, so
+     * the two sockets never overlap. Dispatcharr counts every live GET
+     * against user.stream_limit, and a second concurrent GET (the old
+     * keepalive) made it terminate the player's connection at limit 1, stop
+     * the channel, and restart it on the default stream, undoing the switch.
      *
      * Serialised via [reprimeMutex] and gated on the shared [reloadCooldownMs]
-     * (same window the stall watchdog uses) UNLESS [bypassCooldown] -- the
-     * user-initiated manual switch sets it so its own re-prime always runs.
+     * (same window the stall watchdog uses) UNLESS [bypassCooldown].
      * Returns true if the re-prime ran.
      */
-    suspend fun reprimeWithKeepalive(
+    suspend fun reprime(
         url: String,
         title: String? = null,
         subtitle: String? = null,
         artworkUri: android.net.Uri? = null,
         bypassCooldown: Boolean = false,
-        keepaliveHoldMs: Long = 5_000L,
+        reason: String = "re-prime",
     ): Boolean = reprimeMutex.withLock {
-        val now = android.os.SystemClock.elapsedRealtime()
+        val now = SystemClock.elapsedRealtime()
+        // A notice owns the screen (limit refusal or repeated clean end): only
+        // the user's Retry or a channel change may reopen the connection.
+        if (_connectionLimit.value != null) {
+            Log.i(TAG, "[RECOVER] re-prime skipped (reason=$reason): notice showing, waiting for Retry")
+            return@withLock false
+        }
+        // The dead session that follows a clean end IS that end: let the
+        // clean-end backoff own the reconnect instead of re-priming now.
+        if (reason.startsWith("dead session") &&
+            withContext(Dispatchers.Main) { onLiveCleanEnd(reason) }
+        ) {
+            return@withLock false
+        }
         if (!bypassCooldown && now - lastForcedReloadAtMs < reloadCooldownMs) {
             Log.i(TAG, "[FOLLOW] re-prime skipped (within ${reloadCooldownMs}ms cooldown)")
             return@withLock false
         }
-        lastForcedReloadAtMs = now
         reprimeInFlight = true
-        var keepAliveConn: KeepaliveConn? = null
         try {
-            val connHolder = java.util.concurrent.atomic.AtomicReference<java.net.HttpURLConnection?>(null)
-            val connected = CompletableDeferred<Boolean>()
-            val keepAlive = watchdogScope.launch(Dispatchers.IO) {
-                try {
-                    val c = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-                        connectTimeout = 4000
-                        readTimeout = 8000
-                        requestMethod = "GET"
-                        httpHeaders.forEach { (k, v) -> setRequestProperty(k, v) }
-                        setRequestProperty("User-Agent", "AerioTV-switch-keepalive")
-                    }
-                    connHolder.set(c)
-                    // Cancelled before connecting: never open the socket.
-                    ensureActive()
-                    c.inputStream.use { ins ->
-                        val buf = ByteArray(32 * 1024)
-                        if (ins.read(buf) >= 0 && !connected.isCompleted) connected.complete(true)
-                        while (isActive) { if (ins.read(buf) < 0) break }
-                    }
-                } catch (_: Throwable) {
-                    // best-effort; re-prime proceeds regardless
-                } finally {
-                    if (!connected.isCompleted) connected.complete(false)
-                    runCatching { connHolder.get()?.disconnect() }
-                }
-            }
-            keepAliveConn = KeepaliveConn(url, keepAlive, connHolder)
-            cancelKeepalive()
-            activeKeepalive = keepAliveConn
-            // Attach (or definitively fail) the keepalive before dropping the player's connection.
-            withTimeoutOrNull(4_000L) { connected.await() }
-            tracer.recover("keepalive re-prime (stream follow / manual switch)")
-            withContext(Dispatchers.Main) { playUrl(url, title, subtitle, artworkUri) }
-            // Hold until ExoPlayer's reconnect is established (client count back >= 2).
-            delay(keepaliveHoldMs)
+            singleReprimeLocked(url, title, subtitle, artworkUri, reason)
             true
         } finally {
-            // Also on cancellation (the caller's LaunchedEffect dies on a
-            // channel change or player close during the waits above).
-            if (keepAliveConn != null && activeKeepalive === keepAliveConn) cancelKeepalive()
             reprimeInFlight = false
         }
     }
+
+    private suspend fun singleReprimeLocked(
+        url: String,
+        title: String?,
+        subtitle: String?,
+        artworkUri: android.net.Uri?,
+        reason: String,
+    ) {
+        lastForcedReloadAtMs = SystemClock.elapsedRealtime()
+        tracer.recover(reason)
+        withContext(Dispatchers.Main) { playUrl(url, title, subtitle, artworkUri) }
+    }
+
+    /** The running post-switch watch; a newer switch replaces it. */
+    private var switchWatchJob: Job? = null
+
+    // The upstream (Dispatcharr status url) the latest follow targeted, for the
+    // proxy url it ran on. A manual switch followed by the follow-poller seeing
+    // the same status change used to follow twice, and the second skip dropped
+    // NEW-stream media (Nothing Phone 2026-09-15).
+    @Volatile private var followTarget: String? = null
+    @Volatile private var followTargetProxyUrl: String? = null
+    @Volatile private var followTargetAtMs = 0L
+
+    /** True when [target] on [proxyUrl] is the stream a follow is already
+     *  watching, or was followed within the switch window. The follow-poller
+     *  adopts such a status change as its baseline without following again. */
+    fun isFollowingTarget(proxyUrl: String, target: String): Boolean =
+        target == followTarget && proxyUrl == followTargetProxyUrl &&
+            (switchWatchJob?.isActive == true ||
+                SystemClock.elapsedRealtime() - followTargetAtMs < SWITCH_WINDOW_MS)
+
+    /**
+     * Follow a Dispatcharr upstream switch (manual change_stream, WebUI switch,
+     * or server failover) WITHOUT touching the connection. Dispatcharr swaps
+     * the upstream in place on the same socket and resets its buffer, so the
+     * new stream's bytes arrive on the player's existing GET. The old stream's
+     * buffered samples are dropped once new data is queued (see
+     * [SwitchSkipMediaSource]); otherwise they simply play out.
+     *
+     * NEVER reopens the connection (JayK 2026-09-15: a provider that took 30 s
+     * to connect the new upstream turned the old no-progress re-prime into a
+     * stream_limit teardown and a restart on the default stream). While the
+     * new upstream is silent the switch window stays open, so the watchdog
+     * shows Reconnecting and waits. The only reopen triggers left are a fatal
+     * player error and the follow-poller's confirmed dead session; neither is
+     * blocked here, because the watch runs detached and does not mark a
+     * re-prime in flight.
+     *
+     * [title], [subtitle], [artworkUri] and [bypassCooldown] are kept for the
+     * call sites; nothing here re-primes any more. Returns true when the watch
+     * started, false when there is no live player to follow.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    suspend fun followStreamSwitch(
+        url: String,
+        title: String? = null,
+        subtitle: String? = null,
+        artworkUri: android.net.Uri? = null,
+        bypassCooldown: Boolean = false,
+        /** The Dispatcharr status url being switched to; repeats for it are ignored. */
+        targetStreamUrl: String? = null,
+    ): Boolean = withContext(Dispatchers.Main) {
+        if (targetStreamUrl != null && isFollowingTarget(url, targetStreamUrl)) {
+            Log.i(TAG, "[SWITCH] already following this stream; ignoring repeat follow")
+            return@withContext true
+        }
+        if (targetStreamUrl != null) {
+            followTarget = targetStreamUrl
+            followTargetProxyUrl = url
+            followTargetAtMs = SystemClock.elapsedRealtime()
+        }
+        val p = player
+        if (p == null || isTimeshifting) {
+            Log.i(TAG, "[SWITCH] no live player to follow; nothing to do")
+            return@withContext false
+        }
+        val startAt = SystemClock.elapsedRealtime()
+        val startGen = primeGeneration
+        val startPos = p.currentPosition
+        val startBuffered = p.bufferedPosition
+        Log.i(TAG, "[SWITCH] kept connection (buffered ahead ${startBuffered - startPos}ms at switch)")
+        switchWindowUntilMs = startAt + SWITCH_WINDOW_MS
+        // Drop the old stream's buffered samples as soon as new data is queued,
+        // instead of playing them out. Any failure leaves the old buffer to play.
+        val src = switchSkipSource
+        val skipRequested = src != null && src.requestSkip(
+            android.os.Handler(p.playbackLooper),
+            android.os.Handler(android.os.Looper.getMainLooper()),
+            minNewDataMs = SWITCH_SKIP_MIN_NEW_DATA_MS,
+            timeoutMs = SWITCH_SKIP_TIMEOUT_MS,
+        ) { result -> onSwitchSkipResult(result) }
+        if (!skipRequested) Log.i(TAG, "[SWITCH] old buffer skip unavailable; playing it out")
+        switchWatchJob?.cancel()
+        switchWatchJob = watchdogScope.launch {
+            var lastPos = startPos
+            var lastMoveAt = startAt
+            var lastWaitLogAt = 0L
+            while (isActive) {
+                delay(SWITCH_POLL_MS)
+                val now = SystemClock.elapsedRealtime()
+                val pl = player
+                if (pl == null || primeGeneration != startGen || isTimeshifting || lastPlayUrl != url) {
+                    Log.i(TAG, "[SWITCH] another path took over the player; ending watch")
+                    return@launch
+                }
+                val pos = pl.currentPosition
+                // A user pause is not a stuck switch.
+                if (pos != lastPos || !pl.playWhenReady) { lastPos = pos; lastMoveAt = now }
+                if (pos > startBuffered + SWITCH_PAST_BUFFER_MS && now - lastMoveAt < SWITCH_POLL_MS * 4) {
+                    Log.i(TAG, "[SWITCH] playback resumed on new stream after ${now - startAt}ms")
+                    return@launch
+                }
+                if (now - lastMoveAt >= SWITCH_NO_PROGRESS_MS) {
+                    // Dispatcharr is still connecting the new upstream and fails
+                    // over (or ends the session) on its own; keep the window open
+                    // so no silence heal reopens the channel meanwhile.
+                    switchWindowUntilMs = now + SWITCH_WINDOW_MS
+                    if (lastWaitLogAt == 0L) {
+                        Log.i(TAG, "[SWITCH] waiting for new upstream (no reload) ${(now - startAt) / 1000}s")
+                        lastWaitLogAt = now
+                    } else if (now - lastWaitLogAt >= SWITCH_WAIT_LOG_MS) {
+                        Log.i(TAG, "[SWITCH] still waiting for new upstream ${(now - startAt) / 1000}s")
+                        lastWaitLogAt = now
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /** Main thread: outcome of a [SwitchSkipMediaSource] skip. */
+    private fun onSwitchSkipResult(result: SwitchSkipMediaSource.Result) {
+        when (result) {
+            is SwitchSkipMediaSource.Result.Jumped -> {
+                Log.i(
+                    TAG,
+                    "[SWITCH] jumped to new stream at boundary +${result.boundaryOffsetMs}ms " +
+                        "(dropped ${result.droppedMs}ms old buffer)",
+                )
+                switchJumpGraceUntilMs = SystemClock.elapsedRealtime() + SWITCH_JUMP_GRACE_MS
+                // Resume on what is loaded; never hold for a full gate here.
+                releaseResumeGate("stream switch jump")
+                lastPositionAdvanceAtMs = SystemClock.elapsedRealtime()
+            }
+            SwitchSkipMediaSource.Result.AlreadyPast ->
+                Log.i(TAG, "[SWITCH] playhead already past the boundary; nothing to drop")
+            is SwitchSkipMediaSource.Result.Abandoned ->
+                Log.i(TAG, "[SWITCH] old buffer skip abandoned (${result.reason}); playing it out")
+        }
+    }
+
     // ---- black-screen (no-video-frame) net ----
     // The position poll above cannot see the field-reported black screen:
     // audio keeps currentPosition advancing while the video renderer never
@@ -791,6 +995,15 @@ class AerioExoPlayerHolder @Inject constructor(
      *  unavailable overlay shows it so "Channel unavailable" stops hiding
      *  what actually went wrong. Cleared on the next [playUrl]. */
     val lastErrorText: StateFlow<String?> = _lastErrorText.asStateFlow()
+    private val _connectionLimit = MutableStateFlow<DispatcharrConnectionLimit.Notice?>(null)
+    /** Set when Dispatcharr refused the live / catch-up request with an exact
+     *  connection-limit signal (see [DispatcharrConnectionLimit]). The player
+     *  shows the notice with Retry; nothing retries automatically. Cleared by
+     *  the next tune or [retryConnectionLimit]. */
+    val connectionLimit: StateFlow<DispatcharrConnectionLimit.Notice?> = _connectionLimit.asStateFlow()
+    /** Whether the tune the limit notice refused was a catch-up replay, so
+     *  Retry re-tunes the archive and not the live channel. */
+    private var connectionLimitWasCatchup = false
     /** The URL to replay when the unavailable overlay retries. Preserved by
      *  [markStreamUnavailable] BEFORE it calls [stop] (which nulls
      *  [lastPlayUrl]) - without this every [retryUnavailable] hit the
@@ -835,6 +1048,131 @@ class AerioExoPlayerHolder @Inject constructor(
         } else {
             playUrl(url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri, channelId = channelId)
         }
+    }
+
+    /**
+     * GH #107 (TwistdSpokes, Amazon Fire TV AFTKM / MediaTek, Android 11).
+     *
+     * Bumped whenever the holder needs the persistent window to throw away its
+     * SurfaceView and build a NEW one. PersistentExoWindow collects this and
+     * bumps its own surfaceEpoch, which re-runs the AndroidView factory.
+     *
+     * The failure this exists for: an in-place reload flushes the video
+     * renderer, MediaCodec.flush() throws CodecException 0xffffff92, ACodec
+     * goes "State machine stuck" and force-releases
+     * OMX.MTK.VIDEO.DECODER.AVC. From that point every tune logs "Could not
+     * find corresponding native window for surface": audio plays, the picture
+     * is frozen, and only a device reboot recovered. Neither a re-prime nor a
+     * player rebuild alone cures it, because the SURFACE the dead codec was
+     * bound to is what the platform lost; it has to be recreated too.
+     */
+    private val _surfaceRebuildRequest = MutableStateFlow(0)
+    val surfaceRebuildRequest: StateFlow<Int> = _surfaceRebuildRequest.asStateFlow()
+
+    /** Full player + surface rebuilds attempted inside the current window. */
+    private var fullRebuildAttempts = 0
+    /** elapsedRealtime of the first rebuild in the current window. */
+    private var fullRebuildWindowStartMs = 0L
+    /** elapsedRealtime of the most recent rebuild (backoff floor). */
+    private var lastFullRebuildAtMs = 0L
+
+    /**
+     * A decoder-level runtime failure: the MediaCodec instance itself died
+     * (flush / init / queue threw CodecException), not the stream. Media3
+     * reports the Fire TV flush death as ERROR_CODE_FAILED_RUNTIME_CHECK with
+     * a MediaCodec.CodecException cause, because it is raised inside renderer
+     * disable (onDisabled -> flush) rather than on a sample path.
+     *
+     * Deliberately NOT the same predicate as [isTransientDecoderError]: that
+     * one covers the tune-time codec handover race a same-url re-prime cures.
+     * This one means the codec is gone and anything short of a fresh player
+     * AND a fresh surface will render into a dead native window.
+     */
+    private fun isDecoderDeath(error: PlaybackException, causeChain: String): Boolean {
+        val codecFault = generateSequence(error as Throwable?) { it.cause }
+            .any { it is android.media.MediaCodec.CodecException }
+        if (!codecFault) {
+            // Some OEM stacks surface the same death with no CodecException in
+            // the chain, only the AOSP wording.
+            if (!causeChain.contains("native_flush", ignoreCase = true) &&
+                !causeChain.contains("MediaCodec.flush", ignoreCase = true) &&
+                !causeChain.contains("native window for surface", ignoreCase = true)
+            ) {
+                return false
+            }
+        }
+        return error.errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+            causeChain.contains("native_flush", ignoreCase = true) ||
+            causeChain.contains("native window for surface", ignoreCase = true)
+    }
+
+    /**
+     * Full teardown of the player AND the output surface, then re-tune the same
+     * channel. The user-visible experience is the ordinary "Reconnecting"
+     * recovery; only the depth of the teardown differs.
+     *
+     * Bounded: at most [MAX_FULL_REBUILDS] inside [FULL_REBUILD_WINDOW_MS],
+     * with an escalating backoff. Past the cap the existing unavailable card
+     * takes over instead of rebuilding forever. Returns true when a rebuild was
+     * actually scheduled.
+     */
+    private fun rebuildPlayerAndSurface(reason: String): Boolean {
+        if (isTimeshifting || isCatchup) return false
+        val url = lastPlayUrl ?: reconnectUrl ?: return false
+        val ctx = appContext ?: return false
+        val now = SystemClock.elapsedRealtime()
+        if (fullRebuildWindowStartMs != 0L && now - fullRebuildWindowStartMs > FULL_REBUILD_WINDOW_MS) {
+            fullRebuildAttempts = 0
+            fullRebuildWindowStartMs = 0L
+        }
+        if (fullRebuildAttempts >= MAX_FULL_REBUILDS) {
+            Log.w(
+                TAG,
+                "[RECOVER] rebuild budget spent ($fullRebuildAttempts in " +
+                    "${now - fullRebuildWindowStartMs}ms) reason=$reason; surfacing unavailable",
+            )
+            tracer.recover("rebuild budget spent; surfacing unavailable")
+            markStreamUnavailable()
+            return false
+        }
+        if (fullRebuildWindowStartMs == 0L) fullRebuildWindowStartMs = now
+        fullRebuildAttempts++
+        lastFullRebuildAtMs = now
+        // First rebuild goes as fast as the surface swap allows; a second one
+        // waits longer so a device that needs time to reclaim the codec gets it.
+        val settleMs = if (fullRebuildAttempts <= 1) FULL_REBUILD_SETTLE_MS
+        else FULL_REBUILD_SETTLE_MS * 3
+        Log.w(
+            TAG,
+            "[RECOVER] $reason; rebuilding player and surface ch=$currentChannelId " +
+                "attempt=$fullRebuildAttempts settle=${settleMs}ms",
+        )
+        tracer.recover("$reason; rebuilding player and surface attempt=$fullRebuildAttempts")
+        liveFailover.publishServerStatus("Reconnecting...")
+        val title = lastPlayTitle
+        val subtitle = lastPlaySubtitle
+        val art = lastPlayArtworkUri
+        val chan = currentChannelId ?: currentChannelIdForRebuild ?: reconnectChannelId
+        // Release the player (and with it the dead codec) BEFORE the window
+        // drops the SurfaceView, so nothing is still bound to the old surface
+        // when it is destroyed.
+        destroy()
+        _surfaceRebuildRequest.value = _surfaceRebuildRequest.value + 1
+        watchdogScope.launch {
+            // Let the composition swap in a brand-new SurfaceView and let the
+            // platform finish tearing the old native window down.
+            delay(settleMs)
+            withContext(Dispatchers.Main) {
+                if (isTimeshifting || isCatchup) return@withContext
+                acquireOrCreate(ctx)
+                playUrl(url, title, subtitle, art, channelId = chan)
+                currentChannelId = chan
+            }
+        }
+        return true
     }
 
     /** One transient-decoder retry per tune (session2.txt 19:56:48 codec handover).
@@ -889,6 +1227,7 @@ class AerioExoPlayerHolder @Inject constructor(
             // playing: hold the resume until the cushion is deep enough to
             // survive the worst delivery gap this feed has shown.
             if (playbackState == Player.STATE_BUFFERING) onLiveUnderrun("rebuffer")
+            if (playbackState == Player.STATE_ENDED) onLiveCleanEnd("ENDED")
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -998,6 +1337,9 @@ class AerioExoPlayerHolder @Inject constructor(
                 rebuildWithStockAudioAndReplay()
                 return
             }
+            // Dispatcharr connection limit (exact server signal, Direct Connect
+            // only): show the notice and stop. No reload ladder, no walk.
+            if (handleConnectionLimit(error)) return
             // Android companion to the frame-stall path: a terminal source/HTTP
             // error. Re-prime under the same cooldown + reload cap. If a LAN/WAN
             // failover hook is set (PlayerScreen mount), ask it to re-probe and
@@ -1102,6 +1444,23 @@ class AerioExoPlayerHolder @Inject constructor(
             // SAME url once (the shape the catch-up path above already uses) gets
             // the channel instead of the terminal path's failover. Only inside the
             // first 3 s of the tune, and only once per tune.
+            // GH #107: decoder DEATH, not a handover race. The MediaCodec
+            // instance threw inside flush/init; an in-place reload here is what
+            // pushed the Fire TV's ACodec into "State machine stuck" and cost
+            // the whole session (every later tune: audio only, "Could not find
+            // corresponding native window for surface", reboot to recover). Go
+            // straight to the deepest teardown: release the player AND the
+            // surface, then tune the same channel.
+            if (isDecoderDeath(error, causeChain)) {
+                val kind = if (causeChain.contains("flush", ignoreCase = true)) {
+                    "decoder death (MediaCodec flush)"
+                } else {
+                    "decoder death (${error.errorCodeName})"
+                }
+                if (rebuildPlayerAndSurface(kind)) return
+                // Budget spent: markStreamUnavailable already ran inside.
+                return
+            }
             val liveUrl = lastPlayUrl
             if (liveUrl != null && !decoderRetryUsed && isTransientDecoderError(error, causeChain)) {
                 val sinceTune = SystemClock.elapsedRealtime() - streamPrimedAtMs
@@ -1169,6 +1528,18 @@ class AerioExoPlayerHolder @Inject constructor(
         override fun onRenderedFirstFrame() {
             videoFrameRendered = true
             noFrameHealAttempts = 0
+            // GH #107: video that has been painting steadily for a while means
+            // the surface and codec are genuinely healthy again, so the rebuild
+            // budget earns a fresh window. Guarded by elapsed time since the
+            // last rebuild so a rebuild that paints one frame and re-freezes
+            // cannot refill its own budget and loop.
+            if (lastFullRebuildAtMs != 0L &&
+                SystemClock.elapsedRealtime() - lastFullRebuildAtMs > FULL_REBUILD_WINDOW_MS / 3
+            ) {
+                fullRebuildAttempts = 0
+                fullRebuildWindowStartMs = 0L
+                lastFullRebuildAtMs = 0L
+            }
             // The one line that lets a user log definitively separate "video
             // rendered" from "decoded but never painted". Once per prime, so
             // it's cheap enough for release builds.
@@ -1827,7 +2198,10 @@ class AerioExoPlayerHolder @Inject constructor(
         val source = ProgressiveMediaSource.Factory(
             tracer.wrapDataSourceFactory(httpDataSourceFactory(isLive = true)),
             tsOnlyExtractorsFactory(),
-        ).createMediaSource(mediaItem)
+        )
+            // A Dispatcharr connection-limit refusal is shown, never re-GET.
+            .setLoadErrorHandlingPolicy(DispatcharrConnectionLimit.LoadErrorPolicy())
+            .createMediaSource(mediaItem)
         p.setMediaSource(source)
         retireLiveCalls(p, staleCalls)
         p.prepare()
@@ -1932,6 +2306,10 @@ class AerioExoPlayerHolder @Inject constructor(
             currentChannelId = it
         }
         clearPauseStamp("re-prime")
+        // A caller-supplied channel id is a real tune (channel change, user
+        // Retry): the clean-end reconnect budget starts over.
+        if (channelId != null) resetCleanEndBudget()
+        if (kind == "live") liveTuneWallSec = System.currentTimeMillis() / 1000.0
         resetWatchdogStateForNewStream()
         // watchdogReloadEnabled is kept current by the collector in init{}; the
         // cached value reflects the latest pref without blocking the main thread.
@@ -1941,14 +2319,17 @@ class AerioExoPlayerHolder @Inject constructor(
         // watchdog/poller re-prime must not undo.
         setVideoTrackEnabled(!remoteAudioOnly)
         tracer.markTuneStart(title, kind)
-        cancelKeepalive(exceptUrl = url)
+        primeGeneration += 1
+        noteSourceOpen(url, effectiveChannelId)
         val staleCalls = takeLiveCallTrackers()
-        val source = buildMediaSource(url, title, subtitle, artworkUri, drmLicenseType, drmLicenseKey)
+        val source = wrapForSwitchSkip(
+            url, buildMediaSource(url, title, subtitle, artworkUri, drmLicenseType, drmLicenseKey),
+        )
         p.setMediaSource(source)
         retireLiveCalls(p, staleCalls)
         p.prepare()
         p.playWhenReady = true
-        // Arm the 12 s first-byte deadline for live only. A caller-supplied
+        // Arm the silent-start deadline for live only. A caller-supplied
         // channelId IS a user-initiated tune (internal re-primes pass null and
         // keep the walk's tried set).
         if (kind == "live") {
@@ -2002,7 +2383,7 @@ class AerioExoPlayerHolder @Inject constructor(
         val headerUa = httpHeaders.entries
             .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
             ?.value
-        val calls = LiveCallTracker(liveHttpClient).also { liveCallTrackers.add(it) }
+        val calls = LiveCallTracker(liveHttpClient, pendingRetireGate).also { liveCallTrackers.add(it) }
         val factory = OkHttpDataSource.Factory(calls)
             .setUserAgent(okHttpSafeUserAgent(headerUa ?: DEFAULT_PLAYBACK_USER_AGENT))
         val nonUaHeaders = okHttpSafeHeaders(
@@ -2021,12 +2402,35 @@ class AerioExoPlayerHolder @Inject constructor(
      * (~10 s) or the read timeout. Same discipline as TimeshiftController's
      * fill: cancel the CALL. A cancel after [cancelAll] applies to any late
      * retry the dying source still makes.
+     *
+     * [openGate] orders a same-player tune: the superseded source's Calls are
+     * cancelled on the playback looper right after setMediaSource (so their
+     * read failure reports as a canceled load), and a prepared player can start
+     * the NEW source's loader before that post runs. The new source therefore
+     * waits on the gate before issuing its first request, so the old
+     * Dispatcharr connection is always closed before the new one opens (a
+     * per-user stream limit otherwise counts both). Bounded so a player
+     * released before the post runs can never wedge the loader thread.
      */
-    private class LiveCallTracker(private val client: OkHttpClient) : okhttp3.Call.Factory {
+    private class LiveCallTracker(
+        private val client: OkHttpClient,
+        private val openGate: java.util.concurrent.CountDownLatch? = null,
+    ) : okhttp3.Call.Factory {
         private val calls = ArrayDeque<okhttp3.Call>()
         private var cancelled = false
 
         override fun newCall(request: okhttp3.Request): okhttp3.Call {
+            openGate?.let { gate ->
+                if (gate.count > 0L) {
+                    val closed = try {
+                        gate.await(RETIRE_GATE_MAX_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        false
+                    }
+                    if (!closed) Log.w(TAG, "[TUNE] stale live connection not closed after ${RETIRE_GATE_MAX_WAIT_MS}ms; opening anyway")
+                }
+            }
             val call = client.newCall(request)
             synchronized(this) {
                 if (cancelled) {
@@ -2058,8 +2462,17 @@ class AerioExoPlayerHolder @Inject constructor(
     private fun takeLiveCallTrackers(): List<LiveCallTracker> {
         val stale = liveCallTrackers.toList()
         liveCallTrackers.removeAll(stale.toSet())
+        // A gate nobody retired (a take with no source swap after it) must
+        // never hold a later source.
+        pendingRetireGate?.countDown()
+        pendingRetireGate = if (stale.isEmpty()) null else java.util.concurrent.CountDownLatch(1)
         return stale
     }
+
+    /** Opens when the stale Calls taken by the latest [takeLiveCallTrackers]
+     *  have been cancelled; live sources built in between wait on it before
+     *  their first request (see [LiveCallTracker]). Main thread only. */
+    private var pendingRetireGate: java.util.concurrent.CountDownLatch? = null
 
     /** Cancel [stale] Calls once ExoPlayer has released the old period.
      *  Posted to the playback looper, so it runs after the stop /
@@ -2067,8 +2480,24 @@ class AerioExoPlayerHolder @Inject constructor(
      *  resulting read failure then reports as a canceled load, never as a
      *  load error the reconnect / 503 / stall paths would act on. */
     private fun retireLiveCalls(p: ExoPlayer, stale: List<LiveCallTracker>) {
-        if (stale.isEmpty()) return
-        android.os.Handler(p.playbackLooper).post { stale.forEach { it.cancelAll() } }
+        val gate = pendingRetireGate
+        pendingRetireGate = null
+        if (stale.isEmpty()) {
+            gate?.countDown()
+            return
+        }
+        val posted = android.os.Handler(p.playbackLooper).post {
+            try {
+                stale.forEach { it.cancelAll() }
+            } finally {
+                gate?.countDown()
+            }
+        }
+        if (!posted) {
+            // Playback looper already gone: nothing is loading, close now.
+            stale.forEach { it.cancelAll() }
+            gate?.countDown()
+        }
     }
 
     /**
@@ -2172,6 +2601,9 @@ class AerioExoPlayerHolder @Inject constructor(
      *  command("stop"). */
     fun stop() {
         val p = player ?: return
+        // A deliberate stop outranks any waiting clean-end reconnect.
+        cleanEndJob?.cancel()
+        cleanEndJob = null
         currentChannelId = null
         currentChannelIdForRebuild = null
         // Disarm the stall watchdog so a deliberate stop isn't seen as a wedge.
@@ -2181,7 +2613,6 @@ class AerioExoPlayerHolder @Inject constructor(
         // Disarm the first-byte deadline with the pipeline but KEEP the tried
         // set: an internal retry is the same tune on the same channel.
         liveFailover.disarm()
-        cancelKeepalive()
         val staleCalls = takeLiveCallTrackers()
         p.stop()
         retireLiveCalls(p, staleCalls)
@@ -2245,13 +2676,13 @@ class AerioExoPlayerHolder @Inject constructor(
         // "Channel is stopping" retry.
         stoppingRetryJob?.cancel()
         stoppingRetryJob = null
+        // A waiting clean-end reconnect must not outlive the player.
+        cleanEndJob?.cancel()
+        cleanEndJob = null
         liveFailover.resetWalk()
         watchdogJob?.cancel()
         watchdogJob = null
         lastPlayUrl = null
-        // An in-flight re-prime's own playUrl can rebuild the player through
-        // here (start gate change); its finally retires that keepalive.
-        if (!reprimeInFlight) cancelKeepalive()
         val staleCalls = takeLiveCallTrackers()
         try {
             tracer.tracedPlayer = null
@@ -2265,11 +2696,15 @@ class AerioExoPlayerHolder @Inject constructor(
             // release() blocks until the playback thread let go of the
             // loaders, so the stale Calls can be cancelled right here.
             staleCalls.forEach { it.cancelAll() }
+            pendingRetireGate?.countDown()
+            pendingRetireGate = null
             PlaybackActivityTracker.playerReleased()
         }
     }
 
     private fun armWatchdog() {
+        // Steady playback: a later same-channel reopen earns a fresh quick retry.
+        sameChannelQuickRetryUsed = false
         hasReachedPlaybackRestart = true
         lastPositionAdvanceAtMs = SystemClock.elapsedRealtime()
         lastKnownPositionMs = player?.currentPosition ?: 0L
@@ -2471,6 +2906,27 @@ class AerioExoPlayerHolder @Inject constructor(
                     !p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO) &&
                     now - streamPrimedAtMs >= noVideoFrameThresholdMs
                 ) {
+                    // GH #107 dead-surface signal, measured not parsed: the
+                    // AUDIO clock has genuinely advanced this far past the
+                    // prime (so the pipeline is healthy and decoding) while the
+                    // video renderer has a format, video is not disabled, and
+                    // NO first frame ever arrived. That is exactly the state
+                    // "Could not find corresponding native window for surface"
+                    // produces. A re-prime cannot fix it - the surface is gone -
+                    // so skip straight to the full rebuild.
+                    val audioAdvancedMs = p.currentPosition
+                    if (audioAdvancedMs >= DEAD_SURFACE_AUDIO_ADVANCE_MS &&
+                        noFrameHealAttempts == 0
+                    ) {
+                        noFrameHealAttempts = 2
+                        Log.w(
+                            TAG,
+                            "[RECOVER] surface dead; rebuilding (audio +${audioAdvancedMs}ms, " +
+                                "no first frame ch=$currentChannelId)",
+                        )
+                        if (!rebuildPlayerAndSurface("surface dead")) noFrameHealAttempts = 3
+                        continue
+                    }
                     when (noFrameHealAttempts) {
                         0 -> if (forceReload("no-video-frame")) noFrameHealAttempts = 1
                         1 -> { noFrameHealAttempts = 2; recreateForBlackScreen() }
@@ -2512,9 +2968,18 @@ class AerioExoPlayerHolder @Inject constructor(
                 // Sampled once per tick at the top of the loop.
                 val staleMs = now - lastPositionAdvanceAtMs
                 val ingestStaleMs = ingestStaleNowMs
+                // Dispatcharr live bursts every 8 to 13 s (gaps up to ~15 s), and a
+                // same-channel reopen during a quiet upstream trips stream_limit
+                // (JayK 2026-09-15). Raw-TS live therefore needs 25 s of silence
+                // AND an empty buffer; other sources keep the 6 s rule.
+                val rawTsLive = lastPlayUrl?.let { isRawTsUrl(it) } == true
+                val ingestReloadMs =
+                    if (rawTsLive) LIVE_INGEST_RELOAD_SILENCE_MS else staleReloadThresholdMs
+                val bufferOk = !rawTsLive || bufferAheadNowMs < STALL_OVERLAY_EMPTY_BUFFER_MS
                 if (watchdogReloadEnabled &&
                     staleMs >= staleReloadThresholdMs &&
-                    ingestStaleMs >= staleReloadThresholdMs
+                    ingestStaleMs >= ingestReloadMs &&
+                    bufferOk
                 ) {
                     forceReload("stale=${staleMs}ms ingest-stale=${ingestStaleMs}ms")
                 }
@@ -2527,6 +2992,10 @@ class AerioExoPlayerHolder @Inject constructor(
      *  the cooldown or past the attempt cap). */
     private fun forceReload(reason: String): Boolean {
         if (isTimeshifting || isCatchup) return false
+        if (inSwitchWindow() && !reason.startsWith("error:")) {
+            Log.i(TAG, "[RECOVER] suppressed reload during switch window (reason=$reason)")
+            return false
+        }
         val p = player ?: return false
         val url = lastPlayUrl ?: return false
         val now = SystemClock.elapsedRealtime()
@@ -2573,10 +3042,15 @@ class AerioExoPlayerHolder @Inject constructor(
         streamPrimedAtMs = now
         lastKnownBufferedPositionMs = 0L
         lastBufferAdvanceAtMs = now
+        primeGeneration += 1
+        noteSourceOpen(url, currentChannelIdForRebuild ?: currentChannelId)
         val staleCalls = takeLiveCallTrackers()
-        val source = buildMediaSource(
-            url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
-            lastPlayDrmType, lastPlayDrmKey,
+        val source = wrapForSwitchSkip(
+            url,
+            buildMediaSource(
+                url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
+                lastPlayDrmType, lastPlayDrmKey,
+            ),
         )
         p.setMediaSource(source)
         retireLiveCalls(p, staleCalls)
@@ -2607,6 +3081,7 @@ class AerioExoPlayerHolder @Inject constructor(
      * substitute a guessed cause such as "too many connections".
      */
     private fun handleLive503(error: Throwable): Boolean {
+        if (DispatcharrConnectionLimit.parse(error) != null) return false
         val info = Dispatcharr503.parse(error) ?: return false
         // Live only: VOD / catch-up / DVR have their own error paths and no
         // member-stream walk to fall back on.
@@ -2623,6 +3098,26 @@ class AerioExoPlayerHolder @Inject constructor(
         live503HandledAtMs = now
         live503OwnedRecovery = false
         serverReason = info.reason
+        if (!sameChannelQuickRetryUsed && sameChannelReopenAtMs != 0L &&
+            now - sameChannelReopenAtMs <= SAME_CHANNEL_REOPEN_WINDOW_MS &&
+            stoppingRetryJob?.isActive != true
+        ) {
+            sameChannelQuickRetryUsed = true
+            Log.i(
+                TAG,
+                "[RECONNECT] same-channel reopen rejected, quick retry " +
+                    "(503 \"${info.reason}\" ${now - sameChannelReopenAtMs}ms after reopen; " +
+                    "retrying in ${SAME_CHANNEL_QUICK_RETRY_MS}ms)",
+            )
+            liveFailover.publishServerStatus("Reconnecting...")
+            stoppingRetryJob = watchdogScope.launch {
+                delay(SAME_CHANNEL_QUICK_RETRY_MS)
+                if (lastPlayUrl != url) return@launch
+                reprimeSameUrl("503 ${info.reason} same-channel quick retry")
+            }
+            live503OwnedRecovery = true
+            return true
+        }
         if (info.kind == Dispatcharr503.Kind.STOPPING) {
             // A teardown is the one case where waiting is the whole cure. The
             // failover walk must NOT run here: on the Streamer 2026-09-14
@@ -2686,6 +3181,182 @@ class AerioExoPlayerHolder @Inject constructor(
         return false
     }
 
+    // ---- repeated clean end (Dispatcharr "terminate on limit exceeded") ----
+    // The server ends the OLDEST client's stream cleanly when a new client
+    // takes the account's last slot, and the booted client sees nothing but a
+    // clean end of stream. Reconnecting immediately boots the other device,
+    // which reconnects in turn: two devices bouncing forever. So: always keep
+    // reconnecting (a clean end is usually just a restarted stream), but back
+    // off - now, 5 s, 15 s, 30 s, then every 60 s - and give up ONLY when
+    // [StreamEndVerifier] can prove the account is at its stream limit with a
+    // newer session elsewhere. Never on a guess.
+    /** Clean ends in the current run: 1 = the first (immediate reconnect). */
+    private var cleanEndStreak = 0
+    /** When the reconnect after a clean end opened; 0 when none is pending. */
+    private var cleanEndReconnectAtMs = 0L
+    /** The scheduled reconnect (verification + backoff), if one is waiting. */
+    private var cleanEndJob: Job? = null
+    /** Wall clock (epoch seconds) at which the current live session opened,
+     *  so the verifier can tell a NEWER session elsewhere from our own. */
+    @Volatile private var liveTuneWallSec = 0.0
+
+    /** Channel change, Retry, teardown: forget the streak and any wait. */
+    private fun resetCleanEndBudget() {
+        cleanEndStreak = 0
+        cleanEndReconnectAtMs = 0L
+        cleanEndJob?.cancel()
+        cleanEndJob = null
+    }
+
+    /**
+     * Main thread. A live stream ended cleanly ([source] = "ENDED") or the
+     * follow-poller found the session dead after such an end. Returns true
+     * when this owns recovery (a reconnect is scheduled, or the notice is up),
+     * so the caller must not reconnect as well.
+     */
+    private fun onLiveCleanEnd(source: String): Boolean {
+        val url = lastPlayUrl ?: return false
+        if (isTimeshifting || isCatchup || PlaybackTracer.urlKind(url) != "live") return false
+        if (_connectionLimit.value != null) return true
+        // A reconnect is already waiting out its backoff; this end is the same
+        // one seen twice (ENDED, then the follow-poller's dead session).
+        if (cleanEndJob?.isActive == true) return true
+        if (inSwitchWindow()) {
+            Log.i(TAG, "[RECOVER] clean end ($source) during switch window; left to the switch watch")
+            return false
+        }
+        // A dead session with no clean end behind it is the old wedge case:
+        // leave the follow-poller's own re-prime alone.
+        if (source != "ENDED" && cleanEndStreak == 0) return false
+        val now = SystemClock.elapsedRealtime()
+        val sinceReconnect = now - cleanEndReconnectAtMs
+        cleanEndStreak = if (
+            cleanEndReconnectAtMs > 0L && sinceReconnect < StreamEndVerifier.HEALTHY_RESET_MS
+        ) {
+            cleanEndStreak + 1
+        } else {
+            if (cleanEndStreak > 0) {
+                Log.i(
+                    TAG,
+                    "[RECOVER] clean-end streak reset: ${sinceReconnect}ms of playback " +
+                        "since the last reconnect ch=$currentChannelId",
+                )
+            }
+            1
+        }
+        val streak = cleanEndStreak
+        val backoffMs = StreamEndVerifier.backoffMs(streak)
+        val channelUuid = StreamEndVerifier.channelUuidFromUrl(url)
+        val connectedAtSec = liveTuneWallSec
+        Log.w(
+            TAG,
+            "[RECOVER] clean end ($source) #$streak ch=$currentChannelId; " +
+                "reconnecting in ${backoffMs}ms",
+        )
+        tracer.recover("clean end ($source) #$streak; reconnect in ${backoffMs}ms")
+        // The stream is gone and we are waiting; say so instead of freezing on
+        // the last frame with no message. Deliberately NOT the stall
+        // watchdog's flag: that clears the moment the (stopped) player stops
+        // looking live, which would blank the status through the whole wait.
+        // The next tune's first byte clears it (LiveStreamFailover).
+        if (backoffMs > 0L) liveFailover.publishServerStatus("Reconnecting...")
+        cleanEndJob = watchdogScope.launch {
+            // Verification first: the ONLY way this ever stops for good. A
+            // non-admin account, an old server or any transport failure
+            // answers "not verified" and we just keep reconnecting.
+            if (streak >= 2) {
+                val verdict = StreamEndVerifier.verify(channelUuid, connectedAtSec)
+                Log.i(
+                    TAG,
+                    "[RECOVER] clean end #$streak session check: " +
+                        "${if (verdict.stopped) "AT LIMIT" else "not verified"} (${verdict.detail})",
+                )
+                if (verdict.stopped) {
+                    withContext(Dispatchers.Main) { stopForVerifiedStreamEnd(url) }
+                    return@launch
+                }
+            }
+            if (backoffMs > 0L) delay(backoffMs)
+            withContext(Dispatchers.Main) {
+                if (_connectionLimit.value != null || isTimeshifting || isCatchup) return@withContext
+                val target = lastPlayUrl ?: url
+                Log.i(TAG, "[RECOVER] clean end #$streak: reconnecting ch=$currentChannelId")
+                cleanEndReconnectAtMs = SystemClock.elapsedRealtime()
+                // Keep the follow-poller (and the stall watchdog) from opening a
+                // SECOND connection right behind this one.
+                lastForcedReloadAtMs = cleanEndReconnectAtMs
+                playUrl(
+                    target, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
+                    drmLicenseType = lastPlayDrmType, drmLicenseKey = lastPlayDrmKey,
+                )
+            }
+        }
+        return true
+    }
+
+    /** Verified boot: this account is at its stream limit and a newer session
+     *  elsewhere took the slot. Stop everything until the user presses Retry. */
+    private fun stopForVerifiedStreamEnd(url: String) {
+        if (_connectionLimit.value != null) return
+        Log.w(TAG, "[RECOVER] stream end VERIFIED at the stream limit ch=$currentChannelId; stopping, waiting for Retry")
+        tracer.recover("stream end verified at the stream limit; stopping")
+        cleanEndJob = null
+        resetCleanEndBudget()
+        stoppingRetryJob?.cancel()
+        stoppingRetryJob = null
+        reconnectUrl = lastPlayUrl ?: url
+        reconnectChannelId = currentChannelIdForRebuild ?: currentChannelId ?: reconnectChannelId
+        connectionLimitWasCatchup = false
+        // No failover walk after this: forget it along with the pipeline.
+        liveFailover.resetWalk()
+        liveFailover.publishServerStatus(null)
+        ingestStallStatusShown = false
+        _connectionLimit.value = DispatcharrConnectionLimit.STREAM_ENDED
+        stop()
+    }
+
+    /**
+     * Dispatcharr connection-limit refusal on a live or catch-up tune: record
+     * the notice, stop the pipeline (no reconnect, no failover walk, no
+     * Reconnecting status) and keep what Retry needs. Returns true when the
+     * error was a limit refusal this holder now owns, including the duplicate
+     * second sighting (load error, then terminal player error).
+     */
+    private fun handleConnectionLimit(error: Throwable): Boolean {
+        val notice = DispatcharrConnectionLimit.parse(error) ?: return false
+        if (_connectionLimit.value != null) return true
+        if (isTimeshifting) return false
+        val url = lastPlayUrl
+        val catchup = isCatchup
+        if (!catchup && (url == null || PlaybackTracer.urlKind(url) != "live")) return false
+        Log.w(TAG, "[LIMIT] ${notice.kind} \"${notice.message}\"; stopping, waiting for Retry")
+        tracer.recover("connection limit ${notice.kind}; stopping")
+        stoppingRetryJob?.cancel()
+        stoppingRetryJob = null
+        if (!catchup) {
+            reconnectUrl = url ?: reconnectUrl
+            reconnectChannelId = currentChannelIdForRebuild ?: currentChannelId ?: reconnectChannelId
+        }
+        connectionLimitWasCatchup = catchup
+        liveFailover.publishServerStatus(null)
+        _connectionLimit.value = notice
+        stop()
+        return true
+    }
+
+    /** Retry button of the connection-limit notice: one fresh tune of what
+     *  was refused. */
+    fun retryConnectionLimit() {
+        if (_connectionLimit.value == null) return
+        _connectionLimit.value = null
+        if (connectionLimitWasCatchup) {
+            val cu = lastCatchupUrl ?: return
+            playCatchup(cu, lastCatchupTitle, lastCatchupSubtitle, lastCatchupArtworkUri)
+        } else {
+            retryUnavailable()
+        }
+    }
+
     /**
      * Re-prime the SAME url right now, with no backoff and outside the stall
      * watchdog's attempt cap. Used only by the "Channel is stopping" 503 path,
@@ -2707,10 +3378,15 @@ class AerioExoPlayerHolder @Inject constructor(
         lastKnownBufferedPositionMs = 0L
         lastBufferAdvanceAtMs = now
         LoggingPlayerListener.sawTracksChangedSincePrime = false
+        primeGeneration += 1
+        noteSourceOpen(url, currentChannelIdForRebuild ?: currentChannelId)
         val staleCalls = takeLiveCallTrackers()
-        val source = buildMediaSource(
-            url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
-            lastPlayDrmType, lastPlayDrmKey,
+        val source = wrapForSwitchSkip(
+            url,
+            buildMediaSource(
+                url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
+                lastPlayDrmType, lastPlayDrmKey,
+            ),
         )
         p.setMediaSource(source)
         retireLiveCalls(p, staleCalls)
@@ -2755,6 +3431,11 @@ class AerioExoPlayerHolder @Inject constructor(
         val chan = currentChannelId
         val attempts = noFrameHealAttempts
         destroy()
+        // GH #107: a recreate that keeps the OLD SurfaceView re-binds the fresh
+        // codec to the same (possibly dead) native window. Ask the persistent
+        // window for a new one at the same time; the rebind happens through the
+        // playerInstance flow either way, so this only ever adds a surface swap.
+        _surfaceRebuildRequest.value = _surfaceRebuildRequest.value + 1
         acquireOrCreate(ctx)
         playUrl(url, title, subtitle, art, channelId = chan)
         // destroy()/playUrl() reset these; the heal must keep its place in the
@@ -2808,6 +3489,7 @@ class AerioExoPlayerHolder @Inject constructor(
         serverReason = null
         _streamUnavailable.value = false
         _lastErrorText.value = null
+        _connectionLimit.value = null
         // A fresh stream is starting; if it fails, markStreamUnavailable will
         // re-preserve the current URL. (retryUnavailable already captured its
         // URL before the playUrl that lands here, so clearing is safe.)
@@ -2948,13 +3630,20 @@ class AerioExoPlayerHolder @Inject constructor(
             // (Frankie B. Shield log 2026-09-14 18:21:03: 503, no parse, no
             // Retry-After, straight into the generic in-place reload ladder and
             // the "Channel Unavailable ... Retrying in 4s" card).
+            val limit = DispatcharrConnectionLimit.parse(error)
             val is503 = Dispatcharr503.parse(error) != null
-            if (wasCanceled && !is503) return
+            if (wasCanceled && !is503 && limit == null) return
             Log.w(
                 TAG,
                 "load error uri=${loadEventInfo.uri} " +
                     "${error.javaClass.simpleName}: ${error.message}${causeChain(error)}",
             )
+            // A connection-limit refusal owns the error outright: the 503 flavor
+            // of it must not start the stopping ladder or the failover walk.
+            if (limit != null) {
+                handleConnectionLimit(error)
+                return
+            }
             // A Dispatcharr 503 carries the server's OWN reason; act on it here
             // rather than letting the retry ladders guess (see handleLive503).
             handleLive503(error)
@@ -3068,6 +3757,34 @@ class AerioExoPlayerHolder @Inject constructor(
          *  worth showing "Reconnecting" for. */
         const val STALL_OVERLAY_FROZEN_MS = 1_000L
 
+        /** Playhead frozen this long after a switch = the new upstream is not
+         *  flowing yet; the watch starts logging and keeps the switch window open. */
+        const val SWITCH_NO_PROGRESS_MS = 6_000L
+        private const val SWITCH_POLL_MS = 250L
+        /** Interval of the "[SWITCH] still waiting for new upstream" log. */
+        private const val SWITCH_WAIT_LOG_MS = 10_000L
+        /** How far past the buffered head at the switch the playhead must get
+         *  before playback counts as running on the new stream's bytes. */
+        private const val SWITCH_PAST_BUFFER_MS = 1_000L
+        /** New-stream media that must be loaded past the boundary before old
+         *  samples are dropped, so the keyframe and a cushion are already there. */
+        private const val SWITCH_SKIP_MIN_NEW_DATA_MS = 2_500L
+        /** A skip that has not seen new data by now is abandoned (old buffer plays out). */
+        private const val SWITCH_SKIP_TIMEOUT_MS = 30_000L
+        /** Underruns inside this window after a jump do not arm the resume gate. */
+        private const val SWITCH_JUMP_GRACE_MS = 5_000L
+        /** After a switch follow, only a player error or a confirmed dead
+         *  session may reopen the channel. */
+        private const val SWITCH_WINDOW_MS = 30_000L
+        /** Raw-TS live ingest silence required (with an empty buffer) before
+         *  the watchdog reopens the same channel. */
+        private const val LIVE_INGEST_RELOAD_SILENCE_MS = 25_000L
+        /** A 503 this soon after a same-channel reopen gets one quick retry. */
+        private const val SAME_CHANNEL_REOPEN_WINDOW_MS = 3_000L
+        private const val SAME_CHANNEL_QUICK_RETRY_MS = 1_000L
+        /** Stalls this soon after a same-channel re-prime do not train the start buffer. */
+        private const val SAME_CHANNEL_LEARN_QUIET_MS = 30_000L
+
         /** Buffered-ahead treated as empty for the overlay (with ingest silent). */
         const val STALL_OVERLAY_EMPTY_BUFFER_MS = 250L
 
@@ -3123,12 +3840,25 @@ class AerioExoPlayerHolder @Inject constructor(
         /** How long after a tune a decoder failure still counts as the codec
          *  handover race (session2.txt: the error landed 2.5 s after the flip). */
         private const val DECODER_RETRY_WINDOW_MS = 3_000L
+        /** GH #107: full player + surface rebuilds allowed per window. */
+        private const val MAX_FULL_REBUILDS = 2
+        /** GH #107: rolling window the rebuild budget is counted in. */
+        private const val FULL_REBUILD_WINDOW_MS = 90_000L
+        /** GH #107: settle time between dropping the old surface and tuning
+         *  into the new one (tripled on the second attempt). */
+        private const val FULL_REBUILD_SETTLE_MS = 600L
+        /** GH #107: a tune whose audio clock has advanced this far with no
+         *  first video frame is rendering into a dead surface. */
+        private const val DEAD_SURFACE_AUDIO_ADVANCE_MS = 3_000L
 
         /** How long one 503 stays "already decided" while its load error and the
          *  terminal player error it becomes both reach [handleLive503]. Shorter
          *  than [Dispatcharr503.DEFAULT_RETRY_AFTER_MS] so the NEXT 503, the one
          *  answering a scheduled retry, is always judged fresh. */
         private const val LIVE_503_DEDUPE_MS = 500L
+        /** Longest a new live source waits for the superseded source's
+         *  connection to be closed before opening its own anyway. */
+        private const val RETIRE_GATE_MAX_WAIT_MS = 1_500L
 
         /**
          * Default player User-Agent. Without an explicit UA, Media3's

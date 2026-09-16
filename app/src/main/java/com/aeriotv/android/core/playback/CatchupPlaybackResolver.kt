@@ -45,6 +45,28 @@ class CatchupPlaybackResolver @Inject constructor(
      *  process; absent = not probed yet. */
     private val nativeSupportCache = ConcurrentHashMap<String, Boolean>()
 
+    /**
+     * Forget the memoized XC output credentials and panel timezone.
+     *
+     * Both are keyed by BASE URL, not by account, and the XC pair is the
+     * connected Django user plus that user's
+     * `custom_properties.xc_password`. Editing a playlist to a different
+     * Dispatcharr user therefore left every catch-up playback signing in
+     * as the previous account for the rest of the process. Called from
+     * PlaylistRepository when a save changed the credentials.
+     *
+     * Cleared wholesale rather than per base: these are cheap
+     * process-lifetime memos (one users/me and one handshake to rebuild),
+     * a credential edit is rare, and matching stored keys against the
+     * edited row's URL variants is more ways to be subtly wrong than the
+     * saving is worth. `nativeSupportCache` describes the SERVER build,
+     * not the user, so it stays.
+     */
+    fun invalidateCredentialMemos() {
+        xcCredsCache.clear()
+        panelTzCache.clear()
+    }
+
     /** A playable timeshift URL plus the panel timezone that rendered its
      *  start segment; the player needs the zone to rebuild the URL for
      *  scrub-seeks (task #136, CatchupUrlBuilder.rebuildForOffset).

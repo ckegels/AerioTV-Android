@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -216,6 +217,10 @@ fun GuideScreen(
     val tabActive = com.aeriotv.android.feature.main.LocalTabIsActive.current
     var groupSidebarOpen by remember { mutableStateOf(false) }
     var searchActive by remember { mutableStateOf(false) }
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {
+        searchActive = false
+        viewModel.onSearchQueryChange("")
+    }
     var collectionPickerFor by remember { mutableStateOf<Pair<String, String>?>(null) }
     var showManageGroups by remember { mutableStateOf(false) }
     var sidebarOriginalGroup by remember { mutableStateOf<String?>(null) }
@@ -226,7 +231,12 @@ fun GuideScreen(
     var sidebarRefocusRequest by remember { mutableStateOf(0) }
 
     val tvComfortScale = if (isTv) displayScaleLiveTv.coerceIn(0.85f, 1.75f) else 1f
-    val fontScale = LocalConfiguration.current.fontScale
+    // System font size times the app Text Size (the root LocalDensity carries
+    // both), so TV rows grow with the text they hold.
+    val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale
+    // Phone / tablet rows keep their fixed canon heights at 100% and grow only
+    // with the app Text Size (not the system font size, unchanged from before).
+    val appTextScale = com.aeriotv.android.ui.scale.LocalAppTextScale.current
     val hourWidth = if (isTv) 300.dp * guideScale * tvComfortScale else 320.dp * guideScale
     val railWidth = if (isTv) 120.dp * tvComfortScale else 78.dp
     // Phone cells carry the subtitle and two description lines (Logan
@@ -239,8 +249,13 @@ fun GuideScreen(
     // and are shorter (tvOS 96 vs 110 pt).
     val liveTvLayout by settingsVm.liveTvLayout.collectAsStateWithLifecycle()
     val previewMode = isTv && liveTvLayout == "preview"
-    val rowHeight = if (isTv) (if (previewMode) 48.dp else 55.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp else 72.dp
-    val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp
+    // Subtext Size grows rows only (never shrinks them) by the share of the
+    // row that holds secondary lines (subtitle, description, time).
+    val subtextGrowth = com.aeriotv.android.ui.scale.LocalSubtextScale.current.let { s ->
+        1f + (s - 1f).coerceAtLeast(0f) * (if (!isTv && isPhoneIdiom) GUIDE_PHONE_SUBTEXT_SHARE else GUIDE_SUBTEXT_SHARE)
+    }
+    val rowHeight = (if (isTv) (if (previewMode) 48.dp else 55.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth
+    val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
 
     // Clock: 30 s tick for the now-line and the airing tint.
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -447,6 +462,19 @@ fun GuideScreen(
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var menuFor by remember { mutableStateOf<Pair<M3UChannel, EPGProgramme>?>(null) }
     val menuGuard = rememberTvMenuGuard()
+    // Start catch-up playback of one already-aired cell. Shared by the grid's
+    // primary action (single tap / OK) and the long-press menu's "Watch from
+    // Start", so both go through one resolve + navigate path.
+    val startCatchup: (M3UChannel, EPGProgramme) -> Unit = { channel, cell ->
+        viewModel.playCatchup(channel, cell) { result ->
+            result.onSuccess { r ->
+                // TV: remember the launched cell and the timeline so the
+                // guide that composes again after the replay lands back here.
+                if (isTv) GuideCatchupReturn.set(channel.id, cell.startMillis, grid.viewportStartMs)
+                onPlayCatchup(channel.id, r.url, cell.title, cell.startMillis, cell.endMillis, r.panelTimeZoneId, r.channelUuid.orEmpty())
+            }
+        }
+    }
     val guideFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
     // Land focus on the grid on entry (TV).
@@ -455,6 +483,11 @@ fun GuideScreen(
     // only because the old guide composed first), so keep asking for about a
     // second until the grid actually holds focus.
     var gridHasFocus by remember { mutableStateOf(false) }
+    // True while ANYTHING inside the guide holds focus (grid, pills, banner,
+    // sidebar pane). The stranded-focus watchdog below keys off this, not off
+    // gridHasFocus, so it can never steal focus from the guide's own chrome
+    // (that is the GH #185 runaway shape).
+    var guideHasFocus by remember { mutableStateOf(false) }
     val topNavHasFocus = com.aeriotv.android.feature.main.LocalTvTopNavHasFocus.current
     // Trace (AerioFocus): every gate that can keep focus out of the grid or
     // block a vertical step, as one string. Logged on change (a [GUIDE] gates
@@ -474,7 +507,8 @@ fun GuideScreen(
             " manageGroups=$showManageGroups menu=${menuFor != null} info=${programInfoTarget != null} record=${recordTarget != null}" +
             " jump=$showJumpSheet collectionPicker=${collectionPickerFor != null} search=$searchActive" +
             " mini=$miniActive exoWindow=$exoWindowMode clockTrigger=$clockSelectTrigger" +
-            " rows=${rows.size} focusRow=${grid.focusRow} topNavHasFocus=${topNavHasFocus.value}]"
+            " rows=${rows.size} focusRow=${grid.focusRow} topNavHasFocus=${topNavHasFocus.value}" +
+            " guideHasFocus=$guideHasFocus]"
     }
     if (isTv) {
         val gateKey = traceGates().substringBefore(" rows=")
@@ -507,6 +541,44 @@ fun GuideScreen(
             com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=launch-loop result=${if (gridHasFocus) "success" else "failure"} attempts=12 ${traceGates()}")
         }
     }
+    // Down out of the top nav has to land somewhere deterministic. The bar's
+    // onExit only cancels the default geometric move when the tab published an
+    // entry point, and Live TV never did: the guide fills the screen UNDER the
+    // overlaid bar, so its focus rect is not "below" the bar and the geometric
+    // search found nothing. Frankie B. 2026-09-15: Down from tab:LiveTV was
+    // declined twice in a row (guide-screen(focus-not-in-grid)) with focus
+    // stuck in the bar. Publish the guide's entry point, mirroring the Up
+    // chain: the pill row when it is there, otherwise the grid itself.
+    val tabEntryFocus = com.aeriotv.android.feature.main.LocalTvTabEntryFocus.current
+    val pillsShownForEntry = isTv && !sidebarGroupMode && !favoritesOnly && pillItems.isNotEmpty()
+    androidx.compose.runtime.DisposableEffect(isTv, tabActive, pillsShownForEntry) {
+        if (isTv && tabActive) tabEntryFocus.value = if (pillsShownForEntry) pillsFocus else gridFocus
+        onDispose { if (tabEntryFocus.value === pillsFocus || tabEntryFocus.value === gridFocus) tabEntryFocus.value = null }
+    }
+
+    // Stranded-focus watchdog (Frankie B. 2026-09-15). A failed hand-off out of
+    // the grid (Up from the clock when the pill requester is unattached and the
+    // bar's onEnter lands nowhere), or a rows rebuild that disposes the focused
+    // node, can leave focus on NOTHING: [FOCUS] grid:r0 -> none with no owner
+    // after it, and from there every D-pad key is declined. Reclaim only when
+    // focus is outside the guide AND outside the nav, i.e. genuinely nowhere,
+    // and only while no overlay is up, so this never fights the single-owner
+    // model or pulls focus off chrome that legitimately has it.
+    if (isTv) {
+        val stranded = tabActive && !rows.isEmpty && !guideHasFocus && !topNavHasFocus.value &&
+            !groupSidebarOpen && !showManageGroups && !showJumpSheet && !searchActive &&
+            menuFor == null && programInfoTarget == null && recordTarget == null && collectionPickerFor == null
+        LaunchedEffect(stranded) {
+            if (!stranded) return@LaunchedEffect
+            // Let a legitimate hand-off (dialog opening, route change, the
+            // bar claiming focus a frame later) settle before assuming a trap.
+            delay(350L)
+            if (guideHasFocus || topNavHasFocus.value) return@LaunchedEffect
+            val ok = runCatching { gridFocus.requestFocus() }.isSuccess
+            com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=stranded result=$ok ${traceGates()}")
+        }
+    }
+
     // Logan 2026-09-02: backing out of a full-screen channel lands the guide
     // on the channel that is still playing (now in the mini player), not
     // wherever the grid was before. Keyed on the mini's channel so it fires
@@ -691,6 +763,7 @@ fun GuideScreen(
 
     var guideTopPx by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     Box(modifier = modifier.fillMaxSize().onGloballyPositioned { guideTopPx = it.positionInRoot().y }
+        .onFocusChanged { guideHasFocus = it.hasFocus }
         .onPreviewKeyEvent { e ->
             // Trace only, never consumes: a D-pad key inside the guide that the
             // grid node will not see (focus is on the banner, pills, sidebar...).
@@ -869,10 +942,14 @@ fun GuideScreen(
                 favoriteIds = favoriteIds,
                 recordingWindows = recordingWindows,
                 isTv = isTv,
-                onPlay = { channel, _ ->
+                onPlay = { channel, cell ->
+                    // Already-aired + within the catch-up window: play it from
+                    // the start right away (no menu first). The rail tap hands
+                    // us the cell airing NOW, so tapping the logo still tunes live.
+                    if (!cell.isPlaceholder && channel.canReplay(cell, nowMs)) startCatchup(channel, cell)
                     // OK on the channel already in the corner mini promotes the
                     // mini to fullscreen instead of re-tuning the same stream.
-                    if (isTv && miniChannelId == channel.id) miniPlayerVm.session.requestResume()
+                    else if (isTv && miniChannelId == channel.id) miniPlayerVm.session.requestResume()
                     else onChannelClick(channel)
                 },
                 onOpenMenu = { channel, cell -> menuFor = channel to cell; menuGuard.arm() },
@@ -1111,16 +1188,7 @@ fun GuideScreen(
         val replayable = !cell.isPlaceholder && channel.canReplay(cell, nowMs)
         // Apple TV order (Logan 2026-09-02): Favorites, Multiview, Collection,
         // Program Info, Record from Now, then the Android-only extras.
-        val watchFromStart: () -> Unit = {
-            viewModel.playCatchup(channel, cell) { result ->
-                result.onSuccess { r ->
-                    // TV: remember the launched cell and the timeline so the
-                    // guide that composes again after the replay lands back here.
-                    if (isTv) GuideCatchupReturn.set(channel.id, cell.startMillis, grid.viewportStartMs)
-                    onPlayCatchup(channel.id, r.url, cell.title, cell.startMillis, cell.endMillis, r.panelTimeZoneId, r.channelUuid.orEmpty())
-                }
-            }
-        }
+        val watchFromStart: () -> Unit = { startCatchup(channel, cell) }
         val reminderSet = key in reminderKeys
         val toggleReminder: () -> Unit = {
             if (reminderSet) remindersVm.cancelReminder(key)
@@ -1204,7 +1272,7 @@ private fun GroupPills(
     LazyRow(
         state = listState,
         contentPadding = PaddingValues(start = leadInset, end = 12.dp, top = 6.dp, bottom = 6.dp),
-        modifier = Modifier.fillMaxWidth().height(44.dp).focusProperties { if (topNav != null) up = topNav },
+        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).focusProperties { if (topNav != null) up = topNav },
     ) {
         items(items, key = { it.first }) { (group, label) ->
             // TV chrome canon (ui/tv/TvChrome.kt): capsule, accent fill when
@@ -1259,3 +1327,9 @@ internal object GuideCatchupReturn {
 
     fun consume(): Target? = pending.also { pending = null }
 }
+
+/** Share of a phone guide row (98dp) taken by secondary lines; drives Subtext Size growth. */
+internal const val GUIDE_PHONE_SUBTEXT_SHARE = 0.6f
+
+/** Share of a tablet / TV guide row taken by secondary lines. */
+internal const val GUIDE_SUBTEXT_SHARE = 0.45f

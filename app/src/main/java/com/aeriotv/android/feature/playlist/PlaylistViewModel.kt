@@ -27,6 +27,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -1768,6 +1769,26 @@ class PlaylistViewModel @Inject constructor(
      */
     val allPlaylists: Flow<List<PlaylistEntity>> = repository.observeAll()
 
+    /**
+     * The ACTIVE playlist row, observed live from the database.
+     *
+     * [UiState.playlist] is a SNAPSHOT taken when the state was last written,
+     * so anything the app learns about the row afterwards is invisible to it.
+     * The per-user Dispatcharr capability probe (AerioCaps) lands seconds after
+     * launch and writes the new custom_properties to this row, and MainScaffold
+     * decides tab visibility from those flags: reading the snapshot meant a
+     * capability the admin had already restored was never seen, and the Movies
+     * tab stayed retired with a full 40050-title library sitting in state
+     * (Streamer 2026-09-15). Anything that gates UI on a capability must read
+     * THIS, not `state.playlist`.
+     */
+    val activePlaylistLive: Flow<PlaylistEntity?> =
+        kotlinx.coroutines.flow.combine(
+            repository.observeActiveId(),
+            repository.observeAll(),
+        ) { id, all -> all.firstOrNull { it.id == id } }
+            .distinctUntilChanged()
+
     /** Make [playlistId] active and load its channels. Mirrors the bootstrap
      * load-and-render flow, but skipping the JWT exchange the first-load does
      * for User+Pass since the apiKey is already cached on the row. */
@@ -1917,6 +1938,13 @@ class PlaylistViewModel @Inject constructor(
     /** Currently-active upstream URL (re-prime gate after a switch). */
     suspend fun loadCurrentStreamUrl(channelUuid: String): String? =
         runCatching { repository.currentDispatcharrStreamUrl(channelUuid) }.getOrNull()
+
+    /** Clean-end session check for the player's "Stream ended" card. */
+    suspend fun verifyStreamEndedByLimit(
+        channelUuid: String?,
+        ourConnectedAtEpochSec: Double,
+    ): com.aeriotv.android.core.playback.StreamEndVerifier.Verdict =
+        repository.verifyStreamEndedByLimit(channelUuid, ourConnectedAtEpochSec)
 
     /** LAN/WAN verdict-flip signal for the player's mid-stream re-tune failover. */
     val lanVerdictFlips: kotlinx.coroutines.flow.SharedFlow<String> =

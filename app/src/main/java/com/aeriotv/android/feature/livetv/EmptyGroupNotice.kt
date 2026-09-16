@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -87,7 +88,7 @@ fun EmptyGroupNotice(
             } else {
                 "This group has no channels yet. It fills in as soon as the provider assigns some."
             },
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 6.dp),

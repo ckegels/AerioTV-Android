@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,18 +16,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -47,11 +45,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aeriotv.android.core.preferences.PLAYER_EDGE_LEFT
+import com.aeriotv.android.core.preferences.PLAYER_EDGE_RIGHT
 import com.aeriotv.android.core.ui.SkipIntervals
 import com.aeriotv.android.feature.main.AppTab
 import com.aeriotv.android.ui.TmdbAttribution
@@ -62,6 +60,8 @@ import com.aeriotv.android.ui.settings.SettingsSelectionRow
 import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
+import com.aeriotv.android.ui.textfield.SecretRevealIconButton
+import com.aeriotv.android.ui.textfield.rememberSecretRevealState
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
 import com.aeriotv.android.ui.tv.dpadFocusEscape
 import com.aeriotv.android.ui.tv.tvFormFieldInput
@@ -83,6 +83,11 @@ fun AppBehaviorsSettingsScreen(
 ) {
     val skipLoadingScreen by viewModel.skipLoadingScreen.collectAsStateWithLifecycle(initialValue = false)
     val appleTVChannelFlip by viewModel.appleTVChannelFlip.collectAsStateWithLifecycle(initialValue = true)
+    // In-Player Gestures (touch only). All off by default.
+    val playerBrightnessGesture by viewModel.playerBrightnessGesture.collectAsStateWithLifecycle(initialValue = false)
+    val playerVolumeGesture by viewModel.playerVolumeGesture.collectAsStateWithLifecycle(initialValue = false)
+    val playerBrightnessEdge by viewModel.playerBrightnessEdge
+        .collectAsStateWithLifecycle(initialValue = PLAYER_EDGE_LEFT)
     val autoRecoverFrozenStreams by viewModel.autoRecoverFrozenStreams.collectAsStateWithLifecycle(initialValue = true)
     val autoResumeLastChannel by viewModel.autoResumeLastChannel.collectAsStateWithLifecycle(initialValue = false)
     val defaultTab by viewModel.defaultTab.collectAsStateWithLifecycle(initialValue = "")
@@ -309,6 +314,59 @@ fun AppBehaviorsSettingsScreen(
                 }
             }
 
+            // Player Info Card (Apple parity, 2026-09-15): which elements the
+            // in-player program info card draws while the chrome is showing.
+            // Scoped to that card alone -- guide, channel list, mini player,
+            // notifications and cast UI are untouched.
+            val cardChannelLogo by viewModel.playerCardShowChannelLogo
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardChannelName by viewModel.playerCardShowChannelName
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardProgramName by viewModel.playerCardShowProgramName
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardProgramTime by viewModel.playerCardShowProgramTime
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardProgramSubtitle by viewModel.playerCardShowProgramSubtitle
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardProgramDescription by viewModel.playerCardShowProgramDescription
+                .collectAsStateWithLifecycle(initialValue = true)
+            SettingsSection(
+                header = "Player Info Card",
+                footer = "Choose what appears on the program info card in the " +
+                    "player while the controls are showing.",
+            ) {
+                SettingsToggleRow(
+                    title = "Channel Logo",
+                    checked = cardChannelLogo,
+                    onCheckedChange = viewModel::setPlayerCardShowChannelLogo,
+                )
+                SettingsToggleRow(
+                    title = "Channel Name",
+                    checked = cardChannelName,
+                    onCheckedChange = viewModel::setPlayerCardShowChannelName,
+                )
+                SettingsToggleRow(
+                    title = "Program Name",
+                    checked = cardProgramName,
+                    onCheckedChange = viewModel::setPlayerCardShowProgramName,
+                )
+                SettingsToggleRow(
+                    title = "Program Time",
+                    checked = cardProgramTime,
+                    onCheckedChange = viewModel::setPlayerCardShowProgramTime,
+                )
+                SettingsToggleRow(
+                    title = "Program Subtitle",
+                    checked = cardProgramSubtitle,
+                    onCheckedChange = viewModel::setPlayerCardShowProgramSubtitle,
+                )
+                SettingsToggleRow(
+                    title = "Program Description",
+                    checked = cardProgramDescription,
+                    onCheckedChange = viewModel::setPlayerCardShowProgramDescription,
+                )
+            }
+
             // Skip Intervals (Logan 2026-09-14): one global pair for every
             // skip control outside multiview. Shown whatever the Live Rewind
             // toggle says, since VOD and DVR use it too.
@@ -425,13 +483,18 @@ fun AppBehaviorsSettingsScreen(
                 }
             }
 
+            // In-Player Gestures: everything the fullscreen player recognizes
+            // from a finger or the D-pad. Channel flip works on every form
+            // factor; the edge slides are touch only, so TV never sees them.
             SettingsSection(
-                header = "Channel Flip Gesture",
+                header = "In-Player Gestures",
                 // tvOS / Android TV flip channels with D-pad up/down, not a
                 // swipe, so the "accidental swipes" caution is meaningless on
                 // a remote (user request: drop the note on TV). Phones keep it.
                 footer = if (isTv) null
-                else "Turn off if accidental swipes during playback flip channels by mistake.",
+                else "Turn off if accidental swipes during playback flip channels by mistake. " +
+                    "Brightness and volume slides are recognized only inside a narrow band at the very edge of the screen, " +
+                    "so they stay clear of the channel flip and of swiping down to minimize.",
             ) {
                 SettingsToggleRow(
                     title = "Up / Down channel change",
@@ -442,6 +505,32 @@ fun AppBehaviorsSettingsScreen(
                     checked = appleTVChannelFlip,
                     onCheckedChange = viewModel::setAppleTVChannelFlip,
                 )
+                if (!isTv) {
+                    SettingsToggleRow(
+                        title = "Brightness edge slide",
+                        subtitle = "Slide a finger up or down the brightness edge to dim or brighten the screen. Applies to this app only and is restored when you leave the player.",
+                        checked = playerBrightnessGesture,
+                        onCheckedChange = viewModel::setPlayerBrightnessGesture,
+                    )
+                    SettingsToggleRow(
+                        title = "Volume edge slide",
+                        subtitle = "Slide a finger up or down the other edge to change the media volume.",
+                        checked = playerVolumeGesture,
+                        onCheckedChange = viewModel::setPlayerVolumeGesture,
+                    )
+                    if (playerBrightnessGesture || playerVolumeGesture) {
+                        listOf(
+                            PLAYER_EDGE_LEFT to "Brightness: Left, Volume: Right",
+                            PLAYER_EDGE_RIGHT to "Brightness: Right, Volume: Left",
+                        ).forEach { (wire, label) ->
+                            SettingsSelectionRow(
+                                label = label,
+                                selected = playerBrightnessEdge == wire,
+                                onClick = { viewModel.setPlayerBrightnessEdge(wire) },
+                            )
+                        }
+                    }
+                }
             }
 
             // GH #38 + #40: display-mode controls, TV boxes only. Each switch
@@ -474,7 +563,7 @@ fun AppBehaviorsSettingsScreen(
                     }
                     Text(
                         text = "Live TV channels refresh on every launch. Movies and TV Shows open from the saved library and re-sweep the provider on this schedule. Pull down on either tab to refresh right away.",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
@@ -531,7 +620,7 @@ fun AppBehaviorsSettingsScreen(
                 )
                 if (programPostersTmdb) {
                     var keyDraft by remember(savedTmdbKey) { mutableStateOf(savedTmdbKey) }
-                    var keyVisible by remember { mutableStateOf(false) }
+                    val keyReveal = rememberSecretRevealState()
                     TmdbAttribution(
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
                         long = false,
@@ -545,24 +634,17 @@ fun AppBehaviorsSettingsScreen(
                         },
                         label = { Text("TMDB API key (v3) or read token (v4)") },
                         singleLine = true,
-                        visualTransformation = if (keyVisible) VisualTransformation.None
-                        else PasswordVisualTransformation(),
+                        visualTransformation = keyReveal.transformation,
                         trailingIcon = {
-                            IconButton(
-                                onClick = { keyVisible = !keyVisible },
-                                modifier = Modifier.dpadFocusRing(CircleShape),
-                            ) {
-                                Icon(
-                                    imageVector = if (keyVisible) Icons.Filled.VisibilityOff
-                                    else Icons.Filled.Visibility,
-                                    contentDescription = if (keyVisible) "Hide key" else "Show key",
-                                )
-                            }
+                            SecretRevealIconButton(state = keyReveal, contentLabel = "key")
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 8.dp)
-                            .tvFormFieldInput(horizontalFocusEscape = true),
+                            .tvFormFieldInput(
+                                horizontalFocusEscape = true,
+                                okSuppressed = { keyReveal.controlFocused },
+                            ),
                     )
                     Row(
                         modifier = Modifier
@@ -681,7 +763,7 @@ private fun SteppedSliderRow(
             Text(
                 text = format(values[idx]),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.textAccent,
                 fontWeight = FontWeight.SemiBold,
             )
         }

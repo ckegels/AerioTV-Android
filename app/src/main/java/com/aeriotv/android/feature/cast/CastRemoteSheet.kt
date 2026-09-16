@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.cast
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -168,7 +170,7 @@ fun CastRemoteSheet(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = it,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -178,7 +180,7 @@ fun CastRemoteSheet(
             Text(
                 text = "$statusVerb ${deviceName ?: "your TV"}",
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.textAccent,
             )
             Spacer(Modifier.height(14.dp))
 
@@ -237,7 +239,7 @@ fun CastRemoteSheet(
                             } else {
                                 "-${formatBehindLive(behindMs)} behind live"
                             },
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelMedium.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -409,7 +411,7 @@ fun CastRemoteSheet(
                 Spacer(Modifier.height(10.dp))
                 Text(
                     text = remoteState.streamInfo.ifBlank { "No stream details available" },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(10.dp))
@@ -568,7 +570,7 @@ private fun OptionRow(
             value?.takeIf { it.isNotBlank() }?.let {
                 Text(
                     text = it,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

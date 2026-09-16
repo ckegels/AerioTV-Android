@@ -1,5 +1,6 @@
 package com.aeriotv.android.ui.tv
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -254,7 +255,7 @@ fun TvSearchCapsule(
                     if (query.isEmpty()) {
                         Text(
                             text = placeholder,
-                            fontSize = 12.sp,
+                            fontSize = 12.sp.subtext(),
                             color = colors.onSurfaceVariant.copy(alpha = 0.7f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,

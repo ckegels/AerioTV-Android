@@ -103,6 +103,17 @@ internal class TileLiveCalls {
         }
     }
 
+    /** Stop [player] (keeping it for a later Retry) and close its live
+     *  connections on the playback looper, after the stop has let go of the
+     *  loaders. */
+    fun stop(player: ExoPlayer) {
+        val stale = take()
+        player.stop()
+        if (stale.isNotEmpty()) {
+            android.os.Handler(player.playbackLooper).post { stale.forEach { it.cancelAll() } }
+        }
+    }
+
     /** Release [player] and close its live connections. release() blocks
      *  until the playback thread let go of the loaders, so the stale Calls
      *  are cancelled directly afterwards. */

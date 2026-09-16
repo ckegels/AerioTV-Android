@@ -164,6 +164,12 @@ fun PlayerScreen(
     val settingsVm: SettingsViewModel = hiltViewModel()
     val miniPlayerVm: MiniPlayerViewModel = hiltViewModel()
     val appleTVChannelFlip by settingsVm.appleTVChannelFlip.collectAsStateWithLifecycle(initialValue = true)
+    // In-Player Gestures (touch only, all off by default).
+    val playerBrightnessGesture by settingsVm.playerBrightnessGesture.collectAsStateWithLifecycle(initialValue = false)
+    val playerVolumeGesture by settingsVm.playerVolumeGesture.collectAsStateWithLifecycle(initialValue = false)
+    val playerBrightnessEdge by settingsVm.playerBrightnessEdge.collectAsStateWithLifecycle(
+        initialValue = com.aeriotv.android.core.preferences.PLAYER_EDGE_LEFT,
+    )
     // Remote Control initiative: live button map (player context slots).
     val remoteMap by settingsVm.remoteControlMap.collectAsStateWithLifecycle(
         initialValue = com.aeriotv.android.core.remote.RemoteControlMap.DEFAULT,
@@ -896,8 +902,9 @@ fun PlayerScreen(
     // connection open and only mutate the channel's metadata.url (surfaced by
     // /proxy/ts/status), so the deep live buffer absorbs the splice and ExoPlayer
     // never self-flushes. Poll status.url while steadily playing a Dispatcharr
-    // channel in the foreground; on a confirmed divergence re-prime (keepalive-held)
-    // onto the new stream. Gated on an ever-reached-steady LATCH (GH #63): blind
+    // channel in the foreground; on a confirmed divergence follow it on the SAME
+    // connection (AerioExoPlayerHolder.followStreamSwitch), which never reopens it.
+    // Gated on an ever-reached-steady LATCH (GH #63): blind
     // through a true cold start so it can never overlap the cold-start no-data
     // watchdog, but once the tune has played it keeps watching THROUGH an outage,
     // because a wedging failover drops the live steady flag at exactly the moment
@@ -933,7 +940,8 @@ fun PlayerScreen(
                 // mid-rewind would silently yank playback to live)
                 if (switchStream != null || exoHolder.isReprimeInFlight ||
                     exoHolder.isTimeshifting ||
-                    exoHolder.streamUnavailable.value) { baseline = null; continue }
+                    exoHolder.streamUnavailable.value ||
+                    exoHolder.connectionLimit.value != null) { baseline = null; continue }
                 if (exoHolder.reachedSteadyPlayback.value) everSteady = true
                 // cold-start mutual exclusion with the no-data watchdog: park
                 // only until the stream has been steady ONCE this tune
@@ -960,7 +968,7 @@ fun PlayerScreen(
                     // back off. A SUSTAINED dead session while we still intend to
                     // PLAY means our read wedged and the proxy dropped us (Shield
                     // field freeze 2026-07-15: status 404 for >1min, no recovery).
-                    // Hand Dispatcharr a fresh connection via a keepalive re-prime.
+                    // Hand Dispatcharr a fresh connection via a single close-then-open re-prime.
                     // Gated on playWhenReady: a user pause legitimately stops our
                     // read and drops the session -- do NOT force it back to life.
                     backoffMs = (backoffMs + 4_000L).coerceAtMost(12_000L)
@@ -1009,12 +1017,13 @@ fun PlayerScreen(
                             "DispatcharrSwitch",
                             "[FOLLOW] dead session (status 404 x$deadStatusCount) ch=${ch.id}; reconnecting",
                         )
-                        val ran = exoHolder.reprimeWithKeepalive(
+                        val ran = exoHolder.reprime(
                             url = proxyUrl,
                             title = ch.name,
                             subtitle = nowProgramme?.title.orEmpty(),
                             artworkUri = ch.tvgLogo.takeIf { it.isNotBlank() }
                                 ?.let { runCatching { android.net.Uri.parse(it) }.getOrNull() },
+                            reason = "dead session (status 404)",
                         )
                         if (ran) { deadStatusCount = 0; baseline = null }
                     }
@@ -1023,6 +1032,12 @@ fun PlayerScreen(
                 backoffMs = 4_000L
                 deadStatusCount = 0
                 if (baseline == null) { baseline = statusUrl; continue }   // seed
+                if (statusUrl != baseline && exoHolder.isFollowingTarget(proxyUrl, statusUrl)) {
+                    // Our own manual switch (or a follow already running for this
+                    // stream): adopt it silently, never follow it a second time.
+                    baseline = statusUrl
+                    continue
+                }
                 if (statusUrl != baseline) {
                     // confirm with one re-read so a momentary mid-switch blip can't trip us
                     val confirm = withContext(Dispatchers.IO) { runCatching { onLoadCurrentStreamUrl(uuid) }.getOrNull() }
@@ -1034,16 +1049,19 @@ fun PlayerScreen(
                         exoHolder.isTimeshifting || currentChannel?.id != ch.id) continue
                     android.util.Log.w(
                         "DispatcharrSwitch",
-                        "[FOLLOW] external switch ch=${ch.id} re-priming onto $statusUrl",
+                        "[FOLLOW] external switch ch=${ch.id} following onto $statusUrl",
                     )
-                    val ran = exoHolder.reprimeWithKeepalive(
+                    // Never a second connection: Dispatcharr already swapped the
+                    // upstream on our socket; a parallel GET trips stream_limit.
+                    val ran = exoHolder.followStreamSwitch(
                         url = proxyUrl,
                         title = ch.name,
                         subtitle = nowProgramme?.title.orEmpty(),
                         artworkUri = ch.tvgLogo.takeIf { it.isNotBlank() }
                             ?.let { runCatching { android.net.Uri.parse(it) }.getOrNull() },
+                        targetStreamUrl = statusUrl,
                     )
-                    if (ran) baseline = statusUrl    // adopt new baseline only after a real re-prime
+                    if (ran) baseline = statusUrl    // adopt new baseline only after the follow ran
                 }
             }
         }
@@ -1053,7 +1071,8 @@ fun PlayerScreen(
     // commit e6ca1d207). When the reachability probe flips a verdict while a
     // Dispatcharr-live channel is playing (the leaving-home-WiFi / WiFi-drop
     // case), rebuild the /proxy/ts/stream/<uuid> URL from the now-reachable base
-    // and re-prime onto it (keepalive-held) instead of freezing on the dead host
+    // and re-prime onto it (single close-then-open; the host changed, so the old
+    // socket is dead weight and must never overlap the new one) instead of freezing on the dead host
     // and waiting for the watchdog to replay the stale lastPlayUrl. Scoped to the
     // RESUMED player; parked during a manual switch or any in-flight re-prime.
     LaunchedEffect(currentChannel?.id, isDispatcharrLive) {
@@ -1074,7 +1093,8 @@ fun PlayerScreen(
                 if (currentChannel?.id != ch.id || switchStream != null ||
                     exoHolder.isReprimeInFlight || exoHolder.isTimeshifting) return@collect
                 Log.w(TAG, "[RETUNE] LAN/WAN flip -> re-priming ch=${ch.id} onto $newUrl")
-                exoHolder.reprimeWithKeepalive(
+                exoHolder.reprime(
+                    reason = "LAN/WAN flip",
                     url = newUrl,
                     title = ch.name,
                     subtitle = nowProgramme?.title.orEmpty(),
@@ -1612,6 +1632,16 @@ fun PlayerScreen(
                         onVerticalDrag = { _, dy -> totalDy += dy },
                     )
                 }
+                // Vertical slide in a narrow band at one screen edge adjusts
+                // brightness, the other volume (touch only, both off by
+                // default). Narrow band + a top/bottom exclusion keep it clear
+                // of the channel flip above and the minimize swipe below.
+                .playerEdgeSlideGestures(
+                    enabled = !isTvForm,
+                    brightnessEnabled = playerBrightnessGesture,
+                    volumeEnabled = playerVolumeGesture,
+                    brightnessEdge = playerBrightnessEdge,
+                )
                 // Pinch to switch Fit <-> Fill on touch devices (no-op on TV).
                 // Lives in the SAME chain as the tap / drag handlers: a sibling
                 // overlay Box would win hit testing and swallow every tap.
@@ -1629,6 +1659,7 @@ fun PlayerScreen(
         // state lives in VideoScale.kt: this composable is register-pressure
         // sensitive.
         VideoScaleLabelOverlay(enabled = !isTvForm)
+
 
         // Dead-upstream net: the holder's no-data watchdog reconnected once and
         // still got zero bytes, so it flagged the channel unavailable + stopped.
@@ -2238,24 +2269,20 @@ private fun PlayerSheets(
                         // change_stream applies the switch to the LIVE session, usually
                         // ASYNCHRONOUSLY (owner:false -> Redis event, applied by the owner
                         // worker). The owner swaps the upstream IN PLACE on the running
-                        // stream_manager -- a mid-stream TS discontinuity, no EOF -- and the
-                        // deep live buffer (ca07882) absorbs the splice so ExoPlayer's
-                        // ProgressiveMediaSource never flushes and won't follow it. To make
-                        // it follow we must re-prepare (flush) the same proxy URL. BUT a
-                        // bare re-prepare drops our only TCP connection, and with the
-                        // server default channel_shutdown_delay=0 that fires stop_channel,
-                        // which DELETES channel_stream:{id} and makes the reconnect cold-
-                        // resolve to the channel's DEFAULT (first-ordered) stream -- worse
-                        // than doing nothing. So:
+                        // stream_manager and resets its buffer; the new stream's bytes
+                        // arrive on our existing connection. Any reconnect is harmful:
+                        // a SECOND concurrent GET counts against user.stream_limit, and at
+                        // limit 1 Dispatcharr terminates our player's connection, the
+                        // channel drops to 0 clients (channel_shutdown_delay=0 stops it)
+                        // and the next GET cold-resolves to the DEFAULT stream, undoing
+                        // the switch (measured 2026-09-15). So:
                         //   1. Confirm the switch actually landed: poll /status until
                         //      status.url == the change_stream url. We gate on URL, never
                         //      stream_id (the event-apply path refreshes metadata.url but
                         //      leaves stream_id stale 20+s, so stream_id false-negatives).
-                        //   2. Hold a SECOND AllowAny GET to the same /proxy/ts/stream URL
-                        //      open across the re-prime so the channel never drops to 0
-                        //      clients -> stream_manager survives -> the reconnect re-attaches
-                        //      to the already-switched session instead of cold-resolving.
-                        //      Best-effort: if the keepalive can't connect we re-prime anyway.
+                        //   2. Keep the connection and let ExoPlayer play through the
+                        //      splice. No reopen on silence: Dispatcharr fails over itself;
+                        //      only a fatal player error or a confirmed dead session reopens.
                         val newUrl = runCatching { onSwitchChannelStream(uuid, id) }.getOrNull()
                         if (newUrl.isNullOrBlank()) {
                             Toast.makeText(context, "Stream switch failed", Toast.LENGTH_SHORT).show()
@@ -2296,7 +2323,7 @@ private fun PlayerSheets(
                         // channel's /proxy/ts/ URL now serves the switched upstream -- re-tune
                         // the RECEIVER to the same channel and let the TV follow. Re-priming
                         // the local player here would spin up a parallel decode (and phone-side
-                        // audio) alongside the cast. The keepalive re-prime below is local-only.
+                        // audio) alongside the cast. The switch follow below is local-only.
                         if (isCasting) {
                             castSender.setRemoteChannel(ch.id)
                             return@launch
@@ -2307,17 +2334,18 @@ private fun PlayerSheets(
                             companionRemote.setRemoteChannel(ch.id, ch.name)
                             return@launch
                         }
-                        // Re-prime onto the switched upstream with a keepalive held across the
-                        // flush (see AerioExoPlayerHolder.reprimeWithKeepalive). bypassCooldown:
-                        // a user-initiated switch always re-primes, even if an auto-reload or the
-                        // follow-poller fired within the shared cooldown window.
-                        exoHolder.reprimeWithKeepalive(
+                        // Follow the switched upstream on the kept connection (see
+                        // AerioExoPlayerHolder.followStreamSwitch).
+                        exoHolder.followStreamSwitch(
                             url = proxyUrl,
                             title = ch.name,
                             subtitle = nowProgramme?.title.orEmpty(),
                             artworkUri = ch.tvgLogo.takeIf { it.isNotBlank() }
                                 ?.let { runCatching { android.net.Uri.parse(it) }.getOrNull() },
                             bypassCooldown = true,
+                            // Registers the target at once, so the follow-poller's next
+                            // poll adopts this status change instead of re-following it.
+                            targetStreamUrl = targetUrl,
                         )
                     }
                 }
@@ -2468,9 +2496,32 @@ private fun LiveRewindChromeSection(
         }
     }
 
+    // App Behaviors > Player Info Card: element toggles for the chrome's
+    // program info card only. Collected here so they apply live.
+    val cardShowChannelLogo by settingsVm.playerCardShowChannelLogo
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowChannelName by settingsVm.playerCardShowChannelName
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowProgramName by settingsVm.playerCardShowProgramName
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowProgramTime by settingsVm.playerCardShowProgramTime
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowProgramSubtitle by settingsVm.playerCardShowProgramSubtitle
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowProgramDescription by settingsVm.playerCardShowProgramDescription
+        .collectAsStateWithLifecycle(initialValue = true)
+    val infoCardPrefs = PlayerInfoCardPrefs(
+        showChannelLogo = cardShowChannelLogo,
+        showChannelName = cardShowChannelName,
+        showProgramName = cardShowProgramName,
+        showProgramTime = cardShowProgramTime,
+        showProgramSubtitle = cardShowProgramSubtitle,
+        showProgramDescription = cardShowProgramDescription,
+    )
     PlayerChromeOverlay(
         channel = currentChannel,
         nowProgramme = nowProgramme,
+        infoCardPrefs = infoCardPrefs,
         timeshiftState = if (tsState.buffering) tsState else null,
         timeshiftPositionWallMs = tsPositionWallMs,
         // Live TV with pause/rewind OFF: the transport comes from Live Rewind,

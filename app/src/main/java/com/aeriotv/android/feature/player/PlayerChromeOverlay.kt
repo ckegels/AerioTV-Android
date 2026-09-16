@@ -1,5 +1,9 @@
 package com.aeriotv.android.feature.player
 
+import com.aeriotv.android.ui.theme.decorSecondary
+import com.aeriotv.android.ui.theme.forText
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -57,7 +61,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.SwapHoriz
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -65,7 +69,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import com.aeriotv.android.ui.scale.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
@@ -210,6 +214,8 @@ fun PlayerChromeOverlay(
     scrubHudVisible: Boolean = false,
     onScrubStep: (Int, Boolean) -> Unit = { _, _ -> },
     onScrubCommit: () -> Unit = {},
+    /** App Behaviors > Player Info Card element toggles (live, no restart). */
+    infoCardPrefs: PlayerInfoCardPrefs = PlayerInfoCardPrefs(),
 ) {
     var moreOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
@@ -227,14 +233,7 @@ fun PlayerChromeOverlay(
     // only wired into the phone branch below.
     var forcedLandscape by remember { mutableStateOf(false) }
     if (!isTv) {
-        DisposableEffect(Unit) {
-            onDispose {
-                // Auto-Rotate aware: UNSPECIFIED when following the sensor,
-                // LOCKED when the user disabled rotation in App Behaviors.
-                context.findActivity()?.requestedOrientation =
-                    com.aeriotv.android.core.preferences.AutoRotateState.restingOrientation
-            }
-        }
+        RestoreOrientationOnExit(context.findActivity())
     }
 
     // Tell the host the chrome is "busy" (Options menu or Sleep sheet open) so
@@ -278,12 +277,13 @@ fun PlayerChromeOverlay(
     // RecordProgramSheet. Keep the dispatcharrChannelId gate so M3U/Xtream
     // channels (no recordable id) still hide the pill.
     val canRecord = channel?.dispatcharrChannelId != null
-    // Switch Stream needs a Dispatcharr Direct Connect ADMIN account: the streams
-    // list + change_stream live behind it, and change_stream is IsAdmin on the
-    // server. Gate on the admin signal (LocalIsDispatcharrAdmin, which implies
-    // Direct Connect) AND the per-channel int PK, so the option is hidden for
-    // XC / M3U playlists AND for standard (non-admin) Dispatcharr sub-accounts
-    // that would only get a 403 -- never show an option the user can't use.
+    // Switch Stream routes through Capability.CanSwitchStream
+    // (LocalIsDispatcharrAdmin), which resolves to admin TODAY because
+    // POST /proxy/ts/change_stream is still IsAdmin server-side. If Dispatcharr
+    // ever moves stream switching to a per-user permission, only
+    // deriveCapabilities changes and this gate follows. Paired with the
+    // per-channel int PK so the option stays hidden for XC / M3U playlists,
+    // which have no streams list to switch between.
     val canSwitchStream =
         LocalIsDispatcharrAdmin.current && channel?.dispatcharrChannelId != null
     val recordCurrent: () -> Unit = {
@@ -614,6 +614,7 @@ fun PlayerChromeOverlay(
                             channel = ch,
                             programme = nowProgramme,
                             sleepRemainingMillis = sleepRemainingMillis,
+                            infoCardPrefs = infoCardPrefs,
                         )
                     }
                 }
@@ -792,6 +793,7 @@ fun PlayerChromeOverlay(
                     channel = it,
                     programme = nowProgramme,
                     sleepRemainingMillis = sleepRemainingMillis,
+                    infoCardPrefs = infoCardPrefs,
                 )
                 // The gesture hints used to be a stack of capsule chips here,
                 // under the info card. They are now ONE centered strip at the
@@ -967,8 +969,8 @@ private val TV_TIMELINE_INSET = 56.dp
 private fun PlayerFormatBadge(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
-        fontSize = 9.sp,
-        lineHeight = 11.sp,
+        fontSize = 9.sp.subtext(),
+        lineHeight = 11.sp.subtext(),
         fontWeight = FontWeight.Medium,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
         maxLines = 1,
@@ -1106,8 +1108,8 @@ private fun PlayerMoreMenu(
             // row); Back closes the dropdown, which the "‹" chevron represents.
             Text(
                 text = "Press ‹ to close",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                fontSize = 12.sp.subtext(),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f).forText(),
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
             )
         }
@@ -1240,12 +1242,38 @@ private fun PlayerMoreMenu(
     }
 }
 
+/**
+ * App Behaviors > Player Info Card: which elements the in-player program info
+ * card draws. Applies to THIS card only (not the guide, channel list, mini
+ * player, notifications or cast UI). Defaults are all-on, so any caller that
+ * does not pass prefs keeps the original card.
+ */
+data class PlayerInfoCardPrefs(
+    val showChannelLogo: Boolean = true,
+    val showChannelName: Boolean = true,
+    val showProgramName: Boolean = true,
+    val showProgramTime: Boolean = true,
+    val showProgramSubtitle: Boolean = true,
+    val showProgramDescription: Boolean = true,
+)
+
 @Composable
 private fun InfoCard(
     channel: M3UChannel,
     programme: EPGProgramme?,
     sleepRemainingMillis: Long?,
+    infoCardPrefs: PlayerInfoCardPrefs = PlayerInfoCardPrefs(),
 ) {
+    // Nothing enabled that has data to show: draw no card at all rather than
+    // an empty pill (the sleep badge alone still earns the card).
+    val subtitleText = programme?.subTitle?.takeIf { it.isNotBlank() }
+    val descriptionText = programme?.description?.takeIf { it.isNotBlank() }
+    val anyText = (infoCardPrefs.showChannelName) ||
+        (infoCardPrefs.showProgramName && programme != null) ||
+        (infoCardPrefs.showProgramTime && programme != null) ||
+        (infoCardPrefs.showProgramSubtitle && subtitleText != null) ||
+        (infoCardPrefs.showProgramDescription && descriptionText != null)
+    if (!anyText && !infoCardPrefs.showChannelLogo && sleepRemainingMillis == null) return
     // tvOS-parity info pill (Archie 2026-05-28 reference shot).
     // Layout:
     //   [ LOGO ]  <number> <name>                       [SLEEP]
@@ -1258,16 +1286,18 @@ private fun InfoCard(
     // earlier Android pass added.
     Surface(
         color = Color.Black.copy(alpha = 0.55f),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(INFO_CARD_CORNER),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (infoCardPrefs.showChannelLogo) {
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    // Reads the info card's OWN radius, never a copy of it.
+                    .clip(com.aeriotv.android.core.ui.artworkTileShape(INFO_CARD_CORNER, model = channel.tvgLogo))
                     .background(Color.Black.copy(alpha = 0.6f)),
                 contentAlignment = Alignment.Center,
             ) {
@@ -1297,12 +1327,14 @@ private fun InfoCard(
                     Text(
                         text = channel.name.take(2).uppercase(),
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.textAccent,
                         fontWeight = FontWeight.Bold,
                     )
                 }
             }
-            Spacer(Modifier.width(12.dp))
+            if (anyText) Spacer(Modifier.width(12.dp))
+            }
+            if (anyText) {
             Column(
                 // Cap the column at a sane width so the pill stays compact
                 // (tvOS reference proportions). Without this cap, weight(1f)
@@ -1310,30 +1342,54 @@ private fun InfoCard(
                 // Compose hands it from the parent.
                 modifier = Modifier.widthIn(max = 320.dp),
             ) {
-                val nameLine = channel.channelNumber?.let { "$it  ${channel.name}" }
-                    ?: channel.name
-                Text(
-                    text = nameLine,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
-                if (programme != null) {
+                if (infoCardPrefs.showChannelName) {
+                    val nameLine = channel.channelNumber?.let { "$it  ${channel.name}" }
+                        ?: channel.name
                     Text(
-                        text = programme.title,
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = nameLine,
+                        style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                     )
-                    val timeRange = formatTimeRange(programme)
-                    val duration = formatDuration(programme.endMillis - programme.startMillis)
-                    Text(
-                        text = "$timeRange  ·  $duration",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.7f),
-                    )
                 }
+                if (programme != null) {
+                    if (infoCardPrefs.showProgramName) {
+                        Text(
+                            text = programme.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White,
+                            maxLines = 1,
+                        )
+                    }
+                    if (infoCardPrefs.showProgramSubtitle && subtitleText != null) {
+                        Text(
+                            text = subtitleText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.85f),
+                            maxLines = 1,
+                        )
+                    }
+                    if (infoCardPrefs.showProgramTime) {
+                        val timeRange = formatTimeRange(programme)
+                        val duration = formatDuration(programme.endMillis - programme.startMillis)
+                        Text(
+                            text = "$timeRange  ·  $duration",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                        )
+                    }
+                    if (infoCardPrefs.showProgramDescription && descriptionText != null) {
+                        Text(
+                            text = descriptionText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
             }
             sleepRemainingMillis?.let { remaining ->
                 val mins = (remaining / 60_000L).coerceAtLeast(0L)
@@ -1444,7 +1500,7 @@ private fun RewindTransportBar(
                 color = if (state.timeshifting && behindMs > 5_000) {
                     Color.White.copy(alpha = 0.8f)
                 } else {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.textAccent
                 },
             )
         }
@@ -1760,7 +1816,7 @@ private fun TvRewindTimeline(
                 color = if (showBehind) {
                     Color.White.copy(alpha = 0.8f)
                 } else {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.textAccent
                 },
             )
         }
@@ -1868,7 +1924,7 @@ private fun StreamInfoSection(label: String, lines: List<String>) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.width(64.dp),
         )
@@ -1908,7 +1964,7 @@ fun SubtitlesSheet(
             if (tracks.isEmpty()) {
                 Text(
                     text = "No subtitle tracks reported by the stream.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
                 )
@@ -1956,7 +2012,7 @@ fun AudioTracksSheet(
             if (tracks.isEmpty()) {
                 Text(
                     text = "No audio tracks reported by the stream.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
                 )
@@ -1984,7 +2040,7 @@ fun AudioTracksSheet(
             // threading it through each caller would add plumbing for no
             // isolation gain. Mirrored on iOS/tvOS via mpv audio-delay.
             Spacer(Modifier.height(14.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.decorSecondary.copy(alpha = 0.2f))
             Spacer(Modifier.height(10.dp))
             var syncMs by remember {
                 mutableStateOf(com.aeriotv.android.core.playback.AudioSyncOffset.offsetMs)
@@ -2007,7 +2063,7 @@ fun AudioTracksSheet(
                 Spacer(Modifier.weight(1f))
                 Text(
                     text = if (syncMs == 0L) "0 ms" else "%+d ms".format(syncMs),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -2027,7 +2083,7 @@ fun AudioTracksSheet(
             }
             Text(
                 text = "Positive plays audio later; negative plays it earlier.",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
@@ -2070,7 +2126,7 @@ fun SwitchStreamSheet(
             if (streams.isEmpty()) {
                 Text(
                     text = "No alternate streams available for this channel.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),
                 )
@@ -2265,3 +2321,25 @@ data class StreamInfoSnapshot(
     val cacheLines: List<String>,
     val syncLines: List<String>,
 )
+
+/**
+ * Releases any player-forced orientation back to the Auto-Rotate aware resting
+ * orientation (UNSPECIFIED when following the sensor, LOCKED when the user
+ * disabled rotation in App Behaviors) when the player leaves composition.
+ * Keyed only on the activity, so it survives rotation-driven recomposition;
+ * never key this on orientation or it releases the fullscreen button's
+ * landscape lock as soon as the rotation completes.
+ */
+@Composable
+internal fun RestoreOrientationOnExit(activity: android.app.Activity?) {
+    DisposableEffect(activity) {
+        onDispose {
+            activity?.requestedOrientation =
+                com.aeriotv.android.core.preferences.AutoRotateState.restingOrientation
+        }
+    }
+}
+
+/** The in-player info card's own corner radius. The card and the channel logo
+ *  inside it both read this, so the two shapes cannot drift. */
+private val INFO_CARD_CORNER = 12.dp

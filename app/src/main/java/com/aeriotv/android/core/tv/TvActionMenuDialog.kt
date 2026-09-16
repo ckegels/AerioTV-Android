@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,7 +35,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.aeriotv.android.ui.scale.Dialog
 
 /**
  * One row of a [TvActionMenuDialog]. [icon] is nullable because some menus
@@ -138,7 +139,7 @@ private fun TvMenuCapsule(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(38.dp)
+            .heightIn(min = 38.dp)
             // Clip BEFORE clickable so the focus/press highlight follows the
             // capsule instead of painting a square behind the ring.
             .clip(RoundedCornerShape(19.dp))

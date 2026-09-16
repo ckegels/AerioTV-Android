@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.movies
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,7 +25,7 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -158,21 +161,21 @@ fun MediaHeroCard(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    meta.joinToString(" · "), fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    meta.joinToString(" · "), fontSize = 13.sp.subtext(), fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 val r = formatRating(page.rating)
                 if (r.isNotEmpty()) {
                     Text(
                         (if (meta.isEmpty()) "" else " · ") + "★ $r", fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.primary, maxLines = 1,
+                        color = MaterialTheme.colorScheme.textAccent, maxLines = 1,
                     )
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 4.dp)) {
                 Row(
                     modifier = Modifier
-                        .height(40.dp)
+                        .heightIn(min = 40.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary)
                         .clickable(onClick = onPrimary)
@@ -213,7 +216,7 @@ fun MediaHeroCard(
                     }
                 }
                 page.remainingLabel?.let {
-                    Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    Text(it, fontSize = 11.sp.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 }
             }
         }

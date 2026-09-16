@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.dvr
 
+import com.aeriotv.android.ui.scale.subtext
 import com.aeriotv.android.ui.LocalDvrAccess
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,10 +37,10 @@ import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -129,6 +131,9 @@ fun DvrTabContent(
     var pendingDelete by remember { mutableStateOf<DvrViewModel.Recording?>(null) }
     var pendingEdit by remember { mutableStateOf<DvrViewModel.Recording?>(null) }
     var pendingClearAll by remember { mutableStateOf(false) }
+    // Capability.CanManageDvr via LocalDvrAccess. A "view" account can still
+    // clear this device's own files, so Clear All stays, scoped to local.
+    val canManageDvr = LocalDvrAccess.current == "manage"
     val isTv = rememberIsTvDevice()
     // 10-foot rule: keep content out of the ~5% overscan band. 48dp on the
     // 960dp TV canvas = 5%; phones keep the tighter phone insets.
@@ -225,7 +230,7 @@ fun DvrTabContent(
                     Box(
                         modifier = Modifier
                             .padding(start = 8.dp)
-                            .height(36.dp)
+                            .heightIn(min = 36.dp)
                             .onFocusChanged { clearFocused = it.isFocused }
                             .clip(CircleShape)
                             .background(
@@ -521,18 +526,24 @@ fun DvrTabContent(
             title = { Text("Clear all completed?") },
             text = {
                 Text(
-                    "This removes all ${state.completedCount} completed " +
-                        "recordings. Server-side recordings are deleted on " +
-                        "your Dispatcharr server; local recordings have " +
-                        "their files removed from this device. This can't " +
-                        "be undone.",
+                    if (canManageDvr) {
+                        "This removes all ${state.completedCount} completed " +
+                            "recordings. Server-side recordings are deleted on " +
+                            "your Dispatcharr server; local recordings have " +
+                            "their files removed from this device. This can't " +
+                            "be undone."
+                    } else {
+                        "This removes every completed recording saved on this " +
+                            "device. Recordings on your Dispatcharr server are " +
+                            "left alone. This can't be undone."
+                    },
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     pendingClearAll = false
                     scope.launch {
-                        viewModel.deleteAllCompleted().fold(
+                        viewModel.deleteAllCompleted(includeServer = canManageDvr).fold(
                             onSuccess = { n ->
                                 Toast.makeText(
                                     context,
@@ -576,7 +587,7 @@ private fun FilterPill(
         var focused by remember { mutableStateOf(false) }
         Box(
             modifier = Modifier
-                .height(36.dp)
+                .heightIn(min = 36.dp)
                 .onFocusChanged { focused = it.isFocused }
                 .clip(CircleShape)
                 .background(
@@ -644,7 +655,7 @@ private fun EmptyState(title: String, body: String) {
         Spacer(Modifier.height(6.dp))
         Text(
             text = body,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -750,14 +761,14 @@ private fun RecordingRow(
                     text = dateLabel,
                     // bodySmall lands at ~10.8sp effective under the 0.9 TV
                     // type scale, below couch readability; bodyMedium on TV.
-                    style = if (isTv) MaterialTheme.typography.bodyMedium
-                    else MaterialTheme.typography.bodySmall,
+                    style = (if (isTv) MaterialTheme.typography.bodyMedium
+                    else MaterialTheme.typography.bodySmall).subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (rec.description.isNotBlank()) {
                     Text(
                         text = rec.description,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
@@ -797,7 +808,7 @@ private fun RecordingRow(
                 if (isTv && focused) {
                     Text(
                         text = "Hold OK for options",
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelMedium.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     )
                 }
@@ -889,6 +900,9 @@ private fun RecordingActionMenu(
     onStopRecording: () -> Unit,
 ) {
     val isServer = rec.source == DvrViewModel.Source.Server
+    // Capability.CanManageDvr via LocalDvrAccess ("manage" also covers a
+    // non-admin account whose custom_properties.dvr_access is "manage", and an
+    // account we have not probed yet).
     val canManage = LocalDvrAccess.current == "manage"
     val isCompleted = rec.status == DvrViewModel.Recording.Status.Completed ||
         rec.status == DvrViewModel.Recording.Status.Stopped
@@ -902,7 +916,10 @@ private fun RecordingActionMenu(
     val actions = buildList {
         if (isCompleted && isServer) {
             add(TvMenuAction("Save to Device", Icons.Outlined.Download) { onSaveToDevice() })
-            add(TvMenuAction("Remove Commercials", Icons.Outlined.ContentCut) { onRemoveCommercials() })
+            // Comskip is a server-side write (IsAdminOrDVRManager).
+            if (canManage) {
+                add(TvMenuAction("Remove Commercials", Icons.Outlined.ContentCut) { onRemoveCommercials() })
+            }
         }
         if (isInProgress && isServer) {
             // iOS MyRecordingsView 345-370: an in-progress server row with a
@@ -925,7 +942,9 @@ private fun RecordingActionMenu(
         val deleteLabel = when {
             isServer && isScheduled -> "Cancel"
             isServer -> "Delete from Server"
-            else -> "Delete"
+            // Unambiguous local label (Logan 2026-09-15): the bytes live on
+            // this device, and this never touches the server.
+            else -> "Delete from Device"
         }
         if (!isServer || canManage) {
             add(TvMenuAction(deleteLabel, Icons.Outlined.Delete, destructive = true) { onDelete() })

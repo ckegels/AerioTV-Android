@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.ondemand
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -808,7 +810,7 @@ private fun MetaStrip(
         if (!year.isNullOrBlank()) {
             Text(
                 text = year,
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -822,7 +824,7 @@ private fun MetaStrip(
                 )
                 Text(
                     text = rating,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -830,7 +832,7 @@ private fun MetaStrip(
         if (durationSecs != null && durationSecs > 0) {
             Text(
                 text = formatDuration(durationSecs),
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -951,7 +953,7 @@ private fun InfoSection(
                 Text(
                     text = plot,
                     modifier = Modifier.widthIn(max = readableCap),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
@@ -1137,8 +1139,8 @@ private fun PersonCard(
         person.role?.takeIf { it.isNotBlank() }?.let { role ->
             Text(
                 text = role,
-                fontSize = if (isTv) 9.sp else 11.sp,
-                lineHeight = if (isTv) 11.sp else 13.sp,
+                fontSize = (if (isTv) 9.sp else 11.sp).subtext(),
+                lineHeight = (if (isTv) 11.sp else 13.sp).subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = if (isTv) 1 else 2,
                 overflow = TextOverflow.Ellipsis,
@@ -1181,7 +1183,7 @@ private fun PillButton(
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
             fontWeight = FontWeight.SemiBold,
         )
     }
@@ -1192,14 +1194,14 @@ private fun MetaRow(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Text(
             text = "$label:",
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             modifier = Modifier.width(80.dp),
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
         )
     }
 }

@@ -1,5 +1,6 @@
 package com.aeriotv.android.core.tv
 
+import com.aeriotv.android.ui.scale.subtext
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -30,7 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.aeriotv.android.ui.scale.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.google.zxing.BarcodeFormat
@@ -101,7 +102,7 @@ fun TvQrLinkDialog(
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = caption,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )

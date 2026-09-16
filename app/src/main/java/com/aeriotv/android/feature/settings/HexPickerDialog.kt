@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -12,7 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -87,12 +88,12 @@ fun HexPickerDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Default ${bucket.defaultHex}",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
                             text = if (isValid) "Preview $sanitized" else "Enter 6-char hex",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

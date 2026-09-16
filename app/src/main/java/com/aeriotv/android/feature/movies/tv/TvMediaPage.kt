@@ -1,5 +1,8 @@
 package com.aeriotv.android.feature.movies.tv
 
+import com.aeriotv.android.ui.theme.forText
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -1340,7 +1343,7 @@ fun <T> TvMediaPage(
                             color = MaterialTheme.colorScheme.onBackground, maxLines = 1,
                         )
                         Text(
-                            headerCount.toString(), fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                            headerCount.toString(), fontSize = 10.sp.subtext(), fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(end = 5.dp),
                         )
                         if (searchEnabled && searchActive) {
@@ -1411,12 +1414,12 @@ fun <T> TvMediaPage(
                     // the text pins its own line height too.
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 4.dp).height(16.dp),
+                        modifier = Modifier.padding(top = 4.dp).height(with(androidx.compose.ui.platform.LocalDensity.current) { 16.sp.toDp() }),
                     ) {
                         if (isLoading && gridItems.isNotEmpty()) {
                             CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.tertiary)
                             Spacer(Modifier.width(6.dp))
-                            Text("Updating", fontSize = 9.sp, lineHeight = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.tertiary)
+                            Text("Updating", fontSize = 9.sp.subtext(), lineHeight = 11.sp.subtext(), maxLines = 1, color = MaterialTheme.colorScheme.tertiary)
                         }
                     }
                 }
@@ -1883,20 +1886,20 @@ private fun TvHeroCard(
             if (page.meta.isNotEmpty() || !page.rating.isNullOrBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        page.meta.joinToString(" · "), fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.Medium,
+                        page.meta.joinToString(" · "), fontSize = 10.sp.subtext(), lineHeight = 13.sp.subtext(), fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                     page.rating?.takeIf { it.isNotBlank() }?.let { r ->
                         Text(
                             (if (page.meta.isEmpty()) "" else " · ") + "★ $r", fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary, maxLines = 1,
+                            color = MaterialTheme.colorScheme.textAccent, maxLines = 1,
                         )
                     }
                 }
             }
             page.plot?.takeIf { it.isNotBlank() }?.let {
                 Text(
-                    it, fontSize = 11.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                    it, fontSize = 11.sp.subtext(), lineHeight = 14.sp.subtext(), color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f).forText(),
                     maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 280.dp),
                 )
             }
@@ -2181,10 +2184,12 @@ fun TvPosterCard(
         Text(
             title, fontSize = 9.sp, lineHeight = 11.sp, fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().height(22.dp),
+            textAlign = TextAlign.Center,
+            // Two 11sp lines: sp-derived so rows stay aligned at every Text Size.
+            modifier = Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { 22.sp.toDp() }),
         )
         Text(
-            year?.toString() ?: " ", fontSize = 8.sp, fontWeight = FontWeight.Medium,
+            year?.toString() ?: " ", fontSize = 8.sp.subtext(), fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
             maxLines = 1, modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
         )
@@ -2245,7 +2250,7 @@ fun TvRecordingCard(
             when {
                 !artUrl.isNullOrBlank() -> SizedArtImage(artUrl, contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 !logoUrl.isNullOrBlank() -> AsyncImage(model = logoUrl, contentDescription = title, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(14.dp).alpha(0.9f))
-                else -> Text(title, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 3, modifier = Modifier.align(Alignment.Center).padding(8.dp))
+                else -> Text(title, fontSize = 10.sp.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 3, modifier = Modifier.align(Alignment.Center).padding(8.dp))
             }
             Box(
                 modifier = Modifier
@@ -2291,7 +2296,7 @@ fun TvRecordingCard(
             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            meta.ifBlank { " " }, fontSize = 9.sp, color = MaterialTheme.colorScheme.tertiary,
+            meta.ifBlank { " " }, fontSize = 9.sp.subtext(), color = MaterialTheme.colorScheme.tertiary,
             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
         )
     }

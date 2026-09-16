@@ -371,10 +371,157 @@ class DispatcharrClient @Inject constructor() {
         )
     }.getOrNull()
 
+    /**
+     * The RAW per-user capability snapshot from GET /api/accounts/users/me/.
+     *
+     * That endpoint is Authenticated (any level) and returns user_level,
+     * is_staff, is_superuser, channel_profiles and the FULL custom_properties
+     * dict, which is where Dispatcharr keeps the per-user feature flags
+     * (dvr_access, vod_movies_enabled, vod_series_enabled, catchup_enabled,
+     * allowed_m3u_profile_ids, hide_adult_content, output_profile, ...).
+     *
+     * Everything is carried through verbatim -- custom_properties as JSON TEXT
+     * -- so the app can read a key that did not exist when it was built.
+     *
+     * Returns null on ANY failure (transport, non-2xx, decode) so the caller
+     * KEEPS its last good snapshot and merely flags it stale. Never returns a
+     * half-empty snapshot that would look like a demotion.
+     *
+     * Note: unlike the old [fetchUserLevel] this does NOT promote a sub-admin
+     * level via the IsAdmin users-list probe on its own; [probeAdminByUsersList]
+     * does that separately so the caller can decide when to spend the request.
+     */
+    data class AccountSnapshot(
+        /** The username the supplied key actually authenticates AS. Compared
+         *  against the username saved on the playlist to detect a stored key
+         *  left over from a different account (see
+         *  PlaylistRepository.probeCapabilitiesUncoalesced). */
+        val username: String,
+        val userLevel: Int,
+        val isStaff: Boolean,
+        val isSuperuser: Boolean,
+        /** custom_properties, verbatim, as JSON text ("" when absent). */
+        val customPropertiesJson: String,
+        val channelProfiles: List<Int>,
+    )
+
+    suspend fun fetchAccountSnapshot(baseUrl: String, apiKey: String): AccountSnapshot? = runCatching {
+        val url = "${baseUrl.trimEnd('/')}/api/accounts/users/me/"
+        val response = client.get(url) { applyAuth(apiKey) }
+        if (!response.status.isSuccess()) return@runCatching null
+        val me: MeResponse = response.body()
+        // A Django superuser / staff account is a functional admin even when
+        // its custom user_level is still 0 or 1 (accounts created before
+        // Dispatcharr v0.20.0 defaulted user_level). Derivation applies that
+        // rule; the snapshot stores the raw flags.
+        var level = me.userLevel ?: 0
+        if (!me.isStaff && !me.isSuperuser && level < 10) {
+            // Servers older than the 2025-06 serializer omit is_staff /
+            // is_superuser entirely, so a legacy superuser reads as level 0
+            // here. Settle it with a capability probe: /api/accounts/users/ is
+            // IsAdmin server-side, so a 2xx proves admin whatever /me/ claims.
+            if (probeAdminByUsersList(baseUrl, apiKey)) level = 10
+        }
+        AccountSnapshot(
+            username = me.username,
+            userLevel = level,
+            isStaff = me.isStaff,
+            isSuperuser = me.isSuperuser,
+            customPropertiesJson = me.customProperties?.toString().orEmpty(),
+            channelProfiles = me.channelProfiles,
+        )
+    }.getOrNull()
+
+    /** /api/accounts/users/ is IsAdmin-gated: a 2xx proves this account is admin. */
+    private suspend fun probeAdminByUsersList(baseUrl: String, apiKey: String): Boolean =
+        runCatching {
+            client.get("${baseUrl.trimEnd('/')}/api/accounts/users/") { applyAuth(apiKey) }
+                .status.isSuccess()
+        }.getOrDefault(false)
+
+    /**
+     * `system_settings.catchup_enabled` from GET /api/core/settings/ (readable
+     * at user_level >= 1). Catch-up needs BOTH this and the per-user flag.
+     *
+     * Null on any failure OR when the key is absent, which leaves the catch-up
+     * capability Unknown rather than denying it -- an unreadable settings
+     * endpoint must never take catch-up away from a user who has it.
+     */
+    suspend fun fetchSystemCatchupEnabled(baseUrl: String, apiKey: String): Boolean? = runCatching {
+        val url = "${baseUrl.trimEnd('/')}/api/core/settings/"
+        val response = client.get(url) { applyAuth(apiKey) }
+        if (!response.status.isSuccess()) return@runCatching null
+        val root: JsonElement = response.body()
+        // MEASURED against Dispatcharr 0.31.0 (2026-09-15): the endpoint answers
+        // with a flat ARRAY of setting-GROUP rows, {id, key, name, value}, where
+        // value is the group's object. The flag lives at
+        //   [{ "key": "system_settings", "value": { "catchup_enabled": true } }]
+        // Older shapes (a plain object, or one row per setting) are still
+        // accepted. Anything unrecognized stays null = Unknown, never a denial.
+        fun boolOf(element: JsonElement?): Boolean? = (element as? JsonPrimitive)?.let { v ->
+            v.booleanOrNull ?: when (v.contentOrNull?.lowercase()) {
+                "true", "1" -> true
+                "false", "0" -> false
+                else -> null
+            }
+        }
+        fun fromObject(obj: JsonObject?): Boolean? = boolOf(obj?.get("catchup_enabled"))
+        fun fromRow(row: JsonObject): Boolean? {
+            val key = (row["key"] as? JsonPrimitive)?.contentOrNull
+            // One row per setting: {"key":"catchup_enabled","value":true|"true"}.
+            if (key == "catchup_enabled") return boolOf(row["value"])
+            // One row per GROUP: the flag sits inside the group's value object.
+            return fromObject(row["value"] as? JsonObject)
+        }
+        when (root) {
+            is JsonObject ->
+                fromObject(root["system_settings"] as? JsonObject) ?: fromObject(root)
+            is JsonArray -> {
+                val rows = root.mapNotNull { it as? JsonObject }
+                // Prefer the canonical group, then any row that carries the flag.
+                rows.firstOrNull { (it["key"] as? JsonPrimitive)?.contentOrNull == "system_settings" }
+                    ?.let { fromRow(it) }
+                    ?: rows.firstNotNullOfOrNull { fromRow(it) }
+            }
+            else -> null
+        }
+    }.getOrNull()
+
     // Cast audio, 2026-09-13: the /api/core/outputprofiles/ fetch and the
     // stereo-AAC pick that lived here are GONE. Cast sessions ingest the
     // plain stream and AC-3 / E-AC-3 passes through to the receiver, so no
     // server-side output profile is ever requested.
+
+    /**
+     * Turn a 401 / 403 on a DVR WRITE into copy the user can act on. Those
+     * endpoints are IsAdminOrDVRManager, so a refusal means either the account
+     * lacks DVR manage access or a per-user allowed_networks policy blocked the
+     * request. Null for any other status, so the caller keeps its own message.
+     * These errors are surfaced, never swallowed.
+     */
+    private fun dvrPermissionMessage(status: Int): String? = when (status) {
+        403 -> "Your Dispatcharr account can view recordings but not manage them. " +
+            "Ask your server administrator for DVR manage access."
+        401 -> "Dispatcharr rejected this request as unauthorized. " +
+            "Your session or API key may have expired."
+        else -> null
+    }
+
+    /**
+     * Permission gate for a DVR WRITE response. A 403 here is a capability
+     * refusal, not a stale api_key, so it becomes [DispatcharrError.Forbidden]
+     * (which the auth broker does NOT rebootstrap-and-replay) and the caller
+     * self-corrects by re-probing users/me. A 401 still falls through to
+     * [unauthorizedCheck] so a genuinely rotated key is recovered as before.
+     */
+    private fun dvrWriteForbiddenCheck(response: HttpResponse) {
+        if (response.status.value == 403) {
+            throw DispatcharrError.Forbidden(
+                dvrPermissionMessage(403)!!,
+                capabilityHint = "CanManageDvr",
+            )
+        }
+    }
 
     /** Server version from /api/core/version/, or null when unreachable. */
     suspend fun fetchServerVersion(baseUrl: String, apiKey: String): String? =
@@ -1137,10 +1284,12 @@ class DispatcharrClient @Inject constructor() {
             contentType(ContentType.Application.Json)
             setBody(body)
         }
+        dvrWriteForbiddenCheck(response)
         unauthorizedCheck(response, url)
         if (!response.status.isSuccess()) {
             throw DispatcharrError.Transport(
-                "Recording create failed: HTTP ${response.status.value} ${response.status.description}",
+                dvrPermissionMessage(response.status.value)
+                    ?: "Recording create failed: HTTP ${response.status.value} ${response.status.description}",
             )
         }
         return response.body()
@@ -1946,6 +2095,102 @@ class DispatcharrClient @Inject constructor() {
     }
 
     /**
+     * Live-session check behind the player's "Stream ended" card (see
+     * StreamEndVerifier). A live stream that ends cleanly is only ever given
+     * up on when THIS is provable:
+     *
+     *  1. GET /api/accounts/users/me/ -> `id` + `stream_limit`. A limit of 0
+     *     (Dispatcharr's default) means unlimited, so nothing can be proven.
+     *  2. GET /proxy/ts/status -> {"channels": [{channel_id, clients: [
+     *     {client_id, user_id, connected_at}, ...]}, ...]} (apps/proxy/
+     *     live_proxy/channel_status.py get_basic_channel_info). IsAdmin
+     *     server-side, so a standard account gets 401/403 = unverifiable.
+     *  3. Count this account's live sessions the same way the server counts
+     *     them: unique channels when `ignore_same_channel_connections` is on,
+     *     every client otherwise. The setting lives in the core settings group
+     *     `user_limit_settings`; when it cannot be read we count UNIQUE
+     *     CHANNELS, the count that makes stopping LESS likely.
+     *  4. Stop only when that count is at or above the limit AND one of this
+     *     account's other clients connected AFTER our own session started
+     *     (the session that took our slot).
+     *
+     * Any failure answers "not verified": the caller keeps reconnecting.
+     */
+    suspend fun verifyStreamEndedByLimit(
+        baseUrl: String,
+        apiKey: String,
+        ourChannelUuid: String?,
+        ourConnectedAtEpochSec: Double,
+    ): com.aeriotv.android.core.playback.StreamEndVerifier.Verdict {
+        fun no(detail: String) =
+            com.aeriotv.android.core.playback.StreamEndVerifier.Verdict(false, detail)
+        val root = baseUrl.trimEnd('/')
+        val me = client.get("$root/api/accounts/users/me/") { applyAuth(apiKey) }
+        if (!me.status.isSuccess()) return no("users/me HTTP ${me.status.value}")
+        val meObj = runCatching { me.body<JsonElement>() }.getOrNull() as? JsonObject
+            ?: return no("users/me not readable")
+        val userId = (meObj["id"] as? JsonPrimitive)?.contentOrNull
+            ?: return no("users/me has no id")
+        val streamLimit = (meObj["stream_limit"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0
+        if (streamLimit <= 0) return no("account has no stream limit")
+
+        val status = client.get("$root/proxy/ts/status") { applyAuth(apiKey) }
+        if (!status.status.isSuccess()) return no("proxy status HTTP ${status.status.value}")
+        val statusObj = runCatching { status.body<JsonElement>() }.getOrNull() as? JsonObject
+            ?: return no("proxy status not readable")
+        val channels = (statusObj["channels"] as? JsonArray) ?: return no("proxy status has no channels")
+
+        // Best-effort: the same setting the server's check_user_stream_limits
+        // reads. Unreadable (non-admin core settings) keeps the lenient count.
+        val ignoreSameChannel = runCatching {
+            val settings = client.get("$root/api/core/settings/") { applyAuth(apiKey) }
+            if (!settings.status.isSuccess()) return@runCatching null
+            val rows = runCatching { settings.body<JsonElement>() }.getOrNull() as? JsonArray
+                ?: return@runCatching null
+            val row = rows.mapNotNull { it as? JsonObject }
+                .firstOrNull { (it["key"] as? JsonPrimitive)?.contentOrNull == "user_limit_settings" }
+                ?: return@runCatching null
+            val raw = (row["value"] as? JsonPrimitive)?.contentOrNull ?: return@runCatching null
+            val group = runCatching { Json.parseToJsonElement(raw) }.getOrNull() as? JsonObject
+                ?: return@runCatching null
+            (group["ignore_same_channel_connections"] as? JsonPrimitive)?.booleanOrNull
+        }.getOrNull()
+
+        var ourSessions = 0
+        val ourChannels = HashSet<String>()
+        var newerElsewhere = false
+        for (element in channels) {
+            val channel = element as? JsonObject ?: continue
+            val channelId = (channel["channel_id"] as? JsonPrimitive)?.contentOrNull
+            val clients = (channel["clients"] as? JsonArray) ?: continue
+            for (c in clients) {
+                val cl = c as? JsonObject ?: continue
+                if ((cl["user_id"] as? JsonPrimitive)?.contentOrNull != userId) continue
+                ourSessions += 1
+                channelId?.let { ourChannels.add(it) }
+                val connectedAt = (cl["connected_at"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
+                // "Newer than ours, somewhere else": either another channel, or
+                // another client on this one. Our own (dead) session is never
+                // newer than itself, so the comparison is safe either way.
+                if (connectedAt != null && connectedAt > ourConnectedAtEpochSec &&
+                    (channelId == null || channelId != ourChannelUuid)
+                ) {
+                    newerElsewhere = true
+                }
+            }
+        }
+        val counted = if (ignoreSameChannel == true) ourChannels.size else
+            if (ignoreSameChannel == null) ourChannels.size else ourSessions
+        val detail = "sessions=$ourSessions channels=${ourChannels.size} counted=$counted " +
+            "limit=$streamLimit newerElsewhere=$newerElsewhere " +
+            "ignoreSameChannel=${ignoreSameChannel ?: "unknown"}"
+        return com.aeriotv.android.core.playback.StreamEndVerifier.Verdict(
+            stopped = counted >= streamLimit && newerElsewhere,
+            detail = detail,
+        )
+    }
+
+    /**
      * Constructed playback URL for a Dispatcharr recording's raw media file.
      * The endpoint is `AllowAny` on the server (no auth headers required),
      * supports HTTP Range, and serves the raw media file. For a COMPLETED
@@ -1962,10 +2207,12 @@ class DispatcharrClient @Inject constructor() {
     suspend fun deleteRecording(baseUrl: String, apiKey: String, recordingId: Int) {
         val url = "${baseUrl.trimEnd('/')}/api/channels/recordings/$recordingId/"
         val response: HttpResponse = client.delete(url) { applyAuth(apiKey) }
+        dvrWriteForbiddenCheck(response)
         unauthorizedCheck(response, url)
         if (!response.status.isSuccess()) {
             throw DispatcharrError.Transport(
-                "Recording delete failed: HTTP ${response.status.value} ${response.status.description}",
+                dvrPermissionMessage(response.status.value)
+                    ?: "Recording delete failed: HTTP ${response.status.value} ${response.status.description}",
             )
         }
     }

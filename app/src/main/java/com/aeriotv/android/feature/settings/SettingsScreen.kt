@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -348,7 +350,7 @@ private fun PlaylistsSection(
                 ) {
                     Text(
                         text = "No playlists added",
-                        style = settingsRowValueStyle(),
+                        style = settingsRowValueStyle().subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -385,7 +387,7 @@ private fun PlaylistsSection(
                 Text(
                     text = "Add Playlist",
                     style = settingsRowValueStyle(),
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                     fontWeight = FontWeight.Medium,
                 )
             }
@@ -404,7 +406,7 @@ private fun PlaylistsSection(
                     Text(
                         text = "Manage Playlists",
                         style = settingsRowValueStyle(),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.textAccent,
                         modifier = Modifier.weight(1f),
                     )
                     Icon(
@@ -483,7 +485,7 @@ private fun PlaylistRow(
                 }
                 Text(
                     text = subtitle,
-                    style = settingsFootnoteStyle(),
+                    style = settingsFootnoteStyle().subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -589,7 +591,7 @@ private fun LegacySectionNavRow(section: SettingsSection, onClick: () -> Unit) {
                 text = section.subtitle,
                 // bodySmall is ~10.8sp effective under the 0.9 TV type scale;
                 // bodyMedium keeps the subtitle readable from the couch.
-                style = settingsFootnoteStyle(),
+                style = settingsFootnoteStyle().subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -668,7 +670,7 @@ private fun AboutSection(
         Spacer(Modifier.height(16.dp))
         Text(
             text = "In loving memory of Jesse Mann aka EPG Guru",
-            style = settingsFootnoteStyle(),
+            style = settingsFootnoteStyle().subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontStyle = FontStyle.Italic,
             textAlign = TextAlign.Center,
@@ -689,7 +691,7 @@ private fun AboutInfoRow(label: String, value: String) {
     ) {
         Text(
             text = label,
-            style = settingsRowValueStyle(),
+            style = settingsRowValueStyle().subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
@@ -722,7 +724,7 @@ private fun AboutVersionRow(value: String, onClick: () -> Unit) {
     ) {
         Text(
             text = "App Version",
-            style = settingsRowValueStyle(),
+            style = settingsRowValueStyle().subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
@@ -735,7 +737,7 @@ private fun AboutVersionRow(value: String, onClick: () -> Unit) {
         Text(
             text = "What's New",
             style = settingsFootnoteStyle(),
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
             fontWeight = FontWeight.Medium,
         )
         Icon(
@@ -774,7 +776,7 @@ private fun AboutActionRow(
         Text(
             text = label,
             style = settingsRowValueStyle(),
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.weight(1f),
         )
@@ -809,8 +811,8 @@ private fun SectionFooter(text: String) {
         // TV takes the tvOS footnote (20pt halved); PHONES keep labelSmall
         // verbatim - the shared helper falls back to bodySmall, which would
         // have quietly enlarged frozen phone canon.
-        style = if (rememberIsTvDevice()) settingsFootnoteStyle()
-        else MaterialTheme.typography.labelSmall,
+        style = (if (rememberIsTvDevice()) settingsFootnoteStyle()
+        else MaterialTheme.typography.labelSmall).subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
         modifier = Modifier.padding(horizontal = 4.dp),
     )

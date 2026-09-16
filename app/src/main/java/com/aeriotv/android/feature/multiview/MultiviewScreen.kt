@@ -1,5 +1,9 @@
 package com.aeriotv.android.feature.multiview
 
+import kotlinx.coroutines.launch
+import com.aeriotv.android.ui.theme.decorTertiary
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import android.content.res.Configuration
 import android.util.Log
 import android.view.LayoutInflater
@@ -359,7 +363,7 @@ fun MultiviewScreen(
         ) {
             Text(
                 text = "No tiles selected.",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             CloseButton(onClose = onClose)
@@ -528,7 +532,7 @@ fun MultiviewScreen(
                 text = countLabel,
                 style = MaterialTheme.typography.labelMedium,
                 color = if (labelHighlighted)
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.textAccent
                 else
                     Color.White.copy(alpha = 0.85f),
                 fontWeight = if (labelHighlighted) FontWeight.Bold else FontWeight.Normal,
@@ -1461,7 +1465,7 @@ private fun Tile(
     // outranks the audio-focus border so the navigation cursor is never
     // ambiguous; the speaker icon still distinguishes the audio tile.
     val targetBorderColor = when {
-        isDropTarget -> MaterialTheme.colorScheme.tertiary
+        isDropTarget -> MaterialTheme.colorScheme.decorTertiary
         isRelocating -> MaterialTheme.colorScheme.primary
         dpadFocused -> Color.White
         isAudioFocused && audioFocusStyle == "grayPersistent" ->
@@ -1625,7 +1629,20 @@ private fun ExoTile(
     // factory so the overlay's Retry button can re-prime with the factory's
     // header-aware DataSource.
     val tileError = remember { mutableStateOf<String?>(null) }
+    // Dispatcharr connection-limit refusal on this tile (exact server signal,
+    // Direct Connect only): static notice with Retry, no auto-reconnect.
+    val tileLimit = remember { mutableStateOf<com.aeriotv.android.core.playback.DispatcharrConnectionLimit.Notice?>(null) }
     val tileRetryRef = remember { mutableStateOf<(() -> Unit)?>(null) }
+    // Main-thread scope for the clean-end wait (verification + backoff); the
+    // tile's player is main-thread confined like the live holder's.
+    // Wall clock (epoch seconds) at which this tile's current live connection
+    // opened, so the session check can tell a NEWER session elsewhere from ours.
+    val tileTuneWall = remember { doubleArrayOf(System.currentTimeMillis() / 1000.0) }
+    // Clean end of a live tile (Dispatcharr ended this client): [0] = when the
+    // last clean-end reconnect opened, [1] = the streak (1 = reconnect now,
+    // then 5 s / 15 s / 30 s / 60 s), [2] = 1 while a reconnect is waiting.
+    // Reset by Retry, by a swap, and by 60 s of healthy playback.
+    val tileCleanEnd = remember { longArrayOf(0L, 0L, 0L) }
     val tileRetrySerial = remember { mutableIntStateOf(0) }
     // Always-on playback tracer (tag AerioTrace), one per tile. The "press"
     // is the tune that opened this tile, so press->firstFrame measures a
@@ -1805,6 +1822,7 @@ private fun ExoTile(
                         consecutiveRetries = 0
                         // Task #150: a retry reached steady playback.
                         tileError.value = null
+                        tileLimit.value = null
                         // Resume from the pre-resolved position (Phase 2 picker
                         // looked it up via WatchProgressDao), once per tile.
                         if (isVod && !didResumeRef.value) {
@@ -1814,12 +1832,75 @@ private fun ExoTile(
                         }
                     } else if (playbackState == Player.STATE_ENDED && isVod) {
                         onFinished()
+                    } else if (playbackState == Player.STATE_ENDED && tile.kind == TileKind.Live) {
+                        // Clean end of a live tile: keep reconnecting on the
+                        // shared backoff and only stop once StreamEndVerifier
+                        // proves the account is at its stream limit.
+                        val retryUrl = currentUrlRef.value
+                        if (retryUrl.isBlank() || tileLimit.value != null || tileCleanEnd[2] == 1L) return
+                        val verifier = com.aeriotv.android.core.playback.StreamEndVerifier
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        val since = now - tileCleanEnd[0]
+                        tileCleanEnd[1] =
+                            if (tileCleanEnd[0] > 0L && since < verifier.HEALTHY_RESET_MS) {
+                                tileCleanEnd[1] + 1
+                            } else {
+                                1L
+                            }
+                        val streak = tileCleanEnd[1].toInt()
+                        val backoffMs = verifier.backoffMs(streak)
+                        Log.w(TAG, "[RECOVER] tile $channelName clean end #$streak; reconnecting in ${backoffMs}ms")
+                        tracer.recover("tile clean end #$streak; reconnect in ${backoffMs}ms")
+                        tileCleanEnd[2] = 1L
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main.immediate).launch {
+                            if (streak >= 2) {
+                                val verdict = verifier.verify(
+                                    verifier.channelUuidFromUrl(retryUrl),
+                                    tileTuneWall[0],
+                                )
+                                Log.i(
+                                    TAG,
+                                    "[RECOVER] tile $channelName clean end #$streak session check: " +
+                                        "${if (verdict.stopped) "AT LIMIT" else "not verified"} (${verdict.detail})",
+                                )
+                                if (verdict.stopped) {
+                                    tileCleanEnd[2] = 0L
+                                    tileCleanEnd[0] = 0L
+                                    tileCleanEnd[1] = 0L
+                                    tileError.value = null
+                                    tileLimit.value =
+                                        com.aeriotv.android.core.playback.DispatcharrConnectionLimit.STREAM_ENDED
+                                    liveCalls.stop(player)
+                                    return@launch
+                                }
+                            }
+                            if (backoffMs > 0L) kotlinx.coroutines.delay(backoffMs)
+                            tileCleanEnd[2] = 0L
+                            if (tileLimit.value != null) return@launch
+                            val url2 = currentUrlRef.value
+                            if (url2.isBlank()) return@launch
+                            Log.i(TAG, "[RECOVER] tile $channelName clean end #$streak: reconnecting")
+                            tileCleanEnd[0] = android.os.SystemClock.elapsedRealtime()
+                            tileTuneWall[0] = System.currentTimeMillis() / 1000.0
+                            liveCalls.setSource(player) { buildTileMediaSource(url2, dataSourceFactory()) }
+                            tracer.markTuneStart(channelName, traceKind)
+                            player.prepare()
+                            player.playWhenReady = !paused
+                        }
                     }
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
                     val retryUrl = currentUrlRef.value
                     if (retryUrl.isBlank()) return
+                    if (!isVod && tile.kind != TileKind.Dvr) {
+                        com.aeriotv.android.core.playback.DispatcharrConnectionLimit.parse(error)?.let { notice ->
+                            Log.w(TAG, "[LIMIT] tile $channelName ${notice.kind} \"${notice.message}\"; waiting for Retry")
+                            tileError.value = null
+                            tileLimit.value = notice
+                            return
+                        }
+                    }
                     // Audio sink could not be created or written (the device's
                     // audio HAL is out of tracks): keep the tile's video by
                     // dropping its audio track, then re-prepare. The focused
@@ -1886,6 +1967,10 @@ private fun ExoTile(
                 val u = currentUrlRef.value
                 if (p != null && u.isNotBlank()) {
                     Log.i(TAG, "Tile error-overlay retry: $channelName")
+                    tileLimit.value = null
+                    tileCleanEnd[0] = 0L
+                    tileCleanEnd[1] = 0L
+                    tileTuneWall[0] = System.currentTimeMillis() / 1000.0
                     liveCalls.setSource(p) { buildTileMediaSource(u, dataSourceFactory()) }
                     tracer.recover("tile error-overlay retry")
                     tracer.markTuneStart(channelName, traceKind)
@@ -1934,6 +2019,10 @@ private fun ExoTile(
             // teardown -- hand the new URL to the same player.
             if (url.isNotBlank() && currentUrlRef.value != url) {
                 Log.i(TAG, "Tile ExoPlayer swap: ${currentUrlRef.value} -> $url")
+                tileLimit.value = null
+                tileCleanEnd[0] = 0L
+                tileCleanEnd[1] = 0L
+                tileTuneWall[0] = System.currentTimeMillis() / 1000.0
                 // setSource closes the old channel's live connection once the
                 // player has dropped it; the swap factory is built inside so
                 // the new source's tracker is never the one retired.
@@ -2014,7 +2103,18 @@ private fun ExoTile(
     // Task #150 (iOS parity): tile playback-error overlay. Real error text,
     // a Retry button, and an auto-reconnect loop on an escalating 5s->30s
     // delay. STATE_READY in the listener clears it.
-    tileError.value?.let { errMsg ->
+    tileLimit.value?.let { notice ->
+        com.aeriotv.android.feature.player.ConnectionLimitCard(
+            notice = notice,
+            isTv = false,
+            compact = true,
+            onRetry = {
+                tileRetrySerial.intValue += 1
+                tileRetryRef.value?.invoke()
+            },
+        )
+    }
+    if (tileLimit.value == null) tileError.value?.let { errMsg ->
         LaunchedEffect(tileRetrySerial.intValue) {
             kotlinx.coroutines.delay(
                 minOf(30, 5 shl minOf(tileRetrySerial.intValue, 3)) * 1_000L,
@@ -2088,12 +2188,16 @@ private fun buildTileMediaSource(
     val mediaItem = MediaItem.fromUri(url)
     return when {
         url.endsWith(".m3u8", ignoreCase = true) ->
-            HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+            HlsMediaSource.Factory(dataSourceFactory)
+                // A Dispatcharr connection-limit refusal is shown, never re-GET.
+                .setLoadErrorHandlingPolicy(com.aeriotv.android.core.playback.DispatcharrConnectionLimit.LoadErrorPolicy())
+                .createMediaSource(mediaItem)
         url.endsWith(".ts", ignoreCase = true) ||
             url.contains("/proxy/ts/", ignoreCase = true) -> {
             val extractors = DefaultExtractorsFactory()
                 .setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT)
             ProgressiveMediaSource.Factory(dataSourceFactory, extractors)
+                .setLoadErrorHandlingPolicy(com.aeriotv.android.core.playback.DispatcharrConnectionLimit.LoadErrorPolicy())
                 .createMediaSource(mediaItem)
         }
         else -> DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(mediaItem)

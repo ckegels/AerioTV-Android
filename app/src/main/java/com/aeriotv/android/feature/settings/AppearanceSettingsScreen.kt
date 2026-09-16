@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -7,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,6 +34,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -58,7 +64,11 @@ import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.dpadFocusWash
+import com.aeriotv.android.core.preferences.TEXT_SCALE_MAX
+import com.aeriotv.android.core.preferences.TEXT_SCALE_MIN
 import com.aeriotv.android.ui.theme.AppTheme
+import com.aeriotv.android.ui.tv.dpadFocusEscape
+import kotlin.math.roundToInt
 import com.aeriotv.android.ui.theme.AppearanceMode
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
 
@@ -119,9 +129,13 @@ fun AppearanceSettingsScreen(
     val palette by viewModel.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
     val scaleMovies by viewModel.displayScaleMovies.collectAsStateWithLifecycle(initialValue = 1.0f)
     val scaleLiveTV by viewModel.displayScaleLiveTV.collectAsStateWithLifecycle(initialValue = 1.0f)
+    val textScale by viewModel.textScale.collectAsStateWithLifecycle(initialValue = 1.0f)
+    val subtextScale by viewModel.subtextScale.collectAsStateWithLifecycle(initialValue = 1.0f)
+    val textContrast by viewModel.textContrast.collectAsStateWithLifecycle(initialValue = 0f)
     val useCustomAccent by viewModel.useCustomAccent.collectAsStateWithLifecycle(initialValue = false)
     val customAccentHex by viewModel.customAccentHex.collectAsStateWithLifecycle(initialValue = "")
     val showChannelLogos by viewModel.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
+    val roundedArtwork by viewModel.roundedArtwork.collectAsStateWithLifecycle(initialValue = true)
     val showChannelNumbers by viewModel.showChannelNumbers.collectAsStateWithLifecycle(initialValue = true)
     val showChannelNames by viewModel.showChannelNames.collectAsStateWithLifecycle(initialValue = true)
     val showProgramSubtitles by viewModel.showProgramSubtitles.collectAsStateWithLifecycle(initialValue = true)
@@ -237,6 +251,49 @@ fun AppearanceSettingsScreen(
                     )
                 }
 
+                // TEXT SIZE card: one app-wide multiplier on every sp (applied
+                // at the composition root). The Display Scale sliders below
+                // still multiply on top for their own surfaces.
+                settingsCard(
+                    header = "Text Size",
+                    footer = "Scales all text in AerioTV, on top of your device's font size. Changes apply live.",
+                ) {
+                    TextSizeSliderRow(
+                        label = "Text Size",
+                        stops = TEXT_SCALE_STOPS,
+                        value = textScale,
+                        onValueChange = viewModel::setTextScale,
+                    )
+                }
+
+                // SUBTEXT SIZE card: extra multiplier for secondary copy only
+                // (descriptions, subtitles, metadata), stacking on Text Size.
+                settingsCard(
+                    header = "Subtext Size",
+                    footer = "Scales only secondary text such as descriptions, program details, and captions, on top of Text Size. Titles and buttons stay the same. Changes apply live.",
+                ) {
+                    TextSizeSliderRow(
+                        label = "Subtext Size",
+                        stops = TEXT_SCALE_STOPS,
+                        value = subtextScale,
+                        onValueChange = viewModel::setSubtextScale,
+                    )
+                }
+
+                // TEXT CONTRAST card: blends dimmed and accent-tinted text
+                // toward plain white (dark) / black (light).
+                settingsCard(
+                    header = "Text Contrast",
+                    footer = "Makes dimmed and accent-colored text brighter in dark mode and darker in light mode. 0% keeps the theme's look, 100% uses plain white or black text. Changes apply live.",
+                ) {
+                    TextSizeSliderRow(
+                        label = "Text Contrast",
+                        stops = TEXT_CONTRAST_STOPS,
+                        value = textContrast,
+                        onValueChange = viewModel::setTextContrast,
+                    )
+                }
+
                 // DISPLAY SCALE card — independent sliders for the two
                 // density-tunable surfaces (Movies & Series, Live TV List).
                 settingsCard(
@@ -321,11 +378,24 @@ fun AppearanceSettingsScreen(
                     )
                 }
 
+                // Artwork rounding. Logos and program art take the corner
+                // radius of the card or cell they sit in; off squares them.
+                settingsCard(
+                    header = "Artwork",
+                    footer = "Applies to channel logos and program artwork throughout the app.",
+                ) {
+                    ToggleRow(
+                        title = "Rounded corners on logos and artwork",
+                        checked = roundedArtwork,
+                        onCheckedChange = viewModel::setRoundedArtwork,
+                    )
+                }
+
                 // PALETTE card — the default 4 buckets plus the "Add more
                 // categories" navigator and the Reset link.
                 settingsCard(
                     header = "Category Colors",
-                    footer = "Tint EPG cells and channel cards by programme category. Select a category below to override its hex.",
+                    footer = "Tint EPG cells and channel cards by program category. Select a category below to override its hex.",
                 ) {
                     ToggleRow(
                         title = "Color Programs by Category",
@@ -491,7 +561,7 @@ private fun LazyListScope.settingsCard(
             if (footer != null) {
                 Text(
                     text = footer,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 4.dp),
                 )
@@ -558,7 +628,7 @@ private fun ThemeRow(
             )
             Text(
                 text = themeSubtitle(theme),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -634,7 +704,7 @@ private fun AppearanceModeRow(
             )
             Text(
                 text = appearanceModeSubtitle(mode),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -830,7 +900,7 @@ private fun CheckRow(
 @Composable
 private fun ToggleRow(
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
@@ -854,11 +924,13 @@ private fun ToggleRow(
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Medium,
             )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Spacer(Modifier.size(12.dp))
         OnOffIndicator(on = checked)
@@ -874,6 +946,72 @@ private val SCALE_SEGMENTS: List<Pair<Float, String>> = listOf(
     1.25f to "125%", 1.50f to "150%", 1.75f to "175%",
 )
 
+/** Text Contrast stops: 0% .. 100% in 10% steps. */
+private val TEXT_CONTRAST_STOPS: List<Float> = (0..10).map { it / 10f }
+
+/** Text Size / Subtext Size stops: 85% .. 150% in 5% steps. */
+private val TEXT_SCALE_STOPS: List<Float> =
+    (0..((TEXT_SCALE_MAX - TEXT_SCALE_MIN) * 20f).roundToInt()).map { TEXT_SCALE_MIN + it * 0.05f }
+
+/**
+ * Text Size / Subtext Size / Text Contrast row: label left, current percent right, a stepped Material
+ * slider beneath. Same shape as the SteppedSliderRow in App Behaviors and
+ * TV-safe the same way ([dpadFocusEscape]: UP/DOWN leave the slider,
+ * LEFT/RIGHT step one 5% stop).
+ */
+@Composable
+private fun TextSizeSliderRow(
+    label: String,
+    stops: List<Float>,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+) {
+    val idx = stops.indices.minByOrNull { kotlin.math.abs(stops[it] - value) } ?: 0
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${(stops[idx] * 100f).roundToInt()}%",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.textAccent,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Slider(
+            value = idx.toFloat(),
+            onValueChange = { raw ->
+                val newIdx = raw.roundToInt().coerceIn(0, stops.lastIndex)
+                if (newIdx != idx) onValueChange(stops[newIdx])
+            },
+            valueRange = 0f..stops.lastIndex.toFloat(),
+            steps = (stops.size - 2).coerceAtLeast(0),
+            modifier = Modifier.dpadFocusEscape(),
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
+    }
+}
+
+/**
+ * Width at which the label and the seven percentage segments still fit on one
+ * line. Below it the row stacks (label above, segments wrapping beneath).
+ *
+ * A Row measures its unweighted children FIRST, with an unbounded max width,
+ * and only hands what is LEFT to the weighted ones. The seven segments are
+ * unweighted, so on a phone they eat the whole row and the weighted label is
+ * measured at a few dp, which is why it rendered one character per line.
+ */
+private val ScaleSegmentsInlineMinWidth = 560.dp
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ScaleSliderRow(
     label: String,
@@ -883,42 +1021,73 @@ private fun ScaleSliderRow(
 ) {
     // tvOS renders Display Scale as inline percentage segments, not a slider
     // (cleaner with a remote + no focus-trap). The selected segment is filled.
-    Row(
-        modifier = modifier
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        SCALE_SEGMENTS.forEach { (segValue, segLabel) ->
-            val selected = kotlin.math.abs(value - segValue) < 0.03f
-            Box(
-                modifier = Modifier
-                    .padding(start = 6.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                        else Color.Transparent,
-                    )
-                    .dpadFocusRing(
-                        shape = RoundedCornerShape(8.dp),
-                        washTint = MaterialTheme.colorScheme.primary,
-                    )
-                    .clickable { onValueChange(segValue) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+    val isTv = rememberIsTvDevice()
+    BoxWithConstraints(modifier = modifier) {
+        // TV always keeps the single-line row (10-foot layout is wide and the
+        // D-pad expects one horizontal axis). Everywhere else it depends on
+        // whether the label and all seven segments actually fit.
+        val inline = isTv || maxWidth >= ScaleSegmentsInlineMinWidth
+        val segments: @Composable (Modifier) -> Unit = { segModifier ->
+            FlowRow(
+                modifier = segModifier,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(
-                    text = segLabel,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                )
+                SCALE_SEGMENTS.forEach { (segValue, segLabel) ->
+                    val selected = kotlin.math.abs(value - segValue) < 0.03f
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                else Color.Transparent,
+                            )
+                            .dpadFocusRing(
+                                shape = RoundedCornerShape(8.dp),
+                                washTint = MaterialTheme.colorScheme.primary,
+                            )
+                            .clickable { onValueChange(segValue) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = segLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (selected) MaterialTheme.colorScheme.textAccent
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    }
+                }
+            }
+        }
+        val labelText: @Composable (Modifier) -> Unit = { labelModifier ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+                modifier = labelModifier,
+            )
+        }
+        if (inline) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                labelText(Modifier.weight(1f))
+                segments(Modifier)
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                labelText(Modifier.fillMaxWidth())
+                segments(Modifier.fillMaxWidth())
             }
         }
     }
@@ -995,7 +1164,7 @@ private fun AddMoreCategoriesRow(
             )
             Text(
                 text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -1020,7 +1189,7 @@ private fun AccentPickerDialog(
     val isValid = sanitized.length == 6 && sanitized.all { it in HEX_CHARS_ACCENT }
     val preview = if (isValid) parseHex(sanitized) else preset
 
-    androidx.compose.material3.AlertDialog(
+    com.aeriotv.android.ui.scale.AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             SettingsDialogTextButton(
@@ -1053,7 +1222,7 @@ private fun AccentPickerDialog(
                     Spacer(Modifier.size(12.dp))
                     Text(
                         text = if (isValid) "Preview $sanitized" else "Enter 6-char hex",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

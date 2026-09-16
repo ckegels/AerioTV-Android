@@ -18,6 +18,7 @@
 
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -315,7 +316,7 @@ private val APACHE_COMPONENTS = listOf(
 private fun LicenseBlurb(text: String) {
     Text(
         text = text,
-        style = settingsFootnoteStyle(),
+        style = settingsFootnoteStyle().subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp),
     )
@@ -398,7 +399,7 @@ private fun LicenseTextViewer(license: BundledLicense) {
         items(items = paragraphs) { para ->
             Text(
                 text = para,
-                style = settingsRowValueStyle(),
+                style = settingsRowValueStyle().subtext(),
                 fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),

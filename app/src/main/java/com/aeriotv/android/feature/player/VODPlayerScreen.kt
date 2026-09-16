@@ -542,12 +542,13 @@ fun VODPlayerScreen(
             }
             onDispose {
                 controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-                // Auto-Rotate aware: UNSPECIFIED when following the sensor,
-                // LOCKED when the user disabled rotation in App Behaviors.
-                activity?.requestedOrientation =
-                    com.aeriotv.android.core.preferences.AutoRotateState.restingOrientation
             }
         }
+        // Orientation restore must NOT live in the isLandscape-keyed effect
+        // above: that effect disposes on every rotation, so the forced
+        // landscape from the fullscreen button was released the moment the
+        // rotation landed and the phone snapped back to portrait.
+        RestoreOrientationOnExit(activity)
     }
 
     // "Audio keeps playing after leaving the app" on TV (jonzee222): VOD owns

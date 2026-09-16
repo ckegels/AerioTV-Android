@@ -303,16 +303,22 @@ class TimeshiftController @Inject constructor(
     }
 
     /**
-     * A retained channel's buffer is fed ONLY by its own connection: a
-     * reconnecting fill loop against the frozen URL. Stops for good on
-     * HTTP 4xx (auth/connection-cap refusal - retrying would hammer the
-     * provider), on writer death, and on eviction/stop. Every (re)connect
-     * is a splice, so the writer realigns per attempt.
+     * A retained channel's buffer is fed ONLY by its own connection against
+     * the frozen URL. The retained connection must never compete with what
+     * the user is watching: under a Dispatcharr per-user stream limit a
+     * reconnect can be the request that gets the watched stream terminated.
+     * So the channel stops being retained (buffer released) the moment the
+     * server ends the connection cleanly or answers with any HTTP error
+     * (429 stream limit included); there is no reconnect loop for those.
+     * A thrown network error (socket reset, timeout) keeps the bounded
+     * reconnect. Every (re)connect is a splice, so the writer realigns per
+     * attempt.
      */
     private fun startRetainedFill(session: RetainedSession) {
         session.fillJob = fillScope.launch {
             var attempts = 0
             while (currentCoroutineContext().isActive && !session.writer.closed) {
+                var endReason: String? = null
                 try {
                     session.writer.markDiscontinuity()
                     val req = Request.Builder().url(session.url).apply {
@@ -321,17 +327,23 @@ class TimeshiftController @Inject constructor(
                     val call = fillClient.newCall(req)
                     session.fillCall = call
                     call.execute().use { resp ->
-                        if (resp.code in 400..499) {
-                            Log.w(TAG, "retained fill refused http=${resp.code} for ${session.channelName}; stopping")
-                            return@launch
+                        if (!resp.isSuccessful) {
+                            endReason = "http ${resp.code}"
+                            return@use
                         }
-                        if (!resp.isSuccessful) return@use
                         attempts = 0
-                        val src = resp.body?.byteStream() ?: return@use
+                        val src = resp.body?.byteStream()
+                        if (src == null) {
+                            endReason = "empty response"
+                            return@use
+                        }
                         val buf = ByteArray(64 * 1024)
                         while (currentCoroutineContext().isActive && !session.writer.closed) {
                             val n = src.read(buf)
-                            if (n < 0) break
+                            if (n < 0) {
+                                endReason = "connection ended"
+                                break
+                            }
                             if (n > 0) session.writer.appendFill(buf, 0, n)
                         }
                     }
@@ -339,14 +351,33 @@ class TimeshiftController @Inject constructor(
                     if (session.fillJob?.isActive != true) return@launch
                     Log.w(TAG, "retained fill error for ${session.channelName}: $t")
                 }
+                if (!currentCoroutineContext().isActive || session.writer.closed) return@launch
+                endReason?.let { reason ->
+                    releaseRetainedAfterFillEnd(session, reason)
+                    return@launch
+                }
                 if (++attempts > 20) {
                     Log.w(TAG, "retained fill gave up for ${session.channelName}")
+                    releaseRetainedAfterFillEnd(session, "gave up after 20 reconnects")
                     return@launch
                 }
                 kotlinx.coroutines.delay(3_000)
             }
         }
         Log.i(TAG, "retained fill started for ${session.channelName}")
+    }
+
+    /** Drop [session] from [retained] after its own connection ended, on the
+     *  serial scope. Skipped when the session was already adopted, evicted or
+     *  replaced in the meantime. */
+    private fun releaseRetainedAfterFillEnd(session: RetainedSession, reason: String) {
+        scope.launch {
+            if (retained[session.channelId] !== session) return@launch
+            retained.remove(session.channelId)
+            releaseRetained(session)
+            publishRetained()
+            Log.i(TAG, "[RETAIN] released ${session.channelName}: $reason")
+        }
     }
 
     /** Same discipline as [stopIndependentFill]: cancel the CALL, not just

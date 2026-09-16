@@ -230,8 +230,10 @@ fun LiveFailoverStatusOverlay(
     val statusStreamId = rememberUpdatedState(onLoadCurrentStreamId)
     DisposableEffect(isAdmin) {
         exoHolder.liveFailover.hooks = LiveStreamFailover.Hooks(
-            // Direct Connect + admin + an integer channel pk: change_stream is
-            // IsAdmin server-side, so a standard sub-account would only get 403.
+            // Direct Connect + Capability.CanSwitchStream + an integer channel
+            // pk. change_stream is still IsAdmin server-side, so the capability
+            // resolves to admin today; the gate goes through the capability so
+            // a future server change is a one-line update.
             canSwitch = { id ->
                 isAdmin && id.startsWith("disp:") &&
                     channelsNow.value.firstOrNull { it.id == id }?.dispatcharrChannelId != null
@@ -246,6 +248,13 @@ fun LiveFailoverStatusOverlay(
         onDispose { exoHolder.liveFailover.hooks = null }
     }
 
+    // Dispatcharr connection-limit refusal: the notice owns the screen, with
+    // Retry and nothing else (no spinner, no status line).
+    val connectionLimit by exoHolder.connectionLimit.collectAsStateWithLifecycle()
+    connectionLimit?.let { notice ->
+        ConnectionLimitCard(notice = notice, isTv = isTv, onRetry = { exoHolder.retryConnectionLimit() })
+        return
+    }
     val statusText by exoHolder.liveStatusText.collectAsStateWithLifecycle()
     val unavailable by exoHolder.streamUnavailable.collectAsStateWithLifecycle()
     val playerInstance by exoHolder.playerInstance.collectAsStateWithLifecycle()

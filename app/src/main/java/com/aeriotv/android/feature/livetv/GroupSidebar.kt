@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -663,7 +664,7 @@ internal fun PhoneGroupDrawer(
                             text = labelFor(token),
                             fontSize = 15.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary
+                            color = if (isSelected) MaterialTheme.colorScheme.textAccent
                             else MaterialTheme.colorScheme.onBackground,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,

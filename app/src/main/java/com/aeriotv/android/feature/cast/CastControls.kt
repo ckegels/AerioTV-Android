@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.cast
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,7 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -249,11 +251,11 @@ fun CastRouteChooserDialog(
                     Text(
                         "AerioTV on TV",
                         style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.textAccent,
                     )
                     Text(
                         "Plays in the AerioTV app on the TV: no phone processing, full quality.",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall.subtext(),
                         color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     nativeRoutes.forEach { routeRow(it) }
@@ -311,7 +313,7 @@ fun CastRouteChooserDialog(
                                 Text(
                                     "AerioTV Remote",
                                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                                    color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                    color = androidx.compose.material3.MaterialTheme.colorScheme.textAccent,
                                 )
                             }
                         }

@@ -52,6 +52,24 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setDisplayScaleMovies(value) }
     }
 
+    /** App-wide Text Size (Appearance > Text Size). */
+    val textScale: Flow<Float> = prefs.textScale
+    fun setTextScale(value: Float) {
+        viewModelScope.launch { prefs.setTextScale(value) }
+    }
+
+    /** Subtext Size (Appearance > Subtext Size). */
+    val subtextScale: Flow<Float> = prefs.subtextScale
+    fun setSubtextScale(value: Float) {
+        viewModelScope.launch { prefs.setSubtextScale(value) }
+    }
+
+    /** Text Contrast (Appearance > Text Contrast). */
+    val textContrast: Flow<Float> = prefs.textContrast
+    fun setTextContrast(value: Float) {
+        viewModelScope.launch { prefs.setTextContrast(value) }
+    }
+
     val useCustomAccent: Flow<Boolean> = prefs.useCustomAccent
     fun setUseCustomAccent(value: Boolean) {
         viewModelScope.launch { prefs.setUseCustomAccent(value) }
@@ -79,6 +97,13 @@ class SettingsViewModel @Inject constructor(
     }
     fun setShowProgramSubtitles(value: Boolean) {
         viewModelScope.launch { prefs.setShowProgramSubtitles(value) }
+    }
+
+    /** Appearance > Rounded corners on logos and artwork (default ON). */
+    val roundedArtwork: StateFlow<Boolean> = prefs.roundedArtwork
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    fun setRoundedArtwork(value: Boolean) {
+        viewModelScope.launch { prefs.setRoundedArtwork(value) }
     }
     fun setShowChannelNumbers(value: Boolean) {
         viewModelScope.launch { prefs.setShowChannelNumbers(value) }
@@ -353,10 +378,58 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setAppleTVChannelFlip(value) }
     }
 
+    /** In-Player Gestures (phone and tablet). All default off. */
+    val playerBrightnessGesture: Flow<Boolean> = prefs.playerBrightnessGesture
+    fun setPlayerBrightnessGesture(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerBrightnessGesture(value) }
+    }
+
+    val playerVolumeGesture: Flow<Boolean> = prefs.playerVolumeGesture
+    fun setPlayerVolumeGesture(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerVolumeGesture(value) }
+    }
+
+    val playerBrightnessEdge: Flow<String> = prefs.playerBrightnessEdge
+    fun setPlayerBrightnessEdge(value: String) {
+        viewModelScope.launch { prefs.setPlayerBrightnessEdge(value) }
+    }
+
     // iOS appBehaviorsAutoRecoverFrozenStreams (#37). Default true; device-local.
     val autoRecoverFrozenStreams: Flow<Boolean> = prefs.autoRecoverFrozenStreams
     fun setAutoRecoverFrozenStreams(value: Boolean) {
         viewModelScope.launch { prefs.setAutoRecoverFrozenStreams(value) }
+    }
+
+    // Player Info Card elements (App Behaviors, Apple parity). All default true;
+    // they gate ONLY the in-player program info card.
+    val playerCardShowChannelLogo: Flow<Boolean> = prefs.playerCardShowChannelLogo
+    fun setPlayerCardShowChannelLogo(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowChannelLogo(value) }
+    }
+
+    val playerCardShowChannelName: Flow<Boolean> = prefs.playerCardShowChannelName
+    fun setPlayerCardShowChannelName(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowChannelName(value) }
+    }
+
+    val playerCardShowProgramName: Flow<Boolean> = prefs.playerCardShowProgramName
+    fun setPlayerCardShowProgramName(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowProgramName(value) }
+    }
+
+    val playerCardShowProgramTime: Flow<Boolean> = prefs.playerCardShowProgramTime
+    fun setPlayerCardShowProgramTime(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowProgramTime(value) }
+    }
+
+    val playerCardShowProgramSubtitle: Flow<Boolean> = prefs.playerCardShowProgramSubtitle
+    fun setPlayerCardShowProgramSubtitle(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowProgramSubtitle(value) }
+    }
+
+    val playerCardShowProgramDescription: Flow<Boolean> = prefs.playerCardShowProgramDescription
+    fun setPlayerCardShowProgramDescription(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowProgramDescription(value) }
     }
 
     // TMDB program posters (opt-in, off by default). Key is device-local.

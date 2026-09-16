@@ -1,6 +1,9 @@
 package com.aeriotv.android.feature.main
 
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewDvr
+import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewVod
+import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewSeries
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -22,6 +25,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -302,8 +307,17 @@ fun MainScaffold(
     // the next OnDemandViewModel refresh to flip unsupportedSource. If the
     // playlist hasn't loaded yet the default is true so we don't suppress
     // the tab on a slow cold launch.
-    val activePlaylistVodEnabled = viewModel.state
-        .collectAsStateWithLifecycle().value.playlist?.vodEnabled ?: true
+    // LIVE active playlist row, not `state.playlist`. The latter is a snapshot
+    // frozen when the state was last written, so the AerioCaps capability probe
+    // that lands after launch was invisible to every gate below: the Streamer
+    // restored 40050 movies, ran the forced sweep, and STILL hid the Movies tab
+    // because `moviesDenied` was computed from the pre-probe row and retired the
+    // pill on every recomposition (2026-09-15). Falls back to the snapshot only
+    // until the first DB emission.
+    val livePlaylist by viewModel.activePlaylistLive
+        .collectAsStateWithLifecycle(initialValue = null)
+    val capsPlaylist = livePlaylist ?: state.playlist
+    val activePlaylistVodEnabled = capsPlaylist?.vodEnabled ?: true
     // hasVOD: any movie/series loaded, OR still loading its library. The loading
     // bridge keeps the tab from flickering "absent -> present" on cold launch /
     // source switch; a source that finishes with zero VOD hides the tab entirely.
@@ -326,9 +340,22 @@ fun MainScaffold(
     // the server list arrives; retires as soon as the real list loads.
     // Dispatcharr 0.30 dvr_access "none": server recordings are not
     // listable; only a local recording in progress shows the tab.
-    val dvrListable = state.playlist?.dispatcharrCanViewDvr() != false
+    // Capability.CanViewDvr. Denied (dvr_access "none" / level < 1) hides the
+    // server list; Unknown keeps it, so an unprobed account is never downgraded.
+    // DENIED is a real, user-visible state change (like favorites emptied), so
+    // it must also retire an already-shown tab below; the sticky rule must not
+    // pin it. Note state.playlist is NULL for the first frames after launch:
+    // that reads as Unknown (tab allowed), and the persisted hint would show
+    // the tab, so the retire-on-Denied pass below is what actually hides it
+    // once the active playlist and its capability snapshot land.
+    val dvrDenied = capsPlaylist?.dispatcharrCanViewDvr() == false
+    val dvrListable = !dvrDenied
+    // Local recordings belong to the DEVICE, not the server: an in-progress
+    // capture or any saved local row keeps the tab regardless of dvr_access.
+    val hasLocalDvrContent = dvrState.isLocalRecordingActive ||
+        dvrState.recordings.any { it.source == DvrViewModel.Source.Local }
     val hasRecordings = (dvrListable && (dvrState.recordings.isNotEmpty() || dvrState.hasRecordingsHint)) ||
-        dvrState.isLocalRecordingActive
+        hasLocalDvrContent
     // Sticky tabs (Streamer 2026-09-03, "every tab flashes"): the loaders
     // behind DVR and On Demand briefly report "nothing" while they transition
     // (On Demand dropped out for 0.8 s between its movie and series passes;
@@ -343,12 +370,16 @@ fun MainScaffold(
     // Every form factor now (Android TV joined 2026-09-10 with TvMediaPage).
     val isTvShell = rememberLiveTvFormFactor().isTv
     val splitVod = true
+    // Same three-state gate as DVR: Denied retires the tab even once shown,
+    // Unknown (including the null playlist on the first frames) keeps it.
+    val moviesDenied = capsPlaylist?.dispatcharrCanViewVod() == false
+    val seriesDenied = capsPlaylist?.dispatcharrCanViewSeries() == false
     val vodSourceOk = activePlaylistVodEnabled && !onDemandState.unsupportedSource
-    val hasMoviesContent = vodSourceOk &&
+    val hasMoviesContent = vodSourceOk && !moviesDenied &&
         (onDemandState.hasMovies || onDemandState.isLoading || onDemandState.hasDeferredXtreamContent)
-    val hasSeriesContent = vodSourceOk &&
+    val hasSeriesContent = vodSourceOk && !seriesDenied &&
         (onDemandState.hasSeries || onDemandState.isLoadingSeries || onDemandState.hasDeferredXtreamContent)
-    val stickyTabs = remember(state.playlist?.id) { mutableSetOf<AppTab>() }
+    val stickyTabs = remember(capsPlaylist?.id ?: state.playlist?.id) { mutableSetOf<AppTab>() }
     val tabs = run {
         val live = visibleTabs(
             // Phone/tablet: Favorites is a pinned Live TV group, not a tab (Apple parity).
@@ -363,6 +394,17 @@ fun MainScaffold(
         stickyTabs += live
         stickyTabs -= AppTab.Favorites
         if (!vodSourceOk) { stickyTabs -= AppTab.OnDemand; stickyTabs -= AppTab.Movies; stickyTabs -= AppTab.TVShows }
+        // A DENIED capability verdict is a real state change, not the transient
+        // "empty list / still loading" the sticky rule exists to absorb, so it
+        // retires the tab even after it has been shown. This is the dvr_access
+        // "none" case: the null playlist on the first frames reads as Unknown,
+        // the persisted hint paints the DVR pill, and without this the tab was
+        // pinned for the session once the verdict arrived. Local recordings
+        // still win over a server denial.
+        if (dvrDenied && !hasLocalDvrContent) stickyTabs -= AppTab.DVR
+        if (moviesDenied) stickyTabs -= AppTab.Movies
+        if (seriesDenied) stickyTabs -= AppTab.TVShows
+        if (moviesDenied && seriesDenied) stickyTabs -= AppTab.OnDemand
         visibleTabs(
             hasFavorites = AppTab.Favorites in stickyTabs,
             hasVod = AppTab.OnDemand in stickyTabs,
@@ -370,6 +412,21 @@ fun MainScaffold(
             splitVod = splitVod,
             hasMovies = AppTab.Movies in stickyTabs,
             hasSeries = AppTab.TVShows in stickyTabs,
+        )
+    }
+    // One line per change of the inputs, so "why is the tab hidden" is provable
+    // from logcat instead of from the screen.
+    androidx.compose.runtime.LaunchedEffect(
+        moviesDenied, seriesDenied, vodSourceOk, hasMoviesContent, hasSeriesContent,
+        onDemandState, tabs,
+    ) {
+        android.util.Log.i(
+            "MainScaffold",
+            "[VOD-TAB] vodEnabled=$activePlaylistVodEnabled unsupported=${onDemandState.unsupportedSource} " +
+                "sourceOk=$vodSourceOk | movies: denied=$moviesDenied has=${onDemandState.hasMovies} " +
+                "loading=${onDemandState.isLoading} -> show=$hasMoviesContent | " +
+                "series: denied=$seriesDenied has=${onDemandState.hasSeries} " +
+                "loading=${onDemandState.isLoadingSeries} -> show=$hasSeriesContent | tabs=$tabs",
         )
     }
     val miniPlayerVm: MiniPlayerViewModel = hiltViewModel()
@@ -1107,8 +1164,15 @@ fun MainScaffold(
         // app's Liquid-Glass bar. Tab screens already reserve ~104dp of bottom
         // content padding, so their last rows scroll clear of the pill.
     ) { padding ->
+      // The floating pill lays itself out ABOVE the system navigation inset
+      // (navigationBarsPadding + 10dp below), so a flat 96dp reserve left the
+      // last rows of a scrolling screen sitting under the pill on phones with
+      // a gesture bar or 3-button nav. Add that same system inset here so the
+      // reserve matches where the pill actually is.
+      val navBarInset = WindowInsets.navigationBars.asPaddingValues()
+          .calculateBottomPadding()
       androidx.compose.runtime.CompositionLocalProvider(
-          LocalTabBarBottomInset provides if (topTabBar) 16.dp else 96.dp,
+          LocalTabBarBottomInset provides if (topTabBar) 16.dp else 96.dp + navBarInset,
       ) {
       androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxSize()) {
         if (topTabBar) {
@@ -1573,8 +1637,12 @@ private fun FloatingTabBar(
                     text = tab.label,
                     fontSize = 10.sp,
                     lineHeight = 12.sp,
+                    // One line at every Text Size: the bar grows taller with
+                    // the text, a long label ellipsizes instead of wrapping.
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     fontWeight = FontWeight.Medium,
-                    color = if (isSel) MaterialTheme.colorScheme.primary
+                    color = if (isSel) MaterialTheme.colorScheme.textAccent
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

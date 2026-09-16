@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.main
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,12 +30,12 @@ fun PlaceholderScreen(tabLabel: String, hint: String) {
         Text(
             text = tabLabel,
             style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
             text = hint,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 12.dp),
         )

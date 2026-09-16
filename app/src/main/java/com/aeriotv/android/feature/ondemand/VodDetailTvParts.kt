@@ -1,5 +1,8 @@
 package com.aeriotv.android.feature.ondemand
 
+import com.aeriotv.android.ui.theme.forText
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -102,7 +106,7 @@ internal fun TvHeroActionButton(
     Row(
         modifier = modifier
             .tvFocusScale(focused, focusedScale = 1.04f)
-            .height(30.dp)
+            .heightIn(min = 30.dp)
             .clip(CircleShape)
             .background(fill)
             .border(
@@ -260,8 +264,8 @@ internal fun TvEpisodeCard(
         if (!meta.isNullOrBlank()) {
             Text(
                 text = meta,
-                fontSize = 9.sp,
-                lineHeight = 11.sp,
+                fontSize = 9.sp.subtext(),
+                lineHeight = 11.sp.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -315,8 +319,8 @@ internal fun TvDetailsBlock(
                             // tvOS .bodyMedium: 24 pt -> 12 sp, regular, with
                             // the font's own leading.
                             text = value,
-                            fontSize = 12.sp,
-                            lineHeight = 15.sp,
+                            fontSize = 12.sp.subtext(),
+                            lineHeight = 15.sp.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -450,8 +454,8 @@ internal fun TvDetailHero(
                         if (index > 0) {
                             Text(
                                 text = "·",
-                                fontSize = 11.sp,
-                                lineHeight = 13.sp,
+                                fontSize = 11.sp.subtext(),
+                                lineHeight = 13.sp.subtext(),
                                 color = MaterialTheme.colorScheme.tertiary,
                             )
                         }
@@ -459,8 +463,8 @@ internal fun TvDetailHero(
                             // tvOS: system(size: 22, weight: .medium)
                             // (VODDetailView.swift:716).
                             text = part,
-                            fontSize = 11.sp,
-                            lineHeight = 13.sp,
+                            fontSize = 11.sp.subtext(),
+                            lineHeight = 13.sp.subtext(),
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -471,8 +475,8 @@ internal fun TvDetailHero(
                         if (metaParts.isNotEmpty()) {
                             Text(
                                 text = "·",
-                                fontSize = 11.sp,
-                                lineHeight = 13.sp,
+                                fontSize = 11.sp.subtext(),
+                                lineHeight = 13.sp.subtext(),
                                 color = MaterialTheme.colorScheme.tertiary,
                             )
                         }
@@ -487,7 +491,7 @@ internal fun TvDetailHero(
                             fontSize = 11.sp,
                             lineHeight = 13.sp,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = MaterialTheme.colorScheme.textAccent,
                         )
                     }
                 }
@@ -495,12 +499,12 @@ internal fun TvDetailHero(
             if (!plot.isNullOrBlank()) {
                 Text(
                     text = plot,
-                    fontSize = 11.sp,
+                    fontSize = 11.sp.subtext(),
                     // tvOS .bodySmall keeps the font's own leading; a bare
                     // fontSize leaves Compose on bodyLarge's 24 sp line
                     // height, which read as double-spaced on the Streamer.
-                    lineHeight = 14.sp,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                    lineHeight = 14.sp.subtext(),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f).forText(),
                     maxLines = 4,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.width(380.dp),

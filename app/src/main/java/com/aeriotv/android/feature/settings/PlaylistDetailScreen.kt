@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -24,7 +26,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Wifi
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -345,7 +347,7 @@ fun PlaylistDetailScreen(
                     playlist.lastEpgRefreshedAt?.let { ts ->
                         Text(
                             text = "Last refreshed: ${DateFormat.getDateTimeInstance().format(Date(ts))}",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                         )
@@ -465,7 +467,7 @@ private fun Section(
         if (footer != null) {
             Text(
                 text = footer,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
@@ -490,7 +492,7 @@ private fun DetailRow(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(0.4f),
         )
@@ -571,7 +573,7 @@ private fun ActionRow(
                 is PlaylistViewModel.ActionStatus.Success -> Text(
                     text = status.message,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                 )
                 is PlaylistViewModel.ActionStatus.Failure -> Text(
                     text = status.message,

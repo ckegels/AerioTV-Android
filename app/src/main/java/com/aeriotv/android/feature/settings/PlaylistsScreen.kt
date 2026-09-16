@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -25,7 +26,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -144,7 +145,7 @@ fun PlaylistsScreen(
                 Text(
                     text = if (isTv) "No saved playlists. Select Add above to add one."
                     else "No saved playlists. Tap + to add one.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -333,7 +334,7 @@ private fun PlaylistRow(
             )
             Text(
                 text = "${playlist.channelCount} channels • ${playlist.sourceType}",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -350,7 +351,7 @@ private fun PlaylistRow(
         }
         Text(
             text = "▸",
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.bodyLarge.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

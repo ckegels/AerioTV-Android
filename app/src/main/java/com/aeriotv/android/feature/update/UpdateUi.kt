@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.update
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,7 +19,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import com.aeriotv.android.ui.scale.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -36,7 +37,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.aeriotv.android.ui.scale.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -248,7 +249,7 @@ private fun UpdatePromptBody(
     Spacer(Modifier.height(8.dp))
     Text(
         text = bodyText,
-        style = MaterialTheme.typography.bodyMedium,
+        style = MaterialTheme.typography.bodyMedium.subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (notes.isNotBlank()) {
@@ -258,7 +259,7 @@ private fun UpdatePromptBody(
         val notesScroll = rememberScrollState()
         Text(
             text = notes,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .heightIn(max = 180.dp)
@@ -275,7 +276,7 @@ private fun UpdatePromptBody(
         Spacer(Modifier.height(4.dp))
         Text(
             text = "$pct%",
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

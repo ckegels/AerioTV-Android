@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.multiview
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,7 +30,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
@@ -39,13 +41,13 @@ import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import com.aeriotv.android.ui.scale.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.ui.window.Dialog
+import com.aeriotv.android.ui.scale.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
@@ -312,7 +314,7 @@ fun AddToMultiviewSheet(
                 TextButton(onClick = onLaunch, enabled = canLaunch) {
                     Text(
                         text = "Play (${selected.size})",
-                        color = if (canLaunch) MaterialTheme.colorScheme.primary
+                        color = if (canLaunch) MaterialTheme.colorScheme.textAccent
                         else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -779,7 +781,7 @@ private fun NowPlayingPinnedRow(
     ) {
         Text(
             text = channel.channelNumber ?: "",
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(28.dp),
         )
@@ -787,7 +789,7 @@ private fun NowPlayingPinnedRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = channel.tvgLogo))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -801,7 +803,7 @@ private fun NowPlayingPinnedRow(
                 Text(
                     text = channel.name.take(2).uppercase(),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -820,7 +822,7 @@ private fun NowPlayingPinnedRow(
                 text = if (nowTitle.isNotBlank()) "Tile 1 · Now playing · $nowTitle"
                 else "Tile 1 · Now playing",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.textAccent,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -862,7 +864,7 @@ private fun ChannelPickerRow(
     ) {
         Text(
             text = channel.channelNumber ?: "",
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(28.dp),
         )
@@ -870,7 +872,7 @@ private fun ChannelPickerRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = channel.tvgLogo))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -884,7 +886,7 @@ private fun ChannelPickerRow(
                 Text(
                     text = channel.name.take(2).uppercase(),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -903,7 +905,7 @@ private fun ChannelPickerRow(
                 Text(
                     text = nowTitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -976,7 +978,7 @@ private fun VodPickerRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = posterUrl))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -984,7 +986,7 @@ private fun VodPickerRow(
                 AsyncImage(
                     model = posterUrl,
                     contentDescription = null,
-                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)),
+                    modifier = Modifier.size(36.dp).clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER)),
                 )
             } else {
                 Icon(
@@ -1008,7 +1010,7 @@ private fun VodPickerRow(
             if (subtitle.isNotBlank()) {
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1069,8 +1071,12 @@ private fun BackRow(onClick: () -> Unit) {
         Text(
             text = "All Series",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
             fontWeight = FontWeight.Medium,
         )
     }
 }
+
+/** The logo tile's own corner radius. The tile and the art inside it read this
+ *  one value, so they cannot drift. */
+private val LOGO_TILE_CORNER = 6.dp

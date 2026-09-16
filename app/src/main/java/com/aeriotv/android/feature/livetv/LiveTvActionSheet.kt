@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,7 +28,7 @@ fun LiveTvActionSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    androidx.compose.material3.ModalBottomSheet(
+    com.aeriotv.android.ui.scale.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -43,7 +44,7 @@ fun LiveTvActionSheet(
                 )
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

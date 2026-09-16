@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.ondemand
 
+import com.aeriotv.android.ui.scale.subtext
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.Image
@@ -52,7 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.aeriotv.android.ui.scale.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
 import com.aeriotv.android.core.network.TmdbKnownForItem
@@ -205,12 +206,12 @@ fun PersonBioDialog(
                                 )
                                 biography.isNullOrBlank() -> Text(
                                     text = "No biography available.",
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.bodyMedium.subtext(),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 else -> Text(
                                     text = biography,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.bodyMedium.subtext(),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -320,7 +321,7 @@ private fun TmdbPersonQr(personId: String) {
         Spacer(Modifier.height(4.dp))
         Text(
             text = "View on TMDB",
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -385,7 +386,7 @@ private fun KnownForCard(title: String, posterUrl: String?, onClick: (() -> Unit
         Spacer(Modifier.height(6.dp))
         Text(
             text = title,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -397,7 +398,7 @@ private fun KnownForCard(title: String, posterUrl: String?, onClick: (() -> Unit
 private fun LifeDetailLine(label: String, value: String) {
     Text(
         text = "$label: $value",
-        style = MaterialTheme.typography.bodyMedium,
+        style = MaterialTheme.typography.bodyMedium.subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 4.dp),
     )

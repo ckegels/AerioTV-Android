@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.scale.subtext
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,12 +31,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import com.aeriotv.android.ui.scale.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.SegmentedButton
@@ -348,7 +349,7 @@ fun RecordProgramSheet(
                                 )
                                 Column {
                                     Text(mode.label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground)
-                                    Text(mode.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(mode.detail, style = MaterialTheme.typography.bodySmall.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -357,7 +358,7 @@ fun RecordProgramSheet(
                         Spacer(Modifier.height(10.dp))
                         SectionLabel("Rule Options")
                         Spacer(Modifier.height(6.dp))
-                        Text("Title match", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Title match", style = MaterialTheme.typography.bodySmall.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                             val modes = listOf("exact" to "Exact", "contains" to "Contains", "search" to "Search", "regex" to "Regex")
                             modes.forEachIndexed { i, (wire, label) ->
@@ -395,7 +396,7 @@ fun RecordProgramSheet(
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Untagged episodes count as new", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground)
-                                Text("For guides that only tag repeats.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("For guides that only tag repeats.", style = MaterialTheme.typography.bodySmall.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(checked = ruleUntaggedIsNew, onCheckedChange = { ruleUntaggedIsNew = it })
                         }
@@ -405,7 +406,7 @@ fun RecordProgramSheet(
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Match on every channel", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground)
-                                Text("Off records only on ${target.channelName}.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Off records only on ${target.channelName}.", style = MaterialTheme.typography.bodySmall.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(checked = ruleAllChannels, onCheckedChange = { ruleAllChannels = it })
                         }
@@ -419,7 +420,7 @@ fun RecordProgramSheet(
                 if (isLive) {
                     Text(
                         text = "Pre-roll unavailable (program already started).",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -494,8 +495,8 @@ fun RecordProgramSheet(
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                text = "Recording to the Dispatcharr server requires a Dispatcharr admin account.",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = "Recording to the Dispatcharr server needs DVR manage access on your account. Contact your server administrator for more information.",
+                                style = MaterialTheme.typography.bodySmall.subtext(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -519,7 +520,7 @@ fun RecordProgramSheet(
                             )
                             Text(
                                 text = "Detect and remove ad breaks after recording. Processed server-side.",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodySmall.subtext(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -585,7 +586,7 @@ fun RecordProgramSheet(
                 if (editTarget == CustomBufferTarget.PreRoll && floor < 0) {
                     Text(
                         text = "Step below zero to start the recording after the listed start time.",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.subtext(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),
                     )
@@ -646,7 +647,7 @@ private fun TvRecordForm(
     }
     var showCustomRule by remember { mutableStateOf(false) }
     val hasNoRecordingPath = isDispatcharr && !isLive && !canRecordToServer
-    androidx.compose.ui.window.Dialog(
+    com.aeriotv.android.ui.scale.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
@@ -670,7 +671,7 @@ private fun TvRecordForm(
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(if (isLive) "Record from Now" else "Record Program", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = colors.onSurface)
                         Text(target.title.ifBlank { "Untitled" }, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurface, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                        Text("${target.channelName} · ${formatTimeRange(target)}", fontSize = 11.sp, color = colors.onSurfaceVariant)
+                        Text("${target.channelName} · ${formatTimeRange(target)}", fontSize = 11.sp.subtext(), color = colors.onSurfaceVariant)
                     }
                 }
 
@@ -727,7 +728,7 @@ private fun TvRecordForm(
                         Text(
                             if (disabled) "Comskip runs server-side. Switch the destination to Dispatcharr server to enable."
                             else "Server-side: detects and removes commercial breaks after the recording completes, when Comskip is configured on the Dispatcharr server.",
-                            fontSize = 9.sp, lineHeight = 12.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 1.dp),
+                            fontSize = 9.sp.subtext(), lineHeight = 12.sp.subtext(), color = colors.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 1.dp),
                         )
                     }
                 }
@@ -735,14 +736,14 @@ private fun TvRecordForm(
                     TvNoteBox("Keep AerioTV open. Closing the app will stop this recording.")
                 }
                 if (hasNoRecordingPath) {
-                    TvNoteBox("Recording requires DVR access on Dispatcharr", "Scheduling a recording on the Dispatcharr server needs an account with DVR access set to Manage. Your account can watch and record live programs to this device, but not schedule server recordings. Ask your Dispatcharr administrator for access, or wait until the program is airing to record it on this device.")
+                    TvNoteBox("Recording requires DVR access on Dispatcharr", "Scheduling a recording on the Dispatcharr server needs DVR manage access on your account. Your account can watch and record live programs to this device, but not schedule server recordings. Contact your server administrator for more information, or wait until the program is airing to record it on this device.")
                 }
 
                 if (!hasNoRecordingPath) {
                     Column(modifier = Modifier.fillMaxWidth().padding(top = 3.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
                             if (usingRule) tvSeriesRuleSummary(target, ruleMode, ruleAllChannels) else tvRecordingWindowSummary(target, isLive, preRoll, postRoll),
-                            fontSize = 11.sp, color = colors.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            fontSize = 11.sp.subtext(), color = colors.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         )
                         TvRecordPill(
                             label = when { submitting -> "Scheduling…"; usingRule -> "Save Rule"; else -> "Record" },
@@ -815,7 +816,7 @@ private fun TvNoteBox(title: String, detail: String? = null) {
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(title, fontSize = 11.sp, fontWeight = if (detail != null) FontWeight.Bold else FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
-        if (detail != null) Text(detail, fontSize = 10.sp, lineHeight = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (detail != null) Text(detail, fontSize = 10.sp.subtext(), lineHeight = 13.sp.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -869,7 +870,7 @@ private fun LabeledValue(label: String, value: String) {
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(

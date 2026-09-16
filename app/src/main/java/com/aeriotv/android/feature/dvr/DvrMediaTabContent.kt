@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.dvr
 
+import com.aeriotv.android.ui.scale.subtext
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -38,9 +40,9 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material3.AlertDialog
+import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -253,8 +255,15 @@ fun DvrMediaTabContent(
     // search matches title, subtitle and description; Filter hides channels.
     val hiddenChannels by settingsVm.hiddenDvrChannels.collectAsStateWithLifecycle(initialValue = emptySet())
     val channelNames = remember(library, channelsById) { library.map(channelName).filter { it.isNotBlank() }.distinct().sorted() }
-    var query by rememberSaveable { mutableStateOf("") }
-    var searchActive by rememberSaveable { mutableStateOf(false) }
+    // Not rememberSaveable: see MediaTabContent. A restored open search
+    // re-ran the field's focus effect and summoned the keyboard on the way
+    // back from the fullscreen player.
+    var query by remember { mutableStateOf("") }
+    var searchActive by remember { mutableStateOf(false) }
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {
+        searchActive = false
+        query = ""
+    }
     val isSearching = query.isNotBlank()
     var showManageChannels by remember { mutableStateOf(false) }
     val filteredLibrary = remember(library, kindOf, selectedKind, sortOrder, hiddenChannels, query, channelsById) {
@@ -279,6 +288,12 @@ fun DvrMediaTabContent(
     var infoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var pendingDelete by remember { mutableStateOf<Rec?>(null) }
     var pendingEdit by remember { mutableStateOf<Rec?>(null) }
+    // Capability.CanManageDvr via LocalDvrAccess: a Dispatcharr account whose
+    // custom_properties.dvr_access is "view" lists and plays server
+    // recordings but must not see stop / edit / cancel / comskip /
+    // Delete from Server. Local rows are this device's own files and are
+    // never gated (Logan 2026-09-15).
+    val canManageDvr = com.aeriotv.android.ui.LocalDvrAccess.current == "manage"
     var showSort by remember { mutableStateOf(false) }
     val gridState = if (com.aeriotv.android.ui.settings.rememberIsTvDevice()) com.aeriotv.android.ui.tv.rememberTvMediaGridState() else rememberLazyGridState()
     val bottomInset = LocalTabBarBottomInset.current
@@ -337,8 +352,11 @@ fun DvrMediaTabContent(
                 add(com.aeriotv.android.core.tv.TvMenuAction("Play") { play(rec) })
                 if (isServer) {
                     add(com.aeriotv.android.core.tv.TvMenuAction("Watch from Beginning") { playFromStart(rec) })
+                    // Save to Device is a read (GET the file), never gated.
                     add(com.aeriotv.android.core.tv.TvMenuAction("Save to Device") { scope.launch { viewModel.saveToDevice(rec).onFailure { toast("Save failed: ${it.message}") }.onSuccess { toast("Saving to device") } } })
-                    add(com.aeriotv.android.core.tv.TvMenuAction("Remove Commercials") { scope.launch { viewModel.applyComskip(rec).onFailure { toast("Comskip failed: ${it.message}") }.onSuccess { toast("Comskip started") } } })
+                    if (canManageDvr) {
+                        add(com.aeriotv.android.core.tv.TvMenuAction("Remove Commercials") { scope.launch { viewModel.applyComskip(rec).onFailure { toast("Comskip failed: ${it.message}") }.onSuccess { toast("Comskip started") } } })
+                    }
                 }
             }
             if (s == DvrViewModel.Recording.Status.Recording) {
@@ -346,13 +364,19 @@ fun DvrMediaTabContent(
                     add(com.aeriotv.android.core.tv.TvMenuAction("Start at Live") { jumpToLive(rec) })
                     add(com.aeriotv.android.core.tv.TvMenuAction("Watch from Beginning") { playFromStart(rec) })
                 }
-                add(com.aeriotv.android.core.tv.TvMenuAction("Stop Recording") { scope.launch { viewModel.stopRecording(rec).onFailure { toast("Stop failed: ${it.message}") } } })
+                if (!isServer || canManageDvr) {
+                    add(com.aeriotv.android.core.tv.TvMenuAction("Stop Recording") { scope.launch { viewModel.stopRecording(rec).onFailure { toast("Stop failed: ${it.message}") } } })
+                }
             }
             if (s == DvrViewModel.Recording.Status.Scheduled) {
-                if (isServer) add(com.aeriotv.android.core.tv.TvMenuAction("Edit Recording") { pendingEdit = rec })
-                add(com.aeriotv.android.core.tv.TvMenuAction("Cancel Recording", destructive = true) { pendingDelete = rec })
-            } else {
-                add(com.aeriotv.android.core.tv.TvMenuAction(if (isServer) "Delete from Server" else "Delete", destructive = true) { pendingDelete = rec })
+                if (isServer && canManageDvr) add(com.aeriotv.android.core.tv.TvMenuAction("Edit Recording") { pendingEdit = rec })
+                if (!isServer || canManageDvr) {
+                    add(com.aeriotv.android.core.tv.TvMenuAction("Cancel Recording", destructive = true) { pendingDelete = rec })
+                }
+            } else if (!isServer || canManageDvr) {
+                // A local row's bytes are on this device: "Delete from Device"
+                // is always offered. The server copy stays behind dvr_access.
+                add(com.aeriotv.android.core.tv.TvMenuAction(if (isServer) "Delete from Server" else "Delete from Device", destructive = true) { pendingDelete = rec })
             }
         }
     }
@@ -372,7 +396,7 @@ fun DvrMediaTabContent(
             Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("No Recordings", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
                 Spacer(Modifier.height(6.dp))
-                Text("Record a program from the guide or Live TV.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Record a program from the guide or Live TV.", fontSize = 13.sp.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     } else {
@@ -384,6 +408,7 @@ fun DvrMediaTabContent(
                 onSecondary = { if (rec.effectiveStatus(now) == DvrViewModel.Recording.Status.Recording) jumpToLive(rec) else playFromStart(rec) },
                 onStop = { scope.launch { viewModel.stopRecording(rec) } },
                 onInfo = { showInfo(rec) },
+                canManage = canManageDvr || rec.source != DvrViewModel.Source.Server,
                 menu = { close -> menuItems(rec, close) })
         }
         val recentCard: @Composable (Rec) -> Unit = { rec ->
@@ -413,6 +438,7 @@ fun DvrMediaTabContent(
                 onPlay = ::play, onPlayFromStart = ::playFromStart, onJumpToLive = ::jumpToLive,
                 onStop = { rec -> scope.launch { viewModel.stopRecording(rec) } }, onInfo = ::showInfo,
                 isLoading = state.isLoading,
+                canManageDvr = canManageDvr,
             )
         } else
         MediaPageScaffold(
@@ -512,8 +538,25 @@ fun DvrMediaTabContent(
         val scheduledNow = rec.effectiveStatus(now) == DvrViewModel.Recording.Status.Scheduled
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text(if (scheduledNow) "Cancel Recording" else "Delete Recording") },
-            text = { Text(if (scheduledNow) "Cancel the scheduled recording of \"${rec.title}\"?" else "Delete \"${rec.title}\"? This cannot be undone.") },
+            title = {
+                Text(
+                    when {
+                        scheduledNow -> "Cancel Recording"
+                        rec.source == DvrViewModel.Source.Server -> "Delete from Server"
+                        else -> "Delete from Device"
+                    },
+                )
+            },
+            text = {
+                Text(
+                    when {
+                        scheduledNow -> "Cancel the scheduled recording of \"${rec.title}\"?"
+                        rec.source == DvrViewModel.Source.Server ->
+                            "Delete \"${rec.title}\" from the Dispatcharr server? This cannot be undone."
+                        else -> "Delete \"${rec.title}\" from this device? This cannot be undone."
+                    },
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     val target = rec; pendingDelete = null
@@ -574,8 +617,10 @@ fun DvrPosterCard(
         }
         // Centered under the poster (Logan 2026-09-10, all platforms).
         Text(rec.title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().height(30.dp))
-        Text(metaLine(rec, now), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            // Two 14sp lines (+2dp): sp-derived so the grid stays aligned at every Text Size.
+            modifier = Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { 28.sp.toDp() } + 2.dp))
+        Text(metaLine(rec, now), fontSize = 10.sp.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f), maxLines = 1, overflow = TextOverflow.Ellipsis,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp))
     }
 }
@@ -586,6 +631,8 @@ fun DvrHeroCard(
     rec: Rec, channelName: String, channelLogo: String?, progress: Float, now: Long,
     onPrimary: () -> Unit, onSecondary: () -> Unit, onStop: () -> Unit, onInfo: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Capability.CanManageDvr: a "view" account never sees Stop Recording. */
+    canManage: Boolean = true,
     /** The row's menu behind the right-most options circle (Logan 2026-09-10). */
     menu: (@Composable (close: () -> Unit) -> Unit)? = null,
 ) {
@@ -609,14 +656,14 @@ fun DvrHeroCard(
             Text(rec.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, lineHeight = 26.sp, color = MaterialTheme.colorScheme.onBackground, maxLines = 2, overflow = TextOverflow.Ellipsis)
             rec.subTitle?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             val meta = listOfNotNull(channelName.takeIf { it.isNotBlank() }, metaLine(rec, now)).joinToString(" · ")
-            Text(meta, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(meta, fontSize = 13.sp.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 4.dp)) {
                 if (recording) {
                     if (canPlay) {
                         HeroPill("Watch from Start", Icons.Filled.PlayArrow, primary = true, onPrimary)
                         HeroRound(Icons.Filled.Sensors, "Jump to Live", onSecondary)
                     }
-                    HeroRound(Icons.Filled.Stop, "Stop Recording", onStop)
+                    if (canManage) HeroRound(Icons.Filled.Stop, "Stop Recording", onStop)
                 } else {
                     HeroPill(if (progress > 0f) "Resume" else "Play", Icons.Filled.PlayArrow, primary = true, onPrimary)
                     if (progress > 0f) HeroRound(Icons.Filled.Replay, "Play from Beginning", onSecondary)
@@ -624,7 +671,7 @@ fun DvrHeroCard(
                 HeroRound(Icons.Outlined.Info, "Details", onInfo)
                 if (menu != null) Box {
                     HeroRound(Icons.Filled.MoreHoriz, "Options") { menuOpen = true }
-                    androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    com.aeriotv.android.ui.scale.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         menu { menuOpen = false }
                     }
                 }
@@ -636,7 +683,7 @@ fun DvrHeroCard(
 @Composable
 private fun HeroPill(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, primary: Boolean, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.height(40.dp).clip(CircleShape)
+        modifier = Modifier.heightIn(min = 40.dp).clip(CircleShape)
             .background(if (primary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
             .clickable(onClick = onClick).padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -697,6 +744,8 @@ private fun TvDvrPage(
     onStop: (Rec) -> Unit,
     onInfo: (Rec) -> Unit,
     isLoading: Boolean,
+    /** Capability.CanManageDvr: a "view" account never sees Stop Recording. */
+    canManageDvr: Boolean = true,
 ) {
     val red = Color(0xFFFF4757)
     val timeFmt = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
@@ -722,7 +771,9 @@ private fun TvDvrPage(
                     add(com.aeriotv.android.feature.movies.tv.TvHeroButton("Watch from Start", Icons.Filled.PlayArrow, primary = true, id = "Primary") { armHero(); onPlayFromStart(rec) })
                     add(com.aeriotv.android.feature.movies.tv.TvHeroButton("Jump to Live", Icons.Filled.Sensors, id = "JumpToLive") { armHero(); onJumpToLive(rec) })
                 }
-                add(com.aeriotv.android.feature.movies.tv.TvHeroButton("Stop Recording", Icons.Filled.Stop, id = "Stop") { onStop(rec) })
+                if (canManageDvr || rec.source != DvrViewModel.Source.Server) {
+                    add(com.aeriotv.android.feature.movies.tv.TvHeroButton("Stop Recording", Icons.Filled.Stop, id = "Stop") { onStop(rec) })
+                }
             } else {
                 add(com.aeriotv.android.feature.movies.tv.TvHeroButton(if (progress > 0f) "Resume" else "Play", Icons.Filled.PlayArrow, primary = true, id = "Primary") { armHero(); onPlay(rec) })
                 if (progress > 0f) add(com.aeriotv.android.feature.movies.tv.TvHeroButton("Play from Beginning", Icons.Filled.Replay, id = "FromStart") { armHero(); onPlayFromStart(rec) })

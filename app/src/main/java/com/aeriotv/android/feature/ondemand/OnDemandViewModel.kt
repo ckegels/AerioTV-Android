@@ -36,6 +36,9 @@ import kotlinx.coroutines.flow.first
 import com.aeriotv.android.core.preferences.VodVersionItemType
 import com.aeriotv.android.core.preferences.VodVersionSelectionStore
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
+import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewVod
+import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewSeries
+import com.aeriotv.android.core.data.db.entity.capabilitiesNeedProbe
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Deferred
@@ -53,6 +56,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -204,14 +210,32 @@ class OnDemandViewModel @Inject constructor(
         // maps on a playlist switch; the new source restores its own rows.
         val selectedMovieVersion: Map<Int, VodProviderOption> = emptyMap(),
         val selectedSeriesVersion: Map<Int, VodProviderOption> = emptyMap(),
+        // Per-half permission verdicts (Capability.CanViewVod / CanViewSeries).
+        // These are INDEPENDENT of [unsupportedSource], which means "this
+        // source does no VOD at all". Denying only the movies half must leave
+        // the series half fully working (tab, library, rails, search), so a
+        // denial never touches the shared flag; it only raises its own.
+        // Re-derived at the top of every sweep, so a capability flipped back to
+        // allowed on the server clears it without a reinstall.
+        val moviesDenied: Boolean = false,
+        val seriesDenied: Boolean = false,
     ) {
         // While searching, render the server-side results (full library). While
         // browsing, render the progressively-paginated list. The search request
         // itself lives in setSearchQuery(); these getters just pick the source.
-        val visible: List<DispatcharrVODMovie> get() =
-            if (searchQuery.isBlank()) movies else searchResults
-        val visibleSeries: List<DispatcharrVODSeries> get() =
-            if (seriesSearchQuery.isBlank()) series else seriesSearchResults
+        // A denied half never renders rows anywhere (grid, rails, search
+        // results, Continue Watching, multiview add), even if a cached list or
+        // an in-flight search result is still in state.
+        val visible: List<DispatcharrVODMovie> get() = when {
+            moviesDenied -> emptyList()
+            searchQuery.isBlank() -> movies
+            else -> searchResults
+        }
+        val visibleSeries: List<DispatcharrVODSeries> get() = when {
+            seriesDenied -> emptyList()
+            seriesSearchQuery.isBlank() -> series
+            else -> seriesSearchResults
+        }
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -495,7 +519,23 @@ class OnDemandViewModel @Inject constructor(
             val decodeStartedAt = android.os.SystemClock.elapsedRealtime()
             val meta = identity?.let { loadSnapshotMetadata(it) }
             val decodeMs = android.os.SystemClock.elapsedRealtime() - decodeStartedAt
-            if (playlist == null || identity == null) { refresh(); refreshSeries(); return@launch }
+            // Per-half permission verdict, applied BEFORE the catalog is
+            // attached: a half the server has denied must not resurface from
+            // the stored catalog (rails, search, Continue Watching, multiview
+            // add all read the same lists), and the flags must be right on the
+            // first frame because a fresh install means no sweep runs to set
+            // them.
+            val moviesDenied = playlist != null &&
+                (!playlist.vodEnabled || !playlist.dispatcharrCanViewVod())
+            val seriesDenied = playlist != null &&
+                (!playlist.vodEnabled || !playlist.dispatcharrCanViewSeries())
+            _state.update { it.copy(moviesDenied = moviesDenied, seriesDenied = seriesDenied) }
+            if (playlist == null || identity == null) {
+                launchRestoreDone.complete(Unit)
+                refresh()
+                refreshSeries()
+                return@launch
+            }
             runCatching { catalogStore.pruneIdentities(playlistRepository.allOnce().mapTo(HashSet()) { it.id }, identity) }
                 .onFailure { warnUnlessCancelled("VOD catalog prune failed", it) }
             val movieCount = catalogStore.count(identity, VodCatalogStore.KIND_MOVIE)
@@ -503,21 +543,26 @@ class OnDemandViewModel @Inject constructor(
             if (movieCount == 0 && seriesCount == 0) {
                 // Nothing stored: there is nothing to show instantly, so this
                 // one sweep stays on the launch path.
+                launchRestoreDone.complete(Unit)
                 refresh()
                 refreshSeries()
                 return@launch
             }
-            if (playlist.vodEnabled && playlist.dispatcharrVodMoviesEnabled) movieCatalogKey.value = identity
-            if (playlist.vodEnabled && playlist.dispatcharrVodSeriesEnabled) seriesCatalogKey.value = identity
-            val movieGroups = meta?.movieGroupNames.orEmpty()
+            // A denied half is simply not attached to its catalog. The rows
+            // stay in Room untouched, so a later grant reattaches instantly
+            // (the Room-era replacement for shelving the JSON lists).
+            if (!moviesDenied) movieCatalogKey.value = identity
+            if (!seriesDenied) seriesCatalogKey.value = identity
+            val movieGroups = if (moviesDenied) emptyList() else meta?.movieGroupNames.orEmpty()
                 .ifEmpty { catalogStore.distinctCategories(identity, VodCatalogStore.KIND_MOVIE) }
-            val seriesGroups = meta?.seriesGroupNames.orEmpty()
+            val seriesGroups = if (seriesDenied) emptyList() else meta?.seriesGroupNames.orEmpty()
                 .ifEmpty { catalogStore.distinctCategories(identity, VodCatalogStore.KIND_SERIES) }
             _state.update {
                 it.copy(
-                    totalCount = movieCount, seriesTotalCount = seriesCount,
-                    movieGroupNames = movieGroups.ifEmpty { it.movieGroupNames },
-                    seriesGroupNames = seriesGroups.ifEmpty { it.seriesGroupNames },
+                    totalCount = if (moviesDenied) 0 else movieCount,
+                    seriesTotalCount = if (seriesDenied) 0 else seriesCount,
+                    movieGroupNames = if (moviesDenied) emptyList() else movieGroups.ifEmpty { it.movieGroupNames },
+                    seriesGroupNames = if (seriesDenied) emptyList() else seriesGroups.ifEmpty { it.seriesGroupNames },
                     unsupportedSource = false, isLoading = false, isLoadingSeries = false,
                 )
             }
@@ -534,8 +579,34 @@ class OnDemandViewModel @Inject constructor(
             moviesCompletedAtMs = movieSweep?.takeIf { !it.open }?.completedAtMs ?: 0L
             seriesCompletedAtMs = seriesSweep?.takeIf { !it.open }?.completedAtMs ?: 0L
             val fresh = { at: Long -> at > 0L && limitMs > 0 && (now - at) in 0 until limitMs }
-            val moviesFresh = fresh(moviesCompletedAtMs)
-            val seriesFresh = fresh(seriesCompletedAtMs)
+            // A half written while it was DENIED, or written by a build that
+            // predates the denied markers, is never "fresh": it may be the
+            // emptied library a blocked capability left behind, and trusting it
+            // is exactly what kept Movies hidden after the user re-enabled it
+            // on the server (phone 2026-09-15). Force that half's sweep,
+            // cadence and change-probe gates ignored.
+            val legacySnapshot = (meta?.schema ?: 0) < VodLibrarySnapshotStore.SCHEMA
+            // The LATCH is armed from the stored metadata alone, never from the
+            // current capability: at this point the capability probe may not
+            // have landed yet (phone 2026-09-15 restored at :31 and probed at
+            // :32), so a verdict read here would be the stale, still-denied
+            // one. Whoever sees the allowed verdict first, this launch's gate
+            // below or the capability collector when the probe lands, disarms
+            // the latch by running the full sweep.
+            if (meta?.moviesDenied == true || legacySnapshot) pendingMoviesRecovery = true
+            if (meta?.seriesDenied == true || legacySnapshot) pendingSeriesRecovery = true
+            val forceMovies = !moviesDenied && pendingMoviesRecovery
+            val forceSeries = !seriesDenied && pendingSeriesRecovery
+            Log.i(
+                TAG,
+                "[VOD-CACHE] written-under-denial latch: movies=$pendingMoviesRecovery " +
+                    "series=$pendingSeriesRecovery (legacy=$legacySnapshot); " +
+                    "forcing now movies=$forceMovies series=$forceSeries",
+            )
+            // A denied half is not swept at all; the sweep's own gate would
+            // return immediately anyway, and asking for it only logs noise.
+            val moviesFresh = moviesDenied || (!forceMovies && fresh(moviesCompletedAtMs))
+            val seriesFresh = seriesDenied || (!forceSeries && fresh(seriesCompletedAtMs))
             // Change-probe baseline travels with the snapshot metadata.
             meta?.let {
                 moviesProbeCount = it.moviesProbeCount
@@ -552,7 +623,12 @@ class OnDemandViewModel @Inject constructor(
             enrichArt(isMovie = true)
             enrichArt(isMovie = false)
             Log.i(TAG, "[VOD-CACHE] launch cadence: movies=${if (moviesFresh) "fresh" else "stale"} series=${if (seriesFresh) "fresh" else "stale"}")
-            scheduleBackgroundSweep(moviesStale = !moviesFresh, seriesStale = !seriesFresh)
+            launchRestoreDone.complete(Unit)
+            scheduleBackgroundSweep(
+                moviesStale = !moviesFresh,
+                seriesStale = !seriesFresh,
+                forced = forceMovies || forceSeries,
+            )
         }
     }
 
@@ -594,10 +670,14 @@ class OnDemandViewModel @Inject constructor(
      *    disagrees with the baseline the snapshot recorded, so the library
      *    plainly moved and waiting out the cadence would serve stale rows.
      */
-    private fun scheduleBackgroundSweep(moviesStale: Boolean, seriesStale: Boolean) {
+    private fun scheduleBackgroundSweep(
+        moviesStale: Boolean,
+        seriesStale: Boolean,
+        forced: Boolean = false,
+    ) {
         viewModelScope.launch {
             settleGate.awaitSettled()
-            var gate = if (moviesStale || seriesStale) "cadence" else null
+            var gate = if (forced) "capability" else if (moviesStale || seriesStale) "cadence" else null
             var sweepMovies = moviesStale
             var sweepSeries = seriesStale
             if (gate == null) {
@@ -676,6 +756,52 @@ class OnDemandViewModel @Inject constructor(
     private var seriesProbeCount = 0
     private var seriesProbeNewest = ""
 
+    // ---- Shelved halves (2026-09-15).
+    // A half the server has denied is cleared from UI state, but its real
+    // library must NOT be lost from disk: re-granting the capability should
+    // bring the tab back instantly, not force a slow full re-sweep of a
+    // library that was perfectly valid. So the rows are moved here instead of
+    // being dropped, and [persistSnapshot] writes the shelved copy back for
+    // that half. The memory cost is exactly what the half occupied before it
+    // was denied, and it is released as soon as a sweep repopulates the half.
+    private var shelvedMovies: List<DispatcharrVODMovie>? = null
+    private var shelvedMovieGroupNames: List<String> = emptyList()
+    private var shelvedSeries: List<DispatcharrVODSeries>? = null
+    private var shelvedSeriesGroupNames: List<String> = emptyList()
+
+    // ---- Pending capability recovery (2026-09-15, round 2).
+    // Set at launch when the stored snapshot says that half was written while
+    // DENIED (or by a build older than the denied markers). It is a LATCH, not
+    // a one-shot decision: the capability probe can land either side of the
+    // cache restore (phone probes after, Streamer before), so a verdict read
+    // once at restore time is a coin flip. The latch survives until that half
+    // actually completes a sweep while allowed, so whichever order the probe
+    // and the restore happen in, the half re-sweeps in full exactly once,
+    // ignoring the cadence window, the change probe and the stored counts.
+    private var pendingMoviesRecovery = false
+    private var pendingSeriesRecovery = false
+
+    // Completed once the launch restore has published, so the capability
+    // collector cannot race ahead of it and have its rows overwritten.
+    private val launchRestoreDone = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /** Move a half's rows off screen but keep them for the next save. */
+    private fun shelveMovies() {
+        val st = _state.value
+        if (st.movies.isNotEmpty()) {
+            shelvedMovies = st.movies
+            shelvedMovieGroupNames = st.movieGroupNames
+        }
+    }
+
+    private fun shelveSeries() {
+        val st = _state.value
+        if (st.series.isNotEmpty()) {
+            shelvedSeries = st.series
+            shelvedSeriesGroupNames = st.seriesGroupNames
+        }
+    }
+
     /**
      * Background TMDB art pass over a library once its sweep completes
      * (Apple MoviesView.enrichArt / VODStore, MoviesView.swift:143). Titles
@@ -734,24 +860,56 @@ class OnDemandViewModel @Inject constructor(
      */
     private fun persistSnapshot(completed: MediaSweep? = null) {
         val now = System.currentTimeMillis()
+        val st0 = _state.value
+        // A DENIED half never completes, so it never earns a completion stamp.
+        // Stamping it was the whole of the 2026-09-15 phone bug: the series
+        // sweep finished while movies was denied, the save carried an emptied
+        // movies list, and the next launch read "movies=fresh" off that file
+        // and skipped the sweep, so re-granting the capability could not bring
+        // the tab back.
         when (completed) {
-            MediaSweep.Movies -> moviesCompletedAtMs = now
-            MediaSweep.Series -> seriesCompletedAtMs = now
-            MediaSweep.Both -> { moviesCompletedAtMs = now; seriesCompletedAtMs = now }
+            MediaSweep.Movies -> if (!st0.moviesDenied) {
+                moviesCompletedAtMs = now; pendingMoviesRecovery = false
+            }
+            MediaSweep.Series -> if (!st0.seriesDenied) {
+                seriesCompletedAtMs = now; pendingSeriesRecovery = false
+            }
+            MediaSweep.Both -> {
+                if (!st0.moviesDenied) { moviesCompletedAtMs = now; pendingMoviesRecovery = false }
+                if (!st0.seriesDenied) { seriesCompletedAtMs = now; pendingSeriesRecovery = false }
+            }
             null -> Unit
         }
         viewModelScope.launch {
             val playlist = playlistRepository.activePlaylist() ?: return@launch
             val st = _state.value
-            // Metadata only: the titles are in the Room catalog (GH #109).
+            // Metadata only: the titles live in the Room catalog (GH #109),
+            // so a denied half's rows are never at risk from the other half's
+            // save (the shelving this replaces existed only to protect them in
+            // the JSON file). What still MUST be recorded is the denial itself
+            // and the zeroed freshness markers, or the next launch reads the
+            // denied half as fresh and never re-sweeps it once it is allowed
+            // again (phone 2026-09-15).
             snapshotStore.save(
                 VodLibrarySnapshotStore.Snapshot(
                     identity = snapshotStore.identity(playlist),
                     savedAtMs = now,
-                    movieGroupNames = st.movieGroupNames, seriesGroupNames = st.seriesGroupNames,
-                    moviesCompletedAtMs = moviesCompletedAtMs, seriesCompletedAtMs = seriesCompletedAtMs,
-                    moviesProbeCount = moviesProbeCount, moviesProbeNewest = moviesProbeNewest,
-                    seriesProbeCount = seriesProbeCount, seriesProbeNewest = seriesProbeNewest,
+                    movieGroupNames = if (st.moviesDenied) shelvedMovieGroupNames else st.movieGroupNames,
+                    seriesGroupNames = if (st.seriesDenied) shelvedSeriesGroupNames else st.seriesGroupNames,
+                    // Freshness is never inferable for a denied half.
+                    moviesCompletedAtMs = if (st.moviesDenied) 0L else moviesCompletedAtMs,
+                    seriesCompletedAtMs = if (st.seriesDenied) 0L else seriesCompletedAtMs,
+                    moviesProbeCount = if (st.moviesDenied) 0 else moviesProbeCount,
+                    moviesProbeNewest = if (st.moviesDenied) "" else moviesProbeNewest,
+                    seriesProbeCount = if (st.seriesDenied) 0 else seriesProbeCount,
+                    seriesProbeNewest = if (st.seriesDenied) "" else seriesProbeNewest,
+                    moviesDenied = st.moviesDenied,
+                    seriesDenied = st.seriesDenied,
+                    // Stamp the CURRENT schema. Without this every file decoded
+                    // as schema 0 and `legacySnapshot` was permanently true, so
+                    // both halves force-swept on every single launch and the
+                    // cadence gate never applied.
+                    schema = VodLibrarySnapshotStore.SCHEMA,
                 ),
             )
         }
@@ -800,6 +958,46 @@ class OnDemandViewModel @Inject constructor(
                     refreshSeries()
                 }
         }
+        // Per-half capability changes on the SAME playlist (a re-probe after the
+        // admin flips vod_movies_enabled / vod_series_enabled). Each half is
+        // independent: a denial retires only its own library, and a grant
+        // re-sweeps only its own, so the other tab is never disturbed and a
+        // restored permission repopulates without a reinstall.
+        viewModelScope.launch {
+            combine(
+                playlistRepository.observeActiveId(),
+                playlistRepository.observeAll(),
+            ) { id, all -> all.firstOrNull { it.id == id } }
+                .map { p ->
+                    if (p == null) null
+                    else Pair(
+                        !p.vodEnabled || !p.dispatcharrCanViewVod(),
+                        !p.vodEnabled || !p.dispatcharrCanViewSeries(),
+                    )
+                }
+                .filterNotNull()
+                .distinctUntilChanged()
+                .collect { (moviesDenied, seriesDenied) ->
+                    // No drop(1): on the phone the probe landed BEFORE this
+                    // collector's first emission, so the only emission that
+                    // carried the restored capability was the one being
+                    // dropped, and the transition was never seen. Every
+                    // emission is now considered; the guards below make a
+                    // repeat a no-op.
+                    launchRestoreDone.await()
+                    val st = _state.value
+                    if (moviesDenied != st.moviesDenied ||
+                        (!moviesDenied && pendingMoviesRecovery)
+                    ) {
+                        refresh()
+                    }
+                    if (seriesDenied != st.seriesDenied ||
+                        (!seriesDenied && pendingSeriesRecovery)
+                    ) {
+                        refreshSeries()
+                    }
+                }
+        }
         // "Refresh Everything" (PlaylistViewModel.refreshEverything): the active
         // id is UNCHANGED, so the observeActiveId().drop(1) collector above never
         // fires. The VodResetBus bridges that gap and runs the same nuclear reset.
@@ -828,6 +1026,14 @@ class OnDemandViewModel @Inject constructor(
         seriesSweepJob = null
         moviesCompletedAtMs = 0L
         seriesCompletedAtMs = 0L
+        // Shelved rows belong to the OLD playlist; never write them into the
+        // new source's snapshot.
+        shelvedMovies = null
+        shelvedMovieGroupNames = emptyList()
+        shelvedSeries = null
+        shelvedSeriesGroupNames = emptyList()
+        pendingMoviesRecovery = false
+        pendingSeriesRecovery = false
         xtreamProbeJob?.cancel()
         xtreamItemsJob?.cancel()
         xtreamProbeJob = null
@@ -1254,6 +1460,15 @@ class OnDemandViewModel @Inject constructor(
         }
         movieSweepIsBackground = background
         movieSweepJob = viewModelScope.launch(sweepContext(background)) {
+            // Opportunistic capability probe on entering On Demand with a
+            // stale / unprobed snapshot, so a just-granted VOD permission takes
+            // effect without an app restart. No-op when fresh; never downgrades
+            // on failure.
+            playlistRepository.activePlaylist()?.let { active ->
+                if (active.capabilitiesNeedProbe()) {
+                    runCatching { playlistRepository.probeCapabilities(active.id) }
+                }
+            }
             val playlist = playlistRepository.activePlaylist()
             val sourceType = playlist?.sourceType?.let { SourceType.entries.firstOrNull { st -> st.name == it } }
             val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
@@ -1264,18 +1479,72 @@ class OnDemandViewModel @Inject constructor(
             // hasVodContent ALSO gates on vodEnabled so the tab disappears,
             // but we still belt-and-suspenders here in case something opens
             // the tab through another path (e.g. a deep link).
-            if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrVodMoviesEnabled)) {
+            // Capability.CanViewVod. Denied = the server serves an EMPTY
+            // catalog (apps/vod/utils.py blocks, it does not 403), so skipping
+            // the fetch matches the server exactly. Unknown still fetches.
+            // Only the MOVIES half is retired here: `moviesDenied` is its own
+            // flag and `unsupportedSource` (which means the source does no VOD
+            // at all) is deliberately left alone, so a user with
+            // vod_movies_enabled=false and series still allowed keeps a working
+            // TV Shows tab. Denying both halves is what hides the combined On
+            // Demand tab, and MainScaffold composes that from the two.
+            if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrCanViewVod())) {
+                // Detaching the grid from the catalog key IS the shelving in
+                // the Room world (GH #109): the stored rows survive untouched,
+                // so re-granting the capability puts the tab back instantly
+                // instead of paying for a full re-sweep.
                 movieCatalogKey.value = null
+                shelveMovies()
                 _state.update {
                     it.copy(
-                        unsupportedSource = true,
+                        moviesDenied = true,
+                        movies = emptyList(),
                         totalCount = 0,
+                        movieGroupNames = emptyList(),
+                        searchResults = emptyList(),
+                        personMatches = emptyList(),
+                        personMatchName = null,
                         isLoading = false,
                         error = null,
-                        hasDeferredXtreamContent = false,
                     )
                 }
                 return@launch
+            }
+            // Allowed (or unknown): clear any earlier denial so a capability
+            // granted back on the server restores this half without a reinstall.
+            if (_state.value.moviesDenied || pendingMoviesRecovery) {
+                // Denied -> allowed, or a library stored under denial: this
+                // sweep repopulates the half from the server, so the shelved
+                // copy has done its job. The stored count and completion stamp
+                // are not trusted either (the phone's 400-movie remnant read as
+                // a fresh library), so they are zeroed until this walk finishes.
+                // Un-shelve FIRST: the rows the block hid are valid and put the
+                // tab back on screen immediately, instead of leaving it retired
+                // for the whole length of the forced walk below.
+                val unshelved = shelvedMovies
+                _state.update {
+                    it.copy(
+                        moviesDenied = false,
+                        movies = if (unshelved != null && it.movies.isEmpty()) unshelved else it.movies,
+                        totalCount = if (unshelved != null && it.movies.isEmpty()) unshelved.size
+                            else it.totalCount,
+                        movieGroupNames = if (unshelved != null && it.movieGroupNames.isEmpty())
+                            shelvedMovieGroupNames else it.movieGroupNames,
+                    )
+                }
+                shelvedMovies = null
+                shelvedMovieGroupNames = emptyList()
+                // Reattach the grid to the stored catalog at once; the forced
+                // sweep below then rebuilds it honestly in the background.
+                playlist?.takeIf { it.vodEnabled }?.let { movieCatalogKey.value = snapshotStore.identity(it) }
+                moviesCompletedAtMs = 0L
+                moviesProbeCount = 0
+                moviesProbeNewest = ""
+                Log.i(
+                    TAG,
+                    "[VOD] movies capability restored: reattached the stored catalog " +
+                        "(shelved ${unshelved?.size ?: 0}); forcing a full sweep",
+                )
             }
             if (playlist != null && sourceType == SourceType.XtreamCodes) {
                 ensureXtreamProbe(playlist)
@@ -1316,18 +1585,50 @@ class OnDemandViewModel @Inject constructor(
             // Same opt-out gate as refresh() above for the series side; see
             // the longer comment there. Belt-and-suspenders with MainScaffold's
             // hasVodContent.
-            if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrVodSeriesEnabled)) {
+            // Capability.CanViewSeries; same server semantics as movies above.
+            // Mirror of the movies half above: this retires SERIES only, and
+            // detaching the catalog key leaves the stored rows intact.
+            if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrCanViewSeries())) {
                 seriesCatalogKey.value = null
+                shelveSeries()
                 _state.update {
                     it.copy(
-                        unsupportedSource = true,
+                        seriesDenied = true,
+                        series = emptyList(),
                         seriesTotalCount = 0,
+                        seriesGroupNames = emptyList(),
+                        seriesSearchResults = emptyList(),
+                        seriesPersonMatches = emptyList(),
+                        seriesPersonMatchName = null,
                         isLoadingSeries = false,
                         seriesError = null,
-                        hasDeferredXtreamContent = false,
                     )
                 }
                 return@launch
+            }
+            if (_state.value.seriesDenied || pendingSeriesRecovery) {
+                val unshelved = shelvedSeries
+                _state.update {
+                    it.copy(
+                        seriesDenied = false,
+                        series = if (unshelved != null && it.series.isEmpty()) unshelved else it.series,
+                        seriesTotalCount = if (unshelved != null && it.series.isEmpty()) unshelved.size
+                            else it.seriesTotalCount,
+                        seriesGroupNames = if (unshelved != null && it.seriesGroupNames.isEmpty())
+                            shelvedSeriesGroupNames else it.seriesGroupNames,
+                    )
+                }
+                shelvedSeries = null
+                shelvedSeriesGroupNames = emptyList()
+                playlist?.takeIf { it.vodEnabled }?.let { seriesCatalogKey.value = snapshotStore.identity(it) }
+                seriesCompletedAtMs = 0L
+                seriesProbeCount = 0
+                seriesProbeNewest = ""
+                Log.i(
+                    TAG,
+                    "[VOD] series capability restored: reattached the stored catalog " +
+                        "(shelved ${unshelved?.size ?: 0}); forcing a full sweep",
+                )
             }
             if (playlist != null && sourceType == SourceType.XtreamCodes) {
                 ensureXtreamProbe(playlist)
@@ -1404,6 +1705,24 @@ class OnDemandViewModel @Inject constructor(
             "[VOD] $label sweep: generation ${plan.generation} (${if (plan.resumed) "resumed" else "new"}), " +
                 "${laneNames.size} lanes, ${active.size} to walk, background=$background",
         )
+        // ---- [VOD-CAT] verification trace (GH #109). A handful of lines per
+        // sweep, never one per title: enough to confirm from a device log
+        // alone that the sweep started, resumed where it left off, wrote its
+        // pages, finished, and applied NO total cap.
+        Log.i(
+            TAG,
+            "[VOD-CAT] sweep start kind=$label playlist=${playlist.id} generation=${plan.generation} " +
+                "lanes=${laneNames.size} toWalk=${active.size} background=$background",
+        )
+        Log.i(TAG, "[VOD-CAT] no total cap applied: every page the server offers is stored (VOD_TOTAL_CAP removed)")
+        if (plan.resumed) {
+            val resumedLanes = plan.lanes.count { it.nextQuery != null }
+            Log.i(
+                TAG,
+                "[VOD-CAT] resumed from saved positions: $resumedLanes of ${plan.lanes.size} lanes still open, " +
+                    "${catalogStore.count(identity, kind)} titles already stored",
+            )
+        }
         val pagesThisRun = HashMap<String, Int>()
         var written = 0
         var aborted = false
@@ -1434,6 +1753,11 @@ class OnDemandViewModel @Inject constructor(
             written += page.written
             val pages = (pagesThisRun[lane.lane] ?: 0) + 1
             pagesThisRun[lane.lane] = pages
+            Log.i(
+                TAG,
+                "[VOD-CAT] page written kind=$label lane='${lane.lane}' page=$pages " +
+                    "rows=${page.written} runningTotal=$written serverCount=${page.count}",
+            )
             // A server whose `next` never ends must not walk forever.
             val next = page.nextQuery?.takeIf { pages < LANE_PAGE_SAFETY }
             val updated = lane.copy(
@@ -1478,12 +1802,24 @@ class OnDemandViewModel @Inject constructor(
                     "[VOD] $label sweep: generation ${plan.generation} complete, $written rows written this run, " +
                         "$deleted stale removed, ${givenUp.size} lanes given up",
                 )
+                Log.i(
+                    TAG,
+                    "[VOD-CAT] sweep complete kind=$label playlist=${playlist.id} written=$written " +
+                        "stored movies=${catalogStore.count(identity, VodCatalogStore.KIND_MOVIE)} " +
+                        "series=${catalogStore.count(identity, VodCatalogStore.KIND_SERIES)} " +
+                        "staleRemoved=$deleted lanesGivenUp=${givenUp.size}",
+                )
             }
         } else {
             Log.w(
                 TAG,
                 "[VOD] $label sweep: generation ${plan.generation} left open (${unfinished.size} lanes unfinished, " +
                     "aborted=$aborted); the next sweep resumes them",
+            )
+            Log.w(
+                TAG,
+                "[VOD-CAT] sweep incomplete kind=$label written=$written openLanes=${unfinished.size} " +
+                    "stored=${catalogStore.count(identity, kind)}; positions saved for resume",
             )
         }
         // Nothing stored and the walk did not finish: say so instead of an
@@ -2747,8 +3083,8 @@ class OnDemandViewModel @Inject constructor(
         // one-shot answer is stored in chunks as a complete generation, and
         // the grids read it back like any Dispatcharr sweep.
         val identity = snapshotStore.identity(playlist)
-        if (playlist.vodEnabled && playlist.dispatcharrVodMoviesEnabled) movieCatalogKey.value = identity
-        if (playlist.vodEnabled && playlist.dispatcharrVodSeriesEnabled) seriesCatalogKey.value = identity
+        if (playlist.vodEnabled && playlist.dispatcharrCanViewVod()) movieCatalogKey.value = identity
+        if (playlist.vodEnabled && playlist.dispatcharrCanViewSeries()) seriesCatalogKey.value = identity
         if (movieFast.isNotEmpty()) {
             storeWholeXtreamCatalog(identity, isMovie = true) { gen ->
                 movieFast.chunked(XC_WRITE_CHUNK).forEach { chunk ->

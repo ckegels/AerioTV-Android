@@ -1,5 +1,8 @@
 package com.aeriotv.android.feature.onboarding
 
+import com.aeriotv.android.ui.theme.decorSecondary
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -213,12 +216,12 @@ private fun BrandBlock(alignStart: Boolean = false) {
         Text(
             text = "Your IPTV & Media Hub",
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
         )
         Spacer(Modifier.height(2.dp))
         Text(
             text = "Android TV · Phone · Tablet",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -259,7 +262,7 @@ private fun SyncCard(inProgress: Boolean, onClick: (() -> Unit)?) {
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.onSurfaceVariant),
+                        .background(MaterialTheme.colorScheme.decorSecondary),
                 )
                 Text(
                     text = if (inProgress) "..." else "Off",
@@ -298,7 +301,7 @@ private fun SkipRow(onSkip: () -> Unit) {
     TextButton(onClick = onSkip) {
         Text(
             text = "Skip for now",
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.textAccent,
             style = MaterialTheme.typography.bodyMedium,
         )
     }

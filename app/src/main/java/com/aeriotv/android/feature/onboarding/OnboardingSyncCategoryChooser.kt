@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.onboarding
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,7 +24,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.aeriotv.android.ui.scale.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.aeriotv.android.core.sync.SyncCategory
 import com.aeriotv.android.ui.settings.SettingsToggleRow
@@ -100,7 +101,7 @@ fun OnboardingSyncCategoryChooser(
                 Text(
                     text = "You can change any of this later in Settings, and each " +
                         "device chooses for itself.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp, bottom = 14.dp),
                 )

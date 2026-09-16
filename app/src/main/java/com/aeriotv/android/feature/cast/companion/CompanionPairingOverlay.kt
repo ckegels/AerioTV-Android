@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.cast.companion
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,7 +54,7 @@ fun CompanionPairingOverlay(code: String) {
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "Enter this code on your phone to control this TV",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
@@ -63,7 +65,7 @@ fun CompanionPairingOverlay(code: String) {
                     fontWeight = FontWeight.Bold,
                     fontSize = 56.sp,
                     letterSpacing = 8.sp,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.textAccent,
                 )
             }
         }

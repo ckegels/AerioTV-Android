@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.movies
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -33,7 +34,7 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.aeriotv.android.ui.scale.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -197,8 +198,15 @@ fun MediaTabContent(
     // Genre pill selection lives in the view model with the built list, so a
     // tab return finds the same page it left (tvos_movies_spec 1.3).
     val selectedGenre by viewModel.selectedGenre(kind == MediaKind.Movies).collectAsStateWithLifecycle()
-    var searchActive by rememberSaveable { mutableStateOf(false) }
-    var query by rememberSaveable { mutableStateOf("") }
+    // Deliberately NOT rememberSaveable: a search left open must not be
+    // restored when this tab re-mounts (the minimize / PiP return path), or
+    // the field's focus effect runs again and the keyboard pops up.
+    var searchActive by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {
+        searchActive = false
+        query = ""
+    }
     var showSort by remember { mutableStateOf(false) }
     var showManageGroups by remember { mutableStateOf(false) }
 
@@ -386,7 +394,7 @@ fun MediaTabContent(
         if (personMatchName != null) add(PageRow("person") {
             Text(
                 "Includes titles with $personMatchName",
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.subtext(),
                 color = MaterialTheme.colorScheme.tertiary,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
@@ -673,10 +681,11 @@ fun MediaPosterCard(
             item.title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground,
             maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 14.sp,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().height(30.dp),
+            // Two 14sp lines (+2dp): sp-derived so the grid stays aligned at every Text Size.
+            modifier = Modifier.fillMaxWidth().height(with(androidx.compose.ui.platform.LocalDensity.current) { 28.sp.toDp() } + 2.dp),
         )
         Text(
-            item.year?.toString() ?: " ", fontSize = 10.sp,
+            item.year?.toString() ?: " ", fontSize = 10.sp.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),

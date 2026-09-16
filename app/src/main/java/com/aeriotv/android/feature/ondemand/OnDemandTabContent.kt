@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.ondemand
 
+import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.focusGroup
 import com.aeriotv.android.ui.tv.tvFormFieldInput
@@ -545,6 +546,14 @@ private fun MoviesSubScreen(
         }
     }
 
+    // The field here is always visible, so "search is open" means it holds a
+    // query. Leaving the tab or opening the fullscreen player cancels it and
+    // drops IME focus, so the minimize / PiP return cannot bring the keyboard
+    // back with it.
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(state.searchQuery.isNotBlank()) {
+        viewModel.setSearchQuery("")
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         VodHeaderRow(
             upTarget = sectionPillsFocus,
@@ -572,7 +581,7 @@ private fun MoviesSubScreen(
         if (countLabel != null && !isTv) {
             Text(
                 text = countLabel,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
             )
@@ -805,7 +814,7 @@ private fun SeriesSubScreen(
         if (countLabel != null && !isTv) {
             Text(
                 text = countLabel,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
             )
@@ -960,7 +969,7 @@ private fun VodHeaderRow(
         if (isTv && countLabel != null) {
             Text(
                 text = countLabel,
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -1317,7 +1326,7 @@ private fun ContinueWatchingCard(
         if (remainingMin > 0) {
             Text(
                 text = "$remainingMin min left",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 2.dp),
             )
@@ -1532,7 +1541,7 @@ private fun SeriesContinueWatchingCard(
         if (subtitle.isNotBlank()) {
             Text(
                 text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1687,7 +1696,7 @@ private fun EmptyState(title: String, body: String) {
         Spacer(Modifier.height(6.dp))
         Text(
             text = body,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

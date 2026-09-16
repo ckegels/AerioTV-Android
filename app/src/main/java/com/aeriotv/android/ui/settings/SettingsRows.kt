@@ -1,5 +1,7 @@
 package com.aeriotv.android.ui.settings
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -81,7 +83,7 @@ fun SettingsSectionHeader(text: String, modifier: Modifier = Modifier) {
 fun SettingsSectionFooter(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
-        style = settingsFootnoteStyle(),
+        style = settingsFootnoteStyle().subtext(),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier.padding(start = 6.dp, end = 6.dp, top = 2.dp),
     )
@@ -176,7 +178,7 @@ fun SettingsSelectionRow(
             if (subtitle != null) {
                 Text(
                     text = subtitle,
-                    style = settingsFootnoteStyle(),
+                    style = settingsFootnoteStyle().subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -235,7 +237,7 @@ fun SettingsToggleRow(
             if (subtitle != null) {
                 Text(
                     text = subtitle,
-                    style = settingsFootnoteStyle(),
+                    style = settingsFootnoteStyle().subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -294,7 +296,8 @@ fun SettingsActionRow(
     val accent = when {
         !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
         destructive -> MaterialTheme.colorScheme.error
-        else -> MaterialTheme.colorScheme.primary
+        // Label text + its leading glyph: accent for TEXT (Text Contrast).
+        else -> MaterialTheme.colorScheme.textAccent
     }
     SettingsRowContainer(
         // Plan B4: a truly disabled clickable drops out of D-pad traversal on
@@ -321,7 +324,7 @@ fun SettingsActionRow(
             if (subtitle != null) {
                 Text(
                     text = subtitle,
-                    style = settingsFootnoteStyle(),
+                    style = settingsFootnoteStyle().subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -330,7 +333,7 @@ fun SettingsActionRow(
                     text = statusLine,
                     style = settingsFootnoteStyle(),
                     color = if (statusIsError) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.primary,
+                    else MaterialTheme.colorScheme.textAccent,
                 )
             }
         }
@@ -374,7 +377,7 @@ fun SettingsInfoRow(
         }
         Text(
             text = label,
-            style = settingsRowTitleStyle(),
+            style = settingsRowTitleStyle().subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
@@ -499,14 +502,14 @@ fun SettingsHeaderTextButton(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelLarge,
-                color = if (enabled) MaterialTheme.colorScheme.primary
+                color = if (enabled) MaterialTheme.colorScheme.textAccent
                 else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                 fontWeight = FontWeight.Medium,
             )
         }
     } else {
         androidx.compose.material3.TextButton(onClick = onClick, enabled = enabled) {
-            Text(label, color = MaterialTheme.colorScheme.primary)
+            Text(label, color = MaterialTheme.colorScheme.textAccent)
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.livetv
 
+import com.aeriotv.android.ui.scale.subtext
 import com.aeriotv.android.core.ui.subtitleIsRedundant
 import com.aeriotv.android.core.ui.rememberClockMode
 import com.aeriotv.android.core.ui.ClockFormat
@@ -28,7 +29,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.material3.ModalBottomSheet
+import com.aeriotv.android.ui.scale.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -50,7 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
+import com.aeriotv.android.ui.scale.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -68,6 +69,7 @@ import com.aeriotv.android.core.ui.EpgFlag
 import com.aeriotv.android.core.ui.EpgFlagsRow
 import com.aeriotv.android.core.ui.EpgLiveRed
 import com.aeriotv.android.core.ui.LocalShowEpgBadges
+import com.aeriotv.android.core.ui.ProgramArtSlot
 import com.aeriotv.android.core.ui.epgFlags
 import com.aeriotv.android.core.ui.seasonEpisodeLabel
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
@@ -204,7 +206,7 @@ fun ProgramInfoSheet(
             // labelled columns, the description as the card's one focus
             // target, then the metadata and category pills.
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(INFO_CARD_CORNER),
                 color = com.aeriotv.android.ui.tv.TvChrome.dialogSurface(),
                 tonalElevation = 6.dp,
                 modifier = Modifier
@@ -261,16 +263,10 @@ private fun TvProgramInfoCard(
 ) {
     val colors = MaterialTheme.colorScheme
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        // Same slot as the guide preview banner (ProgramArtSlot, Logan
+        // 2026-09-15): same size on both surfaces, whole image, no crop.
         if (posterUrl != null) {
-            var posterRatio by remember(posterUrl) { mutableStateOf(2f / 3f) }
-            AsyncImage(
-                model = posterUrl, contentDescription = null, contentScale = ContentScale.Crop,
-                onSuccess = { st ->
-                    val sz = st.painter.intrinsicSize
-                    if (sz.width > 0f && sz.height > 0f) posterRatio = (sz.width / sz.height).coerceIn(0.55f, 1.9f)
-                },
-                modifier = Modifier.width(120.dp).aspectRatio(posterRatio).clip(RoundedCornerShape(7.dp)),
-            )
+            ProgramArtSlot(model = posterUrl, containerCorner = INFO_CARD_CORNER)
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
@@ -283,7 +279,7 @@ private fun TvProgramInfoCard(
                 fontSize = 19.sp, lineHeight = 23.sp, fontWeight = FontWeight.Bold, color = colors.onBackground,
             )
             target.subTitle?.takeIf { !subtitleIsRedundant(it, target.title, target.description) }?.let { sub ->
-                Text(sub, fontSize = 12.sp, fontStyle = FontStyle.Italic, color = colors.onSurfaceVariant)
+                Text(sub, fontSize = 12.sp.subtext(), fontStyle = FontStyle.Italic, color = colors.onSurfaceVariant)
             }
             val showEpgBadges = LocalShowEpgBadges.current
             val badges = buildList {
@@ -464,7 +460,7 @@ private fun ProgramInfoBody(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = sub,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontStyle = FontStyle.Italic,
                 )
@@ -484,7 +480,9 @@ private fun ProgramInfoBody(
             AsyncImage(
                 model = posterUrl,
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                // Fit, not Crop: the frame already follows the real ratio, and
+                // the clamp above can leave a sliver that Crop would shave off.
+                contentScale = ContentScale.Fit,
                 onSuccess = { state ->
                     val s = state.painter.intrinsicSize
                     if (s.width > 0f && s.height > 0f) {
@@ -494,7 +492,7 @@ private fun ProgramInfoBody(
                 modifier = Modifier
                     .width(posterWidth)
                     .aspectRatio(posterRatio)
-                    .clip(RoundedCornerShape(8.dp)),
+                    .clip(com.aeriotv.android.core.ui.artworkTileShape(INFO_CARD_CORNER)),
             )
         }
     }
@@ -517,7 +515,7 @@ private fun ProgramInfoBody(
     if (target.description.isBlank()) {
         Text(
             text = "No program description provided in XMLTV.",
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontStyle = FontStyle.Italic,
         )
@@ -578,7 +576,7 @@ private fun InfoRow(label: String, value: String, verticalPadding: Dp) {
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
@@ -626,3 +624,9 @@ private fun formatDuration(millis: Long): String {
     val mins = totalMinutes % 60
     return if (mins == 0) "$hours h" else "$hours h $mins min"
 }
+
+/**
+ * The Program Info card's own corner radius. Program artwork on this surface
+ * matches it (Appearance > Rounded corners on logos and artwork).
+ */
+private val INFO_CARD_CORNER = 14.dp

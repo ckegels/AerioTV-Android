@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.livetv.grid
 
+import com.aeriotv.android.ui.theme.decorSecondary
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.ui.tv.TvFocusTrace
 import com.aeriotv.android.core.ui.subtitleIsRedundant
 import com.aeriotv.android.core.ui.rememberClockMode
@@ -47,6 +49,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
@@ -241,7 +244,22 @@ fun GuideGrid(
             val down = event.type == KeyEventType.KeyDown
             return@handler when (event.key) {
                 Key.DirectionDown -> { if (down) clockSelected = false; true }
-                Key.DirectionUp -> { if (down) { clockSelected = false; if (!onLeaveTop()) topNav?.let { runCatching { it.requestFocus() } } }; true }
+                // Frankie B. 2026-09-15: this used to clear the clock cursor
+                // FIRST and then try to leave. When neither the pill row nor
+                // the nav took focus (an empty pill row leaves its requester
+                // unattached, and the bar's onEnter can land nowhere), the
+                // grid had already dropped the cursor and focus ended up
+                // nowhere at all: [FOCUS] grid:r0 -> none, then every key
+                // declined by guide-screen(focus-not-in-grid). Only give the
+                // cursor up once something upstairs has actually taken focus.
+                Key.DirectionUp -> {
+                    if (down) {
+                        val left = onLeaveTop() ||
+                            (topNav?.let { runCatching { it.requestFocus() }.isSuccess } ?: false)
+                        if (left) clockSelected = false
+                    }
+                    true
+                }
                 Key.DirectionLeft, Key.DirectionRight -> true
                 Key.DirectionCenter, Key.Enter -> {
                     if (down) {
@@ -463,7 +481,7 @@ fun GuideGrid(
     ) {
         TimeHeader(state, nowMs, railWidth, headerHeight, pxPerMs, textMeasurer,
                    jumpLabel = jumpLabel, onClockTap = onClockTap, onClockLongPress = onClockLongPress,
-                   clockSelected = clockSelected)
+                   clockSelected = clockSelected, isTv = isTv)
         val railPx = with(density) { railWidth.toPx() }
         LazyColumn(
             state = listState,
@@ -530,10 +548,12 @@ private fun TimeHeader(
     onClockLongPress: () -> Unit = {},
     /** TV: the grid's virtual cursor sits on the clock (accent ring). */
     clockSelected: Boolean = false,
+    /** TV: the clock is driven by the grid's virtual cursor, never by real focus. */
+    isTv: Boolean = false,
 ) {
     // Apple TV: time labels in the accent colour.
     val labelStyle = TextStyle(
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.textAccent,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
     )
@@ -554,14 +574,23 @@ private fun TimeHeader(
                 .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
                 .then(if (focused) Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)) else Modifier)
                 .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Transparent, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-                .combinedClickable(onClick = onClockTap, onLongClick = onClockLongPress),
+                // Touch only. combinedClickable() is focusable, so on TV the
+                // clock cell became a REAL focus target sitting above row 0
+                // with no D-pad handling of its own: focus could land on it
+                // and neither Up nor Down moved anywhere ("can't get past the
+                // time"). On TV the clock is the grid's virtual cursor
+                // (clockSelected) and must not take focus at all.
+                .then(
+                    if (isTv) Modifier
+                    else Modifier.combinedClickable(onClick = onClockTap, onLongClick = onClockLongPress),
+                ),
             contentAlignment = Alignment.Center,
         ) {
             val clock = remember(nowMs / 60_000L, clockMode) { ClockFormat.short(clockMode).format(Date(nowMs)) }
             Text(
                 jumpLabel ?: clock,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (jumpLabel != null) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Unspecified,
+                color = if (jumpLabel != null) MaterialTheme.colorScheme.textAccent else androidx.compose.ui.graphics.Color.Unspecified,
                 fontWeight = if (jumpLabel != null) FontWeight.SemiBold else null,
                 maxLines = 1,
             )
@@ -621,17 +650,25 @@ private fun GridRow(
     // Apple TV cell: bold title, italic accent subtitle, accent-tinted
     // description, then a dim time line with the S/E pill and flag badges.
     val accent = MaterialTheme.colorScheme.primary
-    val timeStyle = TextStyle(color = Color.White.copy(alpha = 0.55f), fontSize = 10.5.sp)
-    val descStyle = TextStyle(color = accent.copy(alpha = 0.85f), fontSize = 10.5.sp)
-    val subStyle = TextStyle(color = accent, fontSize = 10.5.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+    // Subtext Size + Text Contrast for the secondary lines. Guide cells are
+    // always dark (white titles), so contrast blends toward white in both modes.
+    val subScale = com.aeriotv.android.ui.scale.LocalSubtextScale.current
+    val textContrast = com.aeriotv.android.ui.theme.LocalTextContrast.current
+    fun cellText(c: Color) = com.aeriotv.android.ui.theme.contrastBlend(c, textContrast, isDark = true)
+    val timeStyle = TextStyle(color = cellText(Color.White.copy(alpha = 0.55f)), fontSize = 10.5.sp * subScale)
+    val descStyle = TextStyle(color = cellText(accent.copy(alpha = 0.85f)), fontSize = 10.5.sp * subScale)
+    val subStyle = TextStyle(color = cellText(accent), fontSize = 10.5.sp * subScale, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
     val pillStyle = TextStyle(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f), fontSize = 7.5.sp, fontWeight = FontWeight.Medium)
     val badgeStyle = TextStyle(color = Color.White, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
-    val outline = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    val outline = MaterialTheme.colorScheme.decorSecondary.copy(alpha = 0.45f)
     val showBadges = com.aeriotv.android.core.ui.LocalShowEpgBadges.current
     val showSubtitles = com.aeriotv.android.core.ui.LocalShowProgramSubtitles.current
     val hiddenBadges = com.aeriotv.android.core.ui.LocalHiddenEpgBadges.current
     val clockMode = rememberClockMode()
     val rail = com.aeriotv.android.core.ui.LocalGuideRailPrefs.current
+    // Appearance > Rounded corners on logos and artwork. Read here in
+    // composition and handed to the shared rounding rule inside the Canvas.
+    val roundedArtwork = com.aeriotv.android.core.ui.LocalRoundedArtwork.current
     val shortFmt = remember(clockMode) { ClockFormat.guideShort(clockMode) }
     val catchupPainter = androidx.compose.ui.graphics.vector.rememberVectorPainter(androidx.compose.material.icons.Icons.Outlined.History)
     val starPainter = androidx.compose.ui.graphics.vector.rememberVectorPainter(androidx.compose.material.icons.Icons.Filled.Star)
@@ -639,9 +676,14 @@ private fun GridRow(
     // tvOS: a 1 pt hairline gap between cells and rows, nothing wider.
     val seam = 1f
     val padH = 8f
+    val appTextScale = com.aeriotv.android.ui.scale.LocalAppTextScale.current
+    // Same growth GuideScreen applies to the phone row height.
+    val subRowGrowth = 1f + (com.aeriotv.android.ui.scale.LocalSubtextScale.current - 1f).coerceAtLeast(0f) * GUIDE_PHONE_SUBTEXT_SHARE
     // Text layouts are measured once per (cell, width) and drawn many times:
     // measuring through TextMeasurer on every draw was ~1 ms per row.
-    val textCache = remember(state.rows, row, showBadges, showSubtitles, clockMode, rail) { HashMap<Long, CellText>() }
+    // Keyed on fontScale too: cached layouts are measured in sp, so a live
+    // Text Size change must re-measure instead of drawing stale sizes.
+    val textCache = remember(state.rows, row, showBadges, showSubtitles, clockMode, rail, LocalDensity.current.fontScale, subScale, textContrast, accent) { HashMap<Long, CellText>() }
     val rangeCache = remember(state.rows, row, clockMode) { HashMap<Long, String>() }
     val railWidthPx = with(LocalDensity.current) { railWidth.toPx() }
     val logos = LocalLogoCache.current
@@ -666,10 +708,20 @@ private fun GridRow(
             .fillMaxWidth()
             .height(rowHeight)
             .semantics { contentDescription = rowDescription }
-            .pointerInput(row) {
+            // Keyed on the minute tick as well as the row: the tap handler
+            // resolves the rail's "airing now" cell from nowMs, and a stale
+            // capture there would replay a program that just ended.
+            .pointerInput(row, nowMs / 60_000L) {
                 detectTapGestures(
                     onTap = { pos ->
-                        if (pos.x < railWidthPx) { onTapFocus(row, state.rows.cells(row).first()); onPlay(channel, state.rows.cells(row).first()); return@detectTapGestures }
+                        if (pos.x < railWidthPx) {
+                            // Rail (logo / name) = tune this channel live. Hand
+                            // onPlay the cell airing NOW, not the row's first
+                            // cell: the first cell is usually already in the
+                            // past, and a past cell now means "play it back".
+                            val railCell = state.rows.cellAt(row, nowMs) ?: state.rows.cells(row).first()
+                            onTapFocus(row, railCell); onPlay(channel, railCell); return@detectTapGestures
+                        }
                         val t = state.drawViewportStartMs + ((pos.x - railWidthPx) / pxPerMs).toLong()
                         state.rows.cellAt(row, t)?.let { cell -> onTapFocus(row, cell); onPlay(channel, cell) }
                     },
@@ -689,9 +741,6 @@ private fun GridRow(
         // Rail: number, logo, name. Drawn here so a row is ONE draw node and
         // composing a newly visible row costs nothing measurable.
         drawRect(surface, topLeft = Offset.Zero, size = Size(railWidthPx, size.height))
-        val number = textCache.getOrPut(RAIL_NUMBER_KEY) {
-            CellText(textMeasurer.measure(channel.channelNumber.orEmpty(), style = railNumberStyle, maxLines = 1, constraints = Constraints(maxWidth = 30.dp.roundToPx())), null)
-        }
         // Narrow (phone) rail: number tucked top-left, logo and name centred across the full rail.
         val narrowRail = railWidthPx < 100.dp.toPx()
         val nameLeft = 4.dp.toPx()
@@ -699,12 +748,12 @@ private fun GridRow(
         // Settings > Appearance > Channel List toggles (Show Channel Logos /
         // Numbers / Names): each element is skipped when off, and the rest
         // re-centre in the freed space.
-        if (rail.numbers && !(narrowRail && size.height >= 90.dp.toPx())) {
-            if (narrowRail) drawText(number.title, topLeft = Offset(3.dp.toPx(), 2.dp.toPx()))
-            else drawText(number.title, topLeft = Offset(6.dp.toPx(), (size.height - number.title.size.height) / 2f))
-        }
+        // The channel number is no longer drawn beside the logo (corner on
+        // narrow rails, left column on wide). It is stacked UNDER the logo with
+        // the name, in [underNumber] below, so the logo gets the rail's full
+        // width in every state (Logan 2026-09-16).
         // iPhone rail (EPGGuideView.swift GuideChannelButton, phone branch):
-        // logo 40x28, name 10pt, number 8pt bold UNDER the name, all centred;
+        // logo 40x28, number 8pt bold then name 10pt UNDER the logo, centred;
         // the favorite star sits top-trailing as its own glyph (11pt, warning),
         // left of the catch-up clock when both show. Wider rails keep the
         // inline star and the number in the corner.
@@ -716,29 +765,107 @@ private fun GridRow(
         } else null
         val logo = if (rail.logos && channel.tvgLogo.isNotBlank()) logos.bitmap(channel.tvgLogo) else null
         val logoH = if (phoneRail) 28.dp.toPx() else 24.dp.toPx(); val logoW = if (phoneRail) 40.dp.toPx() else 36.dp.toPx()
-        val underNumber = if (phoneRail && rail.numbers) textCache.getOrPut(RAIL_UNDER_NUMBER_KEY) {
-            CellText(textMeasurer.measure(channel.channelNumber.orEmpty(), style = railUnderNumberStyle, maxLines = 1, constraints = Constraints(maxWidth = nameW)), null)
-        } else null
-        val nameH = (name?.title?.size?.height ?: 0) + (underNumber?.let { it.title.size.height + 1.dp.toPx().toInt() } ?: 0)
-        val nameX = nameLeft + (nameW - (name?.title?.size?.width ?: 0)) / 2f
-        fun drawNameStack(top: Float) {
-            var ny = top
-            name?.let { drawText(it.title, topLeft = Offset(nameX, ny)); ny += it.title.size.height + 1.dp.toPx() }
-            underNumber?.let { drawText(it.title, topLeft = Offset(nameLeft + (nameW - it.title.size.width) / 2f, ny)) }
-        }
-        if (logo != null) {
-            val gap = if (name != null || underNumber != null) (if (phoneRail) 4.dp.toPx() else 2.dp.toPx()) else 0f
-            val top = (size.height - logoH - nameH - gap) / 2f
-            val scale = minOf(logoW / logo.width, logoH / logo.height)
-            val dw = logo.width * scale; val dh = logo.height * scale
-            drawImage(
-                logo,
-                dstOffset = IntOffset((nameLeft + (nameW - dw) / 2f).toInt(), (top + (logoH - dh) / 2f).toInt()),
-                dstSize = IntSize(dw.toInt(), dh.toInt()),
+        // Stacked under the logo (and under the name when names are on) on
+        // EVERY rail now, not just the phone rail. Each rail keeps its own
+        // number type: 8 sp bold on the tall phone rail, the rail's 12 sp
+        // elsewhere, so nothing about the existing look changes except the
+        // position.
+        val underNumber = if (rail.numbers) textCache.getOrPut(RAIL_UNDER_NUMBER_KEY) {
+            CellText(
+                textMeasurer.measure(
+                    channel.channelNumber.orEmpty(),
+                    style = if (phoneRail) railUnderNumberStyle else railNumberStyle,
+                    maxLines = 1,
+                    constraints = Constraints(maxWidth = nameW),
+                ),
+                null,
             )
-            drawNameStack(top + logoH + gap)
-        } else if (name != null || underNumber != null) {
-            drawNameStack((size.height - nameH) / 2f)
+        } else null
+        // SHARED GEOMETRY (core/ui/ChannelBadge.kt). The rail keeps its
+        // Canvas for scroll performance, so it cannot host the ChannelBadge
+        // composable; instead both surfaces call the SAME pure functions, so
+        // the slot rect, the number rect, the name rect, the fitted image rect
+        // and the corner rule are identical by construction.
+        // Order: logo, number, name.
+        val numberH = (underNumber?.title?.size?.height ?: 0).toFloat()
+        val nameH = (name?.title?.size?.height ?: 0).toFloat()
+        val lineGap = com.aeriotv.android.core.ui.CHANNEL_BADGE_LINE_GAP.toPx()
+        val logoGap = if (phoneRail) 4.dp.toPx() else 2.dp.toPx()
+        // Top clearance for the favorite star / catch-up clock glyphs. Always
+        // reserved, on EVERY row, even when this row has neither glyph: rail
+        // rows are all one height, so a per-row inset was the one thing that
+        // could still make one row's logo bigger than its neighbour's
+        // (Logan 2026-09-16).
+        val topInset = RAIL_LOGO_ICON_CLEAR.toPx()
+        // Both number AND name shown: the logo keeps its stock box so a tall
+        // row does not blow the logo up past the rail's design. Any element
+        // hidden and the logo takes all the room that is left.
+        val stock = rail.numbers && rail.names
+        val geometry = com.aeriotv.android.core.ui.channelBadgeLayout(
+            slotWidth = nameW.toFloat(),
+            slotHeight = size.height,
+            showLogo = logo != null,
+            numberHeight = numberH,
+            nameHeight = nameH,
+            topInset = topInset,
+            bottomInset = RAIL_LOGO_INSET.toPx(),
+            logoGap = logoGap,
+            lineGap = lineGap,
+            maxLogoWidth = if (stock) logoW else Float.MAX_VALUE,
+            maxLogoHeight = if (stock) logoH else Float.MAX_VALUE,
+        )
+        geometry.logo?.let { slot ->
+            val image = logo!!
+            val fitted = com.aeriotv.android.core.ui.fitArtwork(
+                slotWidth = slot.width,
+                slotHeight = slot.height,
+                imageWidth = image.width.toFloat(),
+                imageHeight = image.height.toFloat(),
+            )
+            val left = nameLeft + slot.left + fitted.left
+            val top = slot.top + fitted.top
+            val radius = com.aeriotv.android.core.ui.artworkRadiusPx(
+                fitted = fitted,
+                containerRadiusPx = GUIDE_RAIL_CORNER.toPx(),
+                rounded = roundedArtwork,
+                // Same decoded-image verdict the list row gets: opaque tile
+                // rounds, floating logo stays square.
+                isTile = com.aeriotv.android.core.ui.ArtworkTile
+                    .verdict(channel.tvgLogo) == true,
+            )
+            val drawLogo = {
+                drawImage(
+                    image,
+                    dstOffset = IntOffset(left.toInt(), top.toInt()),
+                    dstSize = IntSize(fitted.width.toInt(), fitted.height.toInt()),
+                )
+            }
+            if (radius > 0f) {
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    addRoundRect(
+                        androidx.compose.ui.geometry.RoundRect(
+                            left = left,
+                            top = top,
+                            right = left + fitted.width,
+                            bottom = top + fitted.height,
+                            cornerRadius = CornerRadius(radius, radius),
+                        ),
+                    )
+                }
+                clipPath(path) { drawLogo() }
+            } else {
+                drawLogo()
+            }
+        }
+        geometry.number?.let { rect ->
+            underNumber?.let {
+                drawText(it.title, topLeft = Offset(nameLeft + (nameW - it.title.size.width) / 2f, rect.top))
+            }
+        }
+        geometry.name?.let { rect ->
+            name?.let {
+                drawText(it.title, topLeft = Offset(nameLeft + (nameW - it.title.size.width) / 2f, rect.top))
+            }
         }
         if (isFavorite) {
             // Same 12 dp box and 4 dp top as the catch-up clock so the two sit
@@ -806,7 +933,9 @@ private fun GridRow(
                     // Phone rows (98dp, Logan 2026-09-05 / EPGGuideView.swift)
                     // have room for TWO description lines under the title and
                     // subtitle; the 72dp / TV rows keep one.
-                    val descLines = if (size.height >= 90.dp.toPx()) 2 else 1
+                    // Threshold follows the Text Size so the phone row (98dp x
+                    // Text Size) keeps its two lines at every stop.
+                    val descLines = if (size.height >= 90.dp.toPx() * appTextScale * subRowGrowth) 2 else 1
                     val key = ((cell.startMillis * 31 + textW) * 4 + descLines) * 2 + (if (compact) 1 else 0)
                     val text = textCache.getOrPut(key) {
                         fun measure(t: String, st: TextStyle, maxH: Float, ellipsis: Boolean = true, lines: Int = 1) = textMeasurer.measure(
@@ -821,7 +950,7 @@ private fun GridRow(
                             // bottom line; the banner carries the time and
                             // the description.
                             val sub = cell.subTitle?.takeIf { showSubtitles && !subtitleIsRedundant(it, cell.title, cell.description) }
-                                ?.let { measure(it, subStyle, 15.sp.toPx()) }
+                                ?.let { measure(it, subStyle, 15.sp.toPx() * subScale) }
                             val pill = if (showBadges) cell.seasonEpisodeLabel()?.let { measure(it, pillStyle, 12.sp.toPx(), ellipsis = false) } else null
                             val badges = if (showBadges) cell.epgFlags().filter { it.label !in hiddenBadges }
                                 .map { measure(it.label, badgeStyle, 12.sp.toPx(), ellipsis = false) to it.color } else emptyList()
@@ -832,13 +961,13 @@ private fun GridRow(
                             // sub-title into <desc>), and the Appearance
                             // toggle drops the line entirely.
                             val sub = cell.subTitle?.takeIf { showSubtitles && !subtitleIsRedundant(it, cell.title, cell.description) }
-                                ?.let { measure(it, subStyle, 15.sp.toPx()) }
+                                ?.let { measure(it, subStyle, 15.sp.toPx() * subScale) }
                             val desc = cell.description.takeIf { it.isNotBlank() }
-                                ?.let { measure(it, descStyle, 15.sp.toPx() * descLines, lines = descLines) }
+                                ?.let { measure(it, descStyle, 15.sp.toPx() * subScale * descLines, lines = descLines) }
                             val range = rangeCache.getOrPut(cell.startMillis) {
                                 shortFmt.format(Date(cell.startMillis)) + " - " + shortFmt.format(Date(cell.endMillis))
                             }
-                            val time = measure(range, timeStyle, 15.sp.toPx(), ellipsis = false)
+                            val time = measure(range, timeStyle, 15.sp.toPx() * subScale, ellipsis = false)
                             val pill = if (showBadges) cell.seasonEpisodeLabel()?.let { measure(it, pillStyle, 12.sp.toPx(), ellipsis = false) } else null
                             val badges = if (showBadges) cell.epgFlags().filter { it.label !in hiddenBadges }
                                 .map { measure(it.label, badgeStyle, 12.sp.toPx(), ellipsis = false) to it.color } else emptyList()
@@ -951,7 +1080,14 @@ class GuideLogoCache(private val context: android.content.Context) {
             .data(url)
             .size(128, 128)
             .target(
-                onSuccess = { image -> bitmaps[url] = image.toBitmap().asImageBitmap(); inFlight.remove(url) },
+                onSuccess = { image ->
+                    val bitmap = image.toBitmap()
+                    // Sample the tile/floating verdict once, here, off the
+                    // decoded bitmap: every surface reads the same answer.
+                    com.aeriotv.android.core.ui.ArtworkTile.sample(url, bitmap)
+                    bitmaps[url] = bitmap.asImageBitmap()
+                    inFlight.remove(url)
+                },
                 onError = { bitmaps[url] = null; inFlight.remove(url) },
             )
             .build()
@@ -991,9 +1127,21 @@ internal fun guideTraceCell(state: GuideGridState): String {
 
 private fun GuideRemoteAction.orDefault(default: GuideRemoteAction) = if (this == GuideRemoteAction.NONE) default else this
 private const val MIN_CELL_PX = 6f
-private const val RAIL_NUMBER_KEY = Long.MIN_VALUE + 1
 private const val RAIL_NAME_KEY = Long.MIN_VALUE + 2
 private const val RAIL_UNDER_NUMBER_KEY = Long.MIN_VALUE + 3
+
+// Grown rail logo (number and/or name hidden): inset from the rail edges,
+// top clearance under the 12 dp corner icons (4 dp top + 12 dp + 2 dp), and
+// (the wide rail's separate number column is gone: the number is stacked
+// under the logo now).
+private val RAIL_LOGO_INSET = 4.dp
+
+/**
+ * The guide cell/rail's own corner radius, handed to the SHARED rounding rule
+ * so a rail logo and a list row logo round the same way (Logan 2026-09-16).
+ */
+private val GUIDE_RAIL_CORNER = 6.dp
+private val RAIL_LOGO_ICON_CLEAR = 18.dp
 private val NOW_RED = Color(0xFFFF4757)
 
 private class CellText(

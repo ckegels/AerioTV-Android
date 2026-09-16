@@ -33,7 +33,10 @@ import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.db.entity.canRecordToServer
 import com.aeriotv.android.core.data.db.entity.dispatcharrEffectiveDvrAccess
 import com.aeriotv.android.ui.LocalDvrAccess
-import com.aeriotv.android.core.data.db.entity.isDispatcharrAdmin
+import com.aeriotv.android.core.data.db.entity.canSwitchStream
+import com.aeriotv.android.core.data.db.entity.capabilities
+import com.aeriotv.android.core.data.capability.CapabilitySet
+import com.aeriotv.android.ui.LocalCapabilities
 import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.pip.findActivity
 import com.aeriotv.android.core.preferences.AppPreferences
@@ -242,6 +245,18 @@ fun AerioTVNavHost(
     // ESPN2/ESPNU, TV stayed put). Here it runs no matter which screen is up.
     // We still wait for the playlist graph + loaded channels before acting.
     val dlCurrentEntry by navController.currentBackStackEntryAsState()
+    // Leaving the tabs for a fullscreen player cancels any search a tab left
+    // open. Without this the keyboard came back when the user minimized to the
+    // mini player or PiP: the MAIN route is disposed while a player route is on
+    // top, so popping back re-mounted the tab with its search still open and the
+    // field's focus effect ran again. One observer here covers every player
+    // route (live, catch-up, recording, on demand) and every tab.
+    val dlRoute = dlCurrentEntry?.destination?.route
+    LaunchedEffect(dlRoute) {
+        if (dlRoute != null && dlRoute != Routes.MAIN) {
+            com.aeriotv.android.ui.search.SearchDismissSignal.dismissAll()
+        }
+    }
     val dlGraphEntry = remember(dlCurrentEntry) {
         runCatching { navController.getBackStackEntry(Routes.PLAYLIST_GRAPH) }.getOrNull()
     }
@@ -381,6 +396,20 @@ fun AerioTVNavHost(
                 val vm: PlaylistViewModel = hiltViewModel(parent)
                 val state by vm.state.collectAsStateWithLifecycle()
                 val context = androidx.compose.ui.platform.LocalContext.current
+
+                // Clean-end session check (StreamEndVerifier), installed once
+                // for the whole app and never cleared: the player, the mini
+                // player, multiview tiles and the cast ingest all consult it
+                // after a live stream ends cleanly, and none of them has a
+                // Dispatcharr client of its own. The graph-scoped view model
+                // outlives every one of those surfaces; if it ever does not,
+                // the call fails and the caller keeps reconnecting.
+                LaunchedEffect(vm) {
+                    com.aeriotv.android.core.playback.StreamEndVerifier.hook =
+                        { channelUuid, connectedAt ->
+                            vm.verifyStreamEndedByLimit(channelUuid, connectedAt)
+                        }
+                }
 
                 // Debug-only auto-load. --es url + --es apikey => Dispatcharr API-key flow.
                 // --es url + optional --es epg => M3U flow. Gated in MainActivity via
@@ -726,7 +755,7 @@ fun AerioTVNavHost(
                 }
 
                 if (welcomeNotConfiguredDialog) {
-                    androidx.compose.material3.AlertDialog(
+                    com.aeriotv.android.ui.scale.AlertDialog(
                         onDismissRequest = { welcomeNotConfiguredDialog = false },
                         title = { androidx.compose.material3.Text("Drive Sync isn't set up yet") },
                         text = {
@@ -843,8 +872,14 @@ fun AerioTVNavHost(
                 // Task #148 milestone B: routing decision for catch-up
                 // (TV = unified live player, phone = recording player).
                 val isTvDevice = com.aeriotv.android.ui.settings.rememberIsTvDevice()
+                // Per-user capabilities from the active playlist's Dispatcharr
+                // snapshot. `?: true` / PERMISSIVE on a null playlist is
+                // deliberate: the row simply has not loaded yet, and an
+                // unmeasured account must never have affordances hidden.
                 CompositionLocalProvider(
-                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: false),
+                    LocalCapabilities provides
+                        (state.playlist?.capabilities() ?: CapabilitySet.UNKNOWN),
+                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: true),
                     LocalDvrAccess provides (state.playlist?.dispatcharrEffectiveDvrAccess() ?: "manage"),
                     // One ViewModel set for the whole main destination (Streamer
                     // 2026-09-03): the tabs' default hiltViewModel() resolved
@@ -1180,8 +1215,12 @@ fun AerioTVNavHost(
                 // effect already no-ops on a blank url.
                 val playableChannels = state.channels
                 CompositionLocalProvider(
-                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: false),
-                    LocalIsDispatcharrAdmin provides (state.playlist?.isDispatcharrAdmin() ?: false),
+                    LocalCapabilities provides
+                        (state.playlist?.capabilities() ?: CapabilitySet.UNKNOWN),
+                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: true),
+                    // Switch Stream: change_stream is still IsAdmin server-side,
+                    // but the gate now runs through Capability.CanSwitchStream.
+                    LocalIsDispatcharrAdmin provides (state.playlist?.canSwitchStream() ?: true),
                 ) {
                 PlayerScreen(
                     channels = playableChannels,

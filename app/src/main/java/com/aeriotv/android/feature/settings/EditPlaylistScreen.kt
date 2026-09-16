@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.scale.subtext
+import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.core.data.db.entity.sanitizeGuideDays
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,7 +40,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,6 +52,8 @@ import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.dpadFocusWash
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
+import com.aeriotv.android.ui.textfield.SecretRevealIconButton
+import com.aeriotv.android.ui.textfield.rememberSecretRevealState
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
 import com.aeriotv.android.ui.tv.dpadFocusEscape
 import com.aeriotv.android.ui.tv.tvFormFieldInput
@@ -174,7 +177,7 @@ fun EditPlaylistScreen(
                 // discards and pops the screen. Phones/tablets keep Cancel.
                 if (!isTv) {
                     TextButton(onClick = onBack) {
-                        Text("Cancel", color = MaterialTheme.colorScheme.primary)
+                        Text("Cancel", color = MaterialTheme.colorScheme.textAccent)
                     }
                 }
             },
@@ -199,7 +202,7 @@ fun EditPlaylistScreen(
             Text(
                 "No playlist loaded",
                 modifier = Modifier.padding(24.dp),
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             return@Column
@@ -268,7 +271,7 @@ fun EditPlaylistScreen(
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = "Type: ${sourceType.displayName}. To switch types, use Change Playlist.",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -306,13 +309,23 @@ fun EditPlaylistScreen(
                 SourceType.DispatcharrApiKey -> item {
                     Section(header = "Authentication") {
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            val apiKeyReveal = rememberSecretRevealState()
                             OutlinedTextField(
                                 value = apiKey,
                                 onValueChange = { apiKey = it },
                                 label = { Text("API Key") },
                                 singleLine = true,
-                                visualTransformation = PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                                visualTransformation = apiKeyReveal.transformation,
+                                trailingIcon = {
+                                    SecretRevealIconButton(
+                                        state = apiKeyReveal,
+                                        contentLabel = "API key",
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(
+                                    horizontalFocusEscape = true,
+                                    okSuppressed = { apiKeyReveal.controlFocused },
+                                ),
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
                                 ),
@@ -323,6 +336,8 @@ fun EditPlaylistScreen(
                 SourceType.DispatcharrUserPass -> item {
                     Section(header = "Authentication") {
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            val passwordReveal = rememberSecretRevealState()
+                            val apiKeyReveal = rememberSecretRevealState()
                             SegmentedToggle(
                                 left = "Username & Password",
                                 right = "API Key",
@@ -347,8 +362,17 @@ fun EditPlaylistScreen(
                                     onValueChange = { password = it },
                                     label = { Text("Password") },
                                     singleLine = true,
-                                    visualTransformation = PasswordVisualTransformation(),
-                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                                    visualTransformation = passwordReveal.transformation,
+                                    trailingIcon = {
+                                        SecretRevealIconButton(
+                                            state = passwordReveal,
+                                            contentLabel = "password",
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(
+                                        horizontalFocusEscape = true,
+                                        okSuppressed = { passwordReveal.controlFocused },
+                                    ),
                                     keyboardOptions = aerioTextFieldKeyboardOptions(
                                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
                                     ),
@@ -359,8 +383,17 @@ fun EditPlaylistScreen(
                                     onValueChange = { apiKey = it },
                                     label = { Text("API Key") },
                                     singleLine = true,
-                                    visualTransformation = PasswordVisualTransformation(),
-                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                                    visualTransformation = apiKeyReveal.transformation,
+                                    trailingIcon = {
+                                        SecretRevealIconButton(
+                                            state = apiKeyReveal,
+                                            contentLabel = "API key",
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(
+                                        horizontalFocusEscape = true,
+                                        okSuppressed = { apiKeyReveal.controlFocused },
+                                    ),
                                 )
                             }
                         }
@@ -380,13 +413,23 @@ fun EditPlaylistScreen(
                                 ),
                             )
                             Spacer(Modifier.height(8.dp))
+                            val passwordReveal = rememberSecretRevealState()
                             OutlinedTextField(
                                 value = password,
                                 onValueChange = { password = it },
                                 label = { Text("Password") },
                                 singleLine = true,
-                                visualTransformation = PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                                visualTransformation = passwordReveal.transformation,
+                                trailingIcon = {
+                                    SecretRevealIconButton(
+                                        state = passwordReveal,
+                                        contentLabel = "password",
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(
+                                    horizontalFocusEscape = true,
+                                    okSuppressed = { passwordReveal.controlFocused },
+                                ),
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
                                 ),
@@ -492,7 +535,7 @@ fun EditPlaylistScreen(
                                     Spacer(Modifier.width(12.dp))
                                     Text(
                                         "Loading profiles...",
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        style = MaterialTheme.typography.bodyMedium.subtext(),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -597,7 +640,7 @@ private fun ProfileRow(
             if (detail != null) {
                 Text(
                     text = detail,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -636,7 +679,7 @@ private fun Section(
         if (footer != null) {
             Text(
                 text = footer,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
