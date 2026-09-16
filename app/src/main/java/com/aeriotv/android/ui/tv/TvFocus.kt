@@ -244,7 +244,10 @@ fun TvKeyboardOnOkHost(content: @Composable () -> Unit) {
  * No-op on touch devices (these key events never fire).
  */
 @Composable
-fun Modifier.tvFormFieldInput(horizontalFocusEscape: Boolean = false): Modifier {
+fun Modifier.tvFormFieldInput(
+    horizontalFocusEscape: Boolean = false,
+    okSuppressed: () -> Boolean = { false },
+): Modifier {
     val gate = LocalTvKeyboardGate.current ?: return this.dpadFocusEscape()
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -286,8 +289,15 @@ fun Modifier.tvFormFieldInput(horizontalFocusEscape: Boolean = false): Modifier 
     // decoration inside it (the password-reveal eye). This modifier sits on
     // the text field, which is an ANCESTOR of its trailing slot, so
     // onPreviewKeyEvent gets first crack at keys headed for the eye too - and
-    // swallowing OK there popped the keyboard instead of letting the button
-    // click. OK is only intercepted when the field itself is focused.
+    // swallowing OK there pops the keyboard instead of letting the button
+    // click, which is why the reveal eye never revealed anything on a remote.
+    //
+    // onFocusEvent CANNOT tell the two apart on its own: it aggregates
+    // descendant focus targets (FocusEventModifierNode.getFocusState returns
+    // the focused CHILD's state), so it reports isFocused = true for the eye
+    // as well. The eye therefore reports its own focus to the caller, which
+    // feeds it back as [okSuppressed]; while that is true this modifier keeps
+    // its hands off OK entirely. See SecretRevealState.
     val fieldItselfFocused = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     return this
         .bringIntoViewRequester(bringIntoViewRequester)
@@ -341,11 +351,13 @@ fun Modifier.tvFormFieldInput(horizontalFocusEscape: Boolean = false): Modifier 
             }
             // Swallow the down-press so the field's own key handling never
             // sees a half-click; act on the release.
-            event.type == KeyEventType.KeyDown && isOk && fieldItselfFocused.value -> {
+            event.type == KeyEventType.KeyDown && isOk && fieldItselfFocused.value &&
+                !okSuppressed() -> {
                 sawOkDown.value = true
                 true
             }
-            event.type == KeyEventType.KeyUp && isOk && fieldItselfFocused.value -> {
+            event.type == KeyEventType.KeyUp && isOk && fieldItselfFocused.value &&
+                !okSuppressed() -> {
                 if (sawOkDown.value) {
                     gate.armed = true
                     keyboard?.show()

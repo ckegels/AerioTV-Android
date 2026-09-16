@@ -168,6 +168,16 @@ class PlaylistRepository @Inject constructor(
     private val activeCredentials: com.aeriotv.android.core.network.ActivePlaylistCredentials,
     private val lanReachability: LanReachability,
     private val xtreamApi: com.aeriotv.android.core.network.XtreamCodesApi,
+    // Retained live-rewind fillers are invisible network connections held
+    // open under whichever account opened them; a credential edit has to
+    // drop them (see the credential-change block in loadAndPersist).
+    // Cycle-free: TimeshiftController only depends on its buffer store and
+    // AppPreferences.
+    private val timeshiftController: com.aeriotv.android.core.timeshift.TimeshiftController,
+    // Holds the connected account's XC output credentials, memoized by base
+    // URL; a credential edit has to drop them or catch-up keeps playing as
+    // the previous user.
+    private val catchupResolver: com.aeriotv.android.core.playback.CatchupPlaybackResolver,
 ) {
 
     /** Last successful cast-profile re-resolve per playlist id, so the launch
@@ -304,6 +314,38 @@ class PlaylistRepository @Inject constructor(
         // flow uses (refresh, warmup, silent rebootstrap on subsequent 401s).
         val playlistId = existingId ?: UUID.randomUUID().toString()
 
+        // Did this EDIT swap the account the playlist connects as?
+        //
+        // Reported 2026-09-15 (iPad, same shape here): an existing Direct
+        // Connect playlist was edited from an admin login to a different
+        // user and the app went on behaving as the old account. Everything
+        // the app remembers per playlist ROW -- the cached api_key, the
+        // process-local JWT pair, the capability snapshot, the assigned
+        // channel profiles -- is keyed by playlist id, which does not change
+        // across an edit, so none of it was invalidated. In API Key mode
+        // nothing even re-authenticates: the previous account's key was
+        // still valid server-side, so no call ever 401'd and the
+        // AuthBroker's silent rebootstrap never ran.
+        //
+        // Compared against the row as it stands BEFORE this save. Only the
+        // credential fields take part, so renaming a playlist or changing
+        // its EPG retention still costs nothing extra.
+        val priorRow = existingId?.let { dao.byId(it) }
+        val credentialsChanged = priorRow != null && run {
+            val suppliedKey = request.apiKey?.trim()?.takeIf { it.isNotBlank() }
+            val keyChanged = suppliedKey != null &&
+                suppliedKey != priorRow.apiKey?.trim()?.takeIf { it.isNotBlank() }
+            val userChanged = request.username?.takeIf { it.isNotBlank() } !=
+                priorRow.username?.takeIf { it.isNotBlank() }
+            val passChanged = request.password?.takeIf { it.isNotBlank() } !=
+                priorRow.password?.takeIf { it.isNotBlank() }
+            keyChanged || userChanged || passChanged
+        }
+        if (credentialsChanged) {
+            Log.i(TAG_CAPS, "credentials changed for ${playlistId.take(8)}; dropping the old account's cached identity")
+            dropCachedIdentity(priorRow!!)
+        }
+
         // For Dispatcharr User/Pass, do the JWT exchange up front and resolve to an api_key
         // so the rest of the flow looks identical to API-key mode. iOS does this too
         // (silent rebootstrap pattern, DispatcharrDirectConnect.swift line 534-588).
@@ -371,7 +413,13 @@ class PlaylistRepository @Inject constructor(
                     urlString = normalisedBase,
                     lanUrlString = request.lanUrl?.trimEnd('/')?.takeIf { it.isNotBlank() },
                     epgUrl = request.epgUrl?.takeIf { it.isNotBlank() },
-                    apiKey = resolvedApiKey?.takeIf { it.isNotBlank() } ?: previous.apiKey,
+                    // The `?: previous.apiKey` keep-what-we-had fallback is
+                    // correct for an edit that did not touch credentials,
+                    // and wrong the moment they change: it would restore the
+                    // PREVIOUS account's key, which is exactly how an edited
+                    // playlist went on acting as the old user.
+                    apiKey = resolvedApiKey?.takeIf { it.isNotBlank() }
+                        ?: previous.apiKey.takeUnless { credentialsChanged },
                     username = request.username?.takeIf { it.isNotBlank() },
                     password = request.password?.takeIf { it.isNotBlank() },
                     dispatcharrProfileId = request.dispatcharrProfileId,
@@ -504,6 +552,54 @@ class PlaylistRepository @Inject constructor(
      *
      * Returns true when a fresh snapshot landed.
      */
+    /**
+     * Forget everything the app holds that was derived from the account a
+     * playlist USED to be connected as.
+     *
+     * Two callers: an Edit Playlist save that changed the credentials, and
+     * the self-heal in [probeCapabilitiesUncoalesced] for a row whose
+     * stored key turned out to belong to somebody else.
+     */
+    private suspend fun dropCachedIdentity(priorRow: PlaylistEntity) {
+        // The JWT pair was minted for the OLD account. In User/Pass mode a
+        // re-login replaces it, but only on success; in API Key mode nothing
+        // would ever replace it, and bearer-mode calls (users/me, the
+        // capability probe) would keep answering as the previous user for
+        // the rest of the process.
+        dispatcharrTokenStore.clear(priorRow.id)
+        // Session guesses recorded from 403s the OLD account collected.
+        CapabilityCorrections.clear(priorRow.id)
+        // Retained live-rewind fillers are open connections counted against
+        // the OLD user's stream limit.
+        timeshiftController.stopAllRetained()
+        // Memoized XC username + xc_password used by catch-up playback.
+        catchupResolver.invalidateCredentialMemos()
+        // Forget the stored per-user snapshot outright rather than letting
+        // the next probe merge onto it. probeCapabilities deliberately keeps
+        // the last good snapshot when a probe FAILS, which is right when the
+        // account is unchanged and wrong here: a failed probe must not leave
+        // the previous user's DVR / VOD / catch-up grants in force.
+        runCatching {
+            dao.update(
+                priorRow.copy(
+                    dispatcharrUserLevel = 10,
+                    dispatcharrIsStaff = false,
+                    dispatcharrIsSuperuser = false,
+                    dispatcharrCustomProperties = "",
+                    dispatcharrCapabilitiesFetchedAt = 0L,
+                    dispatcharrCapabilitiesSchema = 0,
+                    dispatcharrCapabilitiesStale = true,
+                    dispatcharrSystemCatchupEnabled = -1,
+                    dispatcharrDvrAccess = "",
+                    dispatcharrCatchupEnabled = true,
+                    dispatcharrVodMoviesEnabled = true,
+                    dispatcharrVodSeriesEnabled = true,
+                    dispatcharrAccountProfileIds = "",
+                ),
+            )
+        }.onFailure { Log.w(TAG_CAPS, "cached-identity reset failed", it) }
+    }
+
     suspend fun probeCapabilities(playlistId: String, force: Boolean = false): Boolean {
         // One pass per playlist at a time. Launch fires the coordinator probe
         // while a gated surface (DVR / On Demand) can fire its own within the
@@ -549,6 +645,29 @@ class PlaylistRepository @Inject constructor(
             Log.w(TAG_CAPS, "probe failed for ${playlistId.take(8)}; keeping last good snapshot")
             return false
         }
+        // SELF-HEAL: does the stored key actually authenticate as the account
+        // whose username this playlist carries?
+        //
+        // users/me answers as whoever the key belongs to. A playlist edited
+        // from one Dispatcharr user to another before the credential-change
+        // path existed kept the previous account's api_key, and that key was
+        // still valid server-side, so nothing ever 401'd and nothing
+        // re-authenticated. The username the user typed is the statement of
+        // intent; the username the server echoes is the fact. When they
+        // disagree the cached identity is stale by definition, so repair it
+        // exactly like a credential change and a broken playlist fixes
+        // itself on the next probe instead of needing a manual re-save.
+        //
+        // Only with a username to compare against: in pure API Key mode the
+        // user asserted nothing about WHICH account, so a mismatch cannot be
+        // detected and must not be guessed at.
+        if (healIdentityMismatchIfNeeded(playlist, snapshot.username)) {
+            // The repair re-probed with the fresh key; that pass owns the
+            // snapshot, and writing this stale payload over it would put the
+            // old account's answers straight back.
+            return true
+        }
+
         // system_settings.catchup_enabled needs level >= 1; null (unreadable or
         // absent) leaves the capability Unknown rather than denying catch-up.
         val systemCatchup = key.let {
@@ -606,6 +725,72 @@ class PlaylistRepository @Inject constructor(
                 "catchup=${verdict(Capability.CanUseCatchup)} " +
                 "switch=${if (caps.isDenied(Capability.CanSwitchStream)) "denied" else "allowed"}",
         )
+        return true
+    }
+
+    /**
+     * Playlists whose identity mismatch has already been acted on in this
+     * process. One repair per playlist per app run: if the re-authenticated
+     * key STILL answers as somebody else, the server is doing something we
+     * do not model (a shared key, a proxy rewriting the account) and
+     * repairing again would spin -- log it and leave it alone.
+     */
+    private val identityRepaired = java.util.Collections.newSetFromMap(
+        ConcurrentHashMap<String, Boolean>(),
+    )
+
+    /**
+     * Compare the username the server echoed against the one saved on the
+     * playlist and, on a genuine mismatch, re-authenticate.
+     *
+     * Returns true when a repair ran, in which case the caller must abandon
+     * the payload it was about to persist: the repair took a fresh snapshot
+     * of its own.
+     */
+    private suspend fun healIdentityMismatchIfNeeded(
+        playlist: PlaylistEntity,
+        serverUsername: String,
+    ): Boolean {
+        val typed = playlist.username?.trim()?.lowercase().orEmpty()
+        val actual = serverUsername.trim().lowercase()
+        if (typed.isEmpty() || actual.isEmpty() || typed == actual) return false
+
+        if (!identityRepaired.add(playlist.id)) {
+            Log.w(
+                TAG_CAPS,
+                "stored key STILL authenticates as '$serverUsername' but the playlist is " +
+                    "'${playlist.username}' after a repair this run; leaving it alone " +
+                    "(${playlist.id.take(8)})",
+            )
+            return false
+        }
+        Log.i(
+            TAG_CAPS,
+            "stored key authenticates as '$serverUsername' but the playlist is " +
+                "'${playlist.username}'; re-authenticating (${playlist.id.take(8)})",
+        )
+
+        dropCachedIdentity(playlist)
+        // Re-mint from the saved username + password. API-Key-mode rows have
+        // no password to re-mint from, so they keep the key they were given
+        // and the repair is limited to clearing the stale derived state.
+        val fresh = dispatcharrAuth.silentRebootstrapApiKey(dao.byId(playlist.id) ?: playlist)
+        if (fresh == null) {
+            Log.w(TAG_CAPS, "identity repair could not re-mint a key for ${playlist.id.take(8)}")
+        }
+        // The in-flight guard for THIS pass is still held by probeCapabilities,
+        // so go straight to the uncoalesced probe or the repair's own read
+        // would be swallowed as a duplicate.
+        runCatching { probeCapabilitiesUncoalesced(playlist.id, force = true) }
+            .onFailure { Log.w(TAG_CAPS, "post-repair probe failed", it) }
+        // Account-scoped content: the channel snapshot is keyed by playlist
+        // id alone, so it still holds the OLD account's list (and its
+        // channel-profile filtering). Re-fetch it under the repaired
+        // identity. The Movies / TV Shows and DVR caches key on the api_key
+        // as well, so the fresh key misses them and they rebuild on their
+        // own.
+        runCatching { dao.byId(playlist.id)?.let { refresh(it) } }
+            .onFailure { Log.w(TAG_CAPS, "post-repair channel reload failed", it) }
         return true
     }
 

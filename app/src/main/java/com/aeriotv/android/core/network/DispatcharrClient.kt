@@ -392,6 +392,11 @@ class DispatcharrClient @Inject constructor() {
      * does that separately so the caller can decide when to spend the request.
      */
     data class AccountSnapshot(
+        /** The username the supplied key actually authenticates AS. Compared
+         *  against the username saved on the playlist to detect a stored key
+         *  left over from a different account (see
+         *  PlaylistRepository.probeCapabilitiesUncoalesced). */
+        val username: String,
         val userLevel: Int,
         val isStaff: Boolean,
         val isSuperuser: Boolean,
@@ -418,6 +423,7 @@ class DispatcharrClient @Inject constructor() {
             if (probeAdminByUsersList(baseUrl, apiKey)) level = 10
         }
         AccountSnapshot(
+            username = me.username,
             userLevel = level,
             isStaff = me.isStaff,
             isSuperuser = me.isSuperuser,

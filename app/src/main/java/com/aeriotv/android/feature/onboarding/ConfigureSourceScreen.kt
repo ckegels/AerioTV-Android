@@ -37,8 +37,6 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Sell
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -65,7 +63,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -78,6 +75,8 @@ import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.dpadFocusWash
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
+import com.aeriotv.android.ui.textfield.SecretRevealIconButton
+import com.aeriotv.android.ui.textfield.rememberSecretRevealState
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
 import com.aeriotv.android.ui.tv.dpadFocusEscape
 import com.aeriotv.android.ui.tv.tvFormFieldInput
@@ -364,12 +363,21 @@ private fun DispatcharrFields(
     when (authMode) {
         DispatcharrAuthMode.ApiKey -> {
             LabeledField(label = "Admin API Key") {
+                val apiKeyReveal = rememberSecretRevealState()
                 IconTextField(
                     value = state.apiKey,
                     onValueChange = viewModel::onApiKeyChange,
                     placeholder = "Paste your admin API key",
                     leading = Icons.Filled.Key,
-                    visualTransformation = PasswordVisualTransformation(),
+                    visualTransformation = apiKeyReveal.transformation,
+                    trailing = {
+                        SecretRevealIconButton(
+                            state = apiKeyReveal,
+                            iconSize = 18.dp,
+                            contentLabel = "API key",
+                        )
+                    },
+                    trailingFocused = { apiKeyReveal.controlFocused },
                     enabled = !state.isLoading,
                 )
             }
@@ -627,13 +635,19 @@ private fun IconTextField(
     enabled: Boolean,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailing: @Composable (() -> Unit)? = null,
+    // True while the trailing control (the reveal eye) holds D-pad focus, so
+    // the field leaves OK alone and the button can actually be clicked.
+    trailingFocused: () -> Boolean = { false },
     keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = aerioTextFieldKeyboardOptions(),
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier.fillMaxWidth()
-            .tvFormFieldInput(horizontalFocusEscape = trailing != null),
+            .tvFormFieldInput(
+                horizontalFocusEscape = trailing != null,
+                okSuppressed = trailingFocused,
+            ),
         singleLine = true,
         placeholder = { Text(placeholder, style = androidx.compose.material3.LocalTextStyle.current.subtext(), color = MaterialTheme.colorScheme.onSurfaceVariant) },
         leadingIcon = {
@@ -660,7 +674,7 @@ private fun PasswordField(
     placeholder: String,
     enabled: Boolean,
 ) {
-    var visible by remember { mutableStateOf(false) }
+    val reveal = rememberSecretRevealState()
     LabeledField(label = label) {
         IconTextField(
             value = value,
@@ -668,20 +682,15 @@ private fun PasswordField(
             placeholder = placeholder,
             leading = Icons.Outlined.Lock,
             enabled = enabled,
-            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+            visualTransformation = reveal.transformation,
             trailing = {
-                IconButton(
-                    onClick = { visible = !visible },
-                    modifier = Modifier.dpadFocusRing(CircleShape),
-                ) {
-                    Icon(
-                        imageVector = if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                        contentDescription = if (visible) "Hide password" else "Show password",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
+                SecretRevealIconButton(
+                    state = reveal,
+                    iconSize = 18.dp,
+                    contentLabel = "password",
+                )
             },
+            trailingFocused = { reveal.controlFocused },
         )
     }
 }

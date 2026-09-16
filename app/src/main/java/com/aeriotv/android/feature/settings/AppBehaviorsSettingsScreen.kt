@@ -16,18 +16,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -49,8 +45,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -64,6 +58,8 @@ import com.aeriotv.android.ui.settings.SettingsSelectionRow
 import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
+import com.aeriotv.android.ui.textfield.SecretRevealIconButton
+import com.aeriotv.android.ui.textfield.rememberSecretRevealState
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
 import com.aeriotv.android.ui.tv.dpadFocusEscape
 import com.aeriotv.android.ui.tv.tvFormFieldInput
@@ -586,7 +582,7 @@ fun AppBehaviorsSettingsScreen(
                 )
                 if (programPostersTmdb) {
                     var keyDraft by remember(savedTmdbKey) { mutableStateOf(savedTmdbKey) }
-                    var keyVisible by remember { mutableStateOf(false) }
+                    val keyReveal = rememberSecretRevealState()
                     TmdbAttribution(
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
                         long = false,
@@ -600,24 +596,17 @@ fun AppBehaviorsSettingsScreen(
                         },
                         label = { Text("TMDB API key (v3) or read token (v4)") },
                         singleLine = true,
-                        visualTransformation = if (keyVisible) VisualTransformation.None
-                        else PasswordVisualTransformation(),
+                        visualTransformation = keyReveal.transformation,
                         trailingIcon = {
-                            IconButton(
-                                onClick = { keyVisible = !keyVisible },
-                                modifier = Modifier.dpadFocusRing(CircleShape),
-                            ) {
-                                Icon(
-                                    imageVector = if (keyVisible) Icons.Filled.VisibilityOff
-                                    else Icons.Filled.Visibility,
-                                    contentDescription = if (keyVisible) "Hide key" else "Show key",
-                                )
-                            }
+                            SecretRevealIconButton(state = keyReveal, contentLabel = "key")
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 8.dp)
-                            .tvFormFieldInput(horizontalFocusEscape = true),
+                            .tvFormFieldInput(
+                                horizontalFocusEscape = true,
+                                okSuppressed = { keyReveal.controlFocused },
+                            ),
                     )
                     Row(
                         modifier = Modifier

@@ -525,17 +525,23 @@ class OnDemandViewModel @Inject constructor(
                 // re-enabled it on the server (phone 2026-09-15). Force that
                 // half's sweep, cadence and change-probe gates ignored.
                 val legacySnapshot = snap.schema < VodLibrarySnapshotStore.SCHEMA
-                val moviesWasDenied = snap.moviesDenied || legacySnapshot
-                val seriesWasDenied = snap.seriesDenied || legacySnapshot
-                val forceMovies = !moviesDenied && moviesWasDenied
-                val forceSeries = !seriesDenied && seriesWasDenied
-                if (forceMovies || forceSeries) {
-                    Log.i(
-                        TAG,
-                        "[VOD-CACHE] capability restored since last save " +
-                            "(legacy=$legacySnapshot): forcing movies=$forceMovies series=$forceSeries",
-                    )
-                }
+                // The LATCH is armed from the file alone, never from the
+                // current capability: at this point the capability probe may
+                // not have landed yet (phone 2026-09-15 restored at :31 and
+                // probed at :32), so a verdict read here would be the stale,
+                // still-denied one. Whoever sees the allowed verdict first,
+                // this launch's gate below or the capability collector when the
+                // probe lands, disarms the latch by running the full sweep.
+                if (snap.moviesDenied || legacySnapshot) pendingMoviesRecovery = true
+                if (snap.seriesDenied || legacySnapshot) pendingSeriesRecovery = true
+                val forceMovies = !moviesDenied && pendingMoviesRecovery
+                val forceSeries = !seriesDenied && pendingSeriesRecovery
+                Log.i(
+                    TAG,
+                    "[VOD-CACHE] written-under-denial latch: movies=$pendingMoviesRecovery " +
+                        "series=$pendingSeriesRecovery (legacy=$legacySnapshot); " +
+                        "forcing now movies=$forceMovies series=$forceSeries",
+                )
                 // A denied half is not swept at all; the sweep's own gate would
                 // return immediately anyway, and asking for it only logs noise.
                 val moviesFresh = moviesDenied || (!forceMovies && fresh(snap.moviesCompletedAtMs))
@@ -554,6 +560,7 @@ class OnDemandViewModel @Inject constructor(
                 enrichArt(isMovie = true)
                 enrichArt(isMovie = false)
                 Log.i(TAG, "[VOD-CACHE] launch cadence: movies=${if (moviesFresh) "fresh" else "stale"} series=${if (seriesFresh) "fresh" else "stale"}")
+                launchRestoreDone.complete(Unit)
                 scheduleBackgroundSweep(
                     moviesStale = !moviesFresh,
                     seriesStale = !seriesFresh,
@@ -563,6 +570,7 @@ class OnDemandViewModel @Inject constructor(
             }
             // No snapshot: there is nothing to show instantly, so this one
             // sweep stays on the launch path.
+            launchRestoreDone.complete(Unit)
             refresh()
             refreshSeries()
         }
@@ -682,6 +690,22 @@ class OnDemandViewModel @Inject constructor(
     private var shelvedSeries: List<DispatcharrVODSeries>? = null
     private var shelvedSeriesGroupNames: List<String> = emptyList()
 
+    // ---- Pending capability recovery (2026-09-15, round 2).
+    // Set at launch when the stored snapshot says that half was written while
+    // DENIED (or by a build older than the denied markers). It is a LATCH, not
+    // a one-shot decision: the capability probe can land either side of the
+    // cache restore (phone probes after, Streamer before), so a verdict read
+    // once at restore time is a coin flip. The latch survives until that half
+    // actually completes a sweep while allowed, so whichever order the probe
+    // and the restore happen in, the half re-sweeps in full exactly once,
+    // ignoring the cadence window, the change probe and the stored counts.
+    private var pendingMoviesRecovery = false
+    private var pendingSeriesRecovery = false
+
+    // Completed once the launch restore has published, so the capability
+    // collector cannot race ahead of it and have its rows overwritten.
+    private val launchRestoreDone = kotlinx.coroutines.CompletableDeferred<Unit>()
+
     /** Move a half's rows off screen but keep them for the next save. */
     private fun shelveMovies() {
         val st = _state.value
@@ -765,11 +789,15 @@ class OnDemandViewModel @Inject constructor(
         // and skipped the sweep, so re-granting the capability could not bring
         // the tab back.
         when (completed) {
-            MediaSweep.Movies -> if (!st0.moviesDenied) moviesCompletedAtMs = now
-            MediaSweep.Series -> if (!st0.seriesDenied) seriesCompletedAtMs = now
+            MediaSweep.Movies -> if (!st0.moviesDenied) {
+                moviesCompletedAtMs = now; pendingMoviesRecovery = false
+            }
+            MediaSweep.Series -> if (!st0.seriesDenied) {
+                seriesCompletedAtMs = now; pendingSeriesRecovery = false
+            }
             MediaSweep.Both -> {
-                if (!st0.moviesDenied) moviesCompletedAtMs = now
-                if (!st0.seriesDenied) seriesCompletedAtMs = now
+                if (!st0.moviesDenied) { moviesCompletedAtMs = now; pendingMoviesRecovery = false }
+                if (!st0.seriesDenied) { seriesCompletedAtMs = now; pendingSeriesRecovery = false }
             }
             null -> Unit
         }
@@ -869,10 +897,25 @@ class OnDemandViewModel @Inject constructor(
                 }
                 .filterNotNull()
                 .distinctUntilChanged()
-                .drop(1)
                 .collect { (moviesDenied, seriesDenied) ->
-                    if (moviesDenied != _state.value.moviesDenied) refresh()
-                    if (seriesDenied != _state.value.seriesDenied) refreshSeries()
+                    // No drop(1): on the phone the probe landed BEFORE this
+                    // collector's first emission, so the only emission that
+                    // carried the restored capability was the one being
+                    // dropped, and the transition was never seen. Every
+                    // emission is now considered; the guards below make a
+                    // repeat a no-op.
+                    launchRestoreDone.await()
+                    val st = _state.value
+                    if (moviesDenied != st.moviesDenied ||
+                        (!moviesDenied && pendingMoviesRecovery)
+                    ) {
+                        refresh()
+                    }
+                    if (seriesDenied != st.seriesDenied ||
+                        (!seriesDenied && pendingSeriesRecovery)
+                    ) {
+                        refreshSeries()
+                    }
                 }
         }
         // "Refresh Everything" (PlaylistViewModel.refreshEverything): the active
@@ -909,6 +952,8 @@ class OnDemandViewModel @Inject constructor(
         shelvedMovieGroupNames = emptyList()
         shelvedSeries = null
         shelvedSeriesGroupNames = emptyList()
+        pendingMoviesRecovery = false
+        pendingSeriesRecovery = false
         xtreamProbeJob?.cancel()
         xtreamItemsJob?.cancel()
         xtreamProbeJob = null
@@ -1371,14 +1416,36 @@ class OnDemandViewModel @Inject constructor(
             }
             // Allowed (or unknown): clear any earlier denial so a capability
             // granted back on the server restores this half without a reinstall.
-            if (_state.value.moviesDenied) {
-                // Denied -> allowed: this sweep repopulates the half from the
-                // server, so the shelved copy has done its job and the stamps
-                // that were zeroed while denied are rebuilt by the walk below.
-                _state.update { it.copy(moviesDenied = false) }
+            if (_state.value.moviesDenied || pendingMoviesRecovery) {
+                // Denied -> allowed, or a library stored under denial: this
+                // sweep repopulates the half from the server, so the shelved
+                // copy has done its job. The stored count and completion stamp
+                // are not trusted either (the phone's 400-movie remnant read as
+                // a fresh library), so they are zeroed until this walk finishes.
+                // Un-shelve FIRST: the rows the block hid are valid and put the
+                // tab back on screen immediately, instead of leaving it retired
+                // for the whole length of the forced walk below.
+                val unshelved = shelvedMovies
+                _state.update {
+                    it.copy(
+                        moviesDenied = false,
+                        movies = if (unshelved != null && it.movies.isEmpty()) unshelved else it.movies,
+                        totalCount = if (unshelved != null && it.movies.isEmpty()) unshelved.size
+                            else it.totalCount,
+                        movieGroupNames = if (unshelved != null && it.movieGroupNames.isEmpty())
+                            shelvedMovieGroupNames else it.movieGroupNames,
+                    )
+                }
                 shelvedMovies = null
                 shelvedMovieGroupNames = emptyList()
                 moviesCompletedAtMs = 0L
+                moviesProbeCount = 0
+                moviesProbeNewest = ""
+                Log.i(
+                    TAG,
+                    "[VOD] movies capability restored: un-shelved ${unshelved?.size ?: 0}, " +
+                        "visible=${_state.value.visible.size}; forcing a full sweep",
+                )
             }
             if (playlist != null && sourceType == SourceType.XtreamCodes) {
                 ensureXtreamProbe(playlist)
@@ -1617,11 +1684,28 @@ class OnDemandViewModel @Inject constructor(
                 }
                 return@launch
             }
-            if (_state.value.seriesDenied) {
-                _state.update { it.copy(seriesDenied = false) }
+            if (_state.value.seriesDenied || pendingSeriesRecovery) {
+                val unshelved = shelvedSeries
+                _state.update {
+                    it.copy(
+                        seriesDenied = false,
+                        series = if (unshelved != null && it.series.isEmpty()) unshelved else it.series,
+                        seriesTotalCount = if (unshelved != null && it.series.isEmpty()) unshelved.size
+                            else it.seriesTotalCount,
+                        seriesGroupNames = if (unshelved != null && it.seriesGroupNames.isEmpty())
+                            shelvedSeriesGroupNames else it.seriesGroupNames,
+                    )
+                }
                 shelvedSeries = null
                 shelvedSeriesGroupNames = emptyList()
                 seriesCompletedAtMs = 0L
+                seriesProbeCount = 0
+                seriesProbeNewest = ""
+                Log.i(
+                    TAG,
+                    "[VOD] series capability restored: un-shelved ${unshelved?.size ?: 0}, " +
+                        "visible=${_state.value.visibleSeries.size}; forcing a full sweep",
+                )
             }
             if (playlist != null && sourceType == SourceType.XtreamCodes) {
                 ensureXtreamProbe(playlist)

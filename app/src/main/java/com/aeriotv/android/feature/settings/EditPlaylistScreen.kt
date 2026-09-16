@@ -40,7 +40,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,6 +52,8 @@ import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.dpadFocusWash
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
+import com.aeriotv.android.ui.textfield.SecretRevealIconButton
+import com.aeriotv.android.ui.textfield.rememberSecretRevealState
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
 import com.aeriotv.android.ui.tv.dpadFocusEscape
 import com.aeriotv.android.ui.tv.tvFormFieldInput
@@ -308,13 +309,23 @@ fun EditPlaylistScreen(
                 SourceType.DispatcharrApiKey -> item {
                     Section(header = "Authentication") {
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            val apiKeyReveal = rememberSecretRevealState()
                             OutlinedTextField(
                                 value = apiKey,
                                 onValueChange = { apiKey = it },
                                 label = { Text("API Key") },
                                 singleLine = true,
-                                visualTransformation = PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                                visualTransformation = apiKeyReveal.transformation,
+                                trailingIcon = {
+                                    SecretRevealIconButton(
+                                        state = apiKeyReveal,
+                                        contentLabel = "API key",
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(
+                                    horizontalFocusEscape = true,
+                                    okSuppressed = { apiKeyReveal.controlFocused },
+                                ),
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
                                 ),
@@ -325,6 +336,8 @@ fun EditPlaylistScreen(
                 SourceType.DispatcharrUserPass -> item {
                     Section(header = "Authentication") {
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            val passwordReveal = rememberSecretRevealState()
+                            val apiKeyReveal = rememberSecretRevealState()
                             SegmentedToggle(
                                 left = "Username & Password",
                                 right = "API Key",
@@ -349,8 +362,17 @@ fun EditPlaylistScreen(
                                     onValueChange = { password = it },
                                     label = { Text("Password") },
                                     singleLine = true,
-                                    visualTransformation = PasswordVisualTransformation(),
-                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                                    visualTransformation = passwordReveal.transformation,
+                                    trailingIcon = {
+                                        SecretRevealIconButton(
+                                            state = passwordReveal,
+                                            contentLabel = "password",
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(
+                                        horizontalFocusEscape = true,
+                                        okSuppressed = { passwordReveal.controlFocused },
+                                    ),
                                     keyboardOptions = aerioTextFieldKeyboardOptions(
                                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
                                     ),
@@ -361,8 +383,17 @@ fun EditPlaylistScreen(
                                     onValueChange = { apiKey = it },
                                     label = { Text("API Key") },
                                     singleLine = true,
-                                    visualTransformation = PasswordVisualTransformation(),
-                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                                    visualTransformation = apiKeyReveal.transformation,
+                                    trailingIcon = {
+                                        SecretRevealIconButton(
+                                            state = apiKeyReveal,
+                                            contentLabel = "API key",
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(
+                                        horizontalFocusEscape = true,
+                                        okSuppressed = { apiKeyReveal.controlFocused },
+                                    ),
                                 )
                             }
                         }
@@ -382,13 +413,23 @@ fun EditPlaylistScreen(
                                 ),
                             )
                             Spacer(Modifier.height(8.dp))
+                            val passwordReveal = rememberSecretRevealState()
                             OutlinedTextField(
                                 value = password,
                                 onValueChange = { password = it },
                                 label = { Text("Password") },
                                 singleLine = true,
-                                visualTransformation = PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                                visualTransformation = passwordReveal.transformation,
+                                trailingIcon = {
+                                    SecretRevealIconButton(
+                                        state = passwordReveal,
+                                        contentLabel = "password",
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(
+                                    horizontalFocusEscape = true,
+                                    okSuppressed = { passwordReveal.controlFocused },
+                                ),
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
                                 ),

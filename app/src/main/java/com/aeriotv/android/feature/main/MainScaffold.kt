@@ -307,8 +307,17 @@ fun MainScaffold(
     // the next OnDemandViewModel refresh to flip unsupportedSource. If the
     // playlist hasn't loaded yet the default is true so we don't suppress
     // the tab on a slow cold launch.
-    val activePlaylistVodEnabled = viewModel.state
-        .collectAsStateWithLifecycle().value.playlist?.vodEnabled ?: true
+    // LIVE active playlist row, not `state.playlist`. The latter is a snapshot
+    // frozen when the state was last written, so the AerioCaps capability probe
+    // that lands after launch was invisible to every gate below: the Streamer
+    // restored 40050 movies, ran the forced sweep, and STILL hid the Movies tab
+    // because `moviesDenied` was computed from the pre-probe row and retired the
+    // pill on every recomposition (2026-09-15). Falls back to the snapshot only
+    // until the first DB emission.
+    val livePlaylist by viewModel.activePlaylistLive
+        .collectAsStateWithLifecycle(initialValue = null)
+    val capsPlaylist = livePlaylist ?: state.playlist
+    val activePlaylistVodEnabled = capsPlaylist?.vodEnabled ?: true
     // hasVOD: any movie/series loaded, OR still loading its library. The loading
     // bridge keeps the tab from flickering "absent -> present" on cold launch /
     // source switch; a source that finishes with zero VOD hides the tab entirely.
@@ -339,7 +348,7 @@ fun MainScaffold(
     // that reads as Unknown (tab allowed), and the persisted hint would show
     // the tab, so the retire-on-Denied pass below is what actually hides it
     // once the active playlist and its capability snapshot land.
-    val dvrDenied = state.playlist?.dispatcharrCanViewDvr() == false
+    val dvrDenied = capsPlaylist?.dispatcharrCanViewDvr() == false
     val dvrListable = !dvrDenied
     // Local recordings belong to the DEVICE, not the server: an in-progress
     // capture or any saved local row keeps the tab regardless of dvr_access.
@@ -363,14 +372,14 @@ fun MainScaffold(
     val splitVod = true
     // Same three-state gate as DVR: Denied retires the tab even once shown,
     // Unknown (including the null playlist on the first frames) keeps it.
-    val moviesDenied = state.playlist?.dispatcharrCanViewVod() == false
-    val seriesDenied = state.playlist?.dispatcharrCanViewSeries() == false
+    val moviesDenied = capsPlaylist?.dispatcharrCanViewVod() == false
+    val seriesDenied = capsPlaylist?.dispatcharrCanViewSeries() == false
     val vodSourceOk = activePlaylistVodEnabled && !onDemandState.unsupportedSource
     val hasMoviesContent = vodSourceOk && !moviesDenied &&
         (onDemandState.hasMovies || onDemandState.isLoading || onDemandState.hasDeferredXtreamContent)
     val hasSeriesContent = vodSourceOk && !seriesDenied &&
         (onDemandState.hasSeries || onDemandState.isLoadingSeries || onDemandState.hasDeferredXtreamContent)
-    val stickyTabs = remember(state.playlist?.id) { mutableSetOf<AppTab>() }
+    val stickyTabs = remember(capsPlaylist?.id ?: state.playlist?.id) { mutableSetOf<AppTab>() }
     val tabs = run {
         val live = visibleTabs(
             // Phone/tablet: Favorites is a pinned Live TV group, not a tab (Apple parity).
@@ -403,6 +412,21 @@ fun MainScaffold(
             splitVod = splitVod,
             hasMovies = AppTab.Movies in stickyTabs,
             hasSeries = AppTab.TVShows in stickyTabs,
+        )
+    }
+    // One line per change of the inputs, so "why is the tab hidden" is provable
+    // from logcat instead of from the screen.
+    androidx.compose.runtime.LaunchedEffect(
+        moviesDenied, seriesDenied, vodSourceOk, hasMoviesContent, hasSeriesContent,
+        onDemandState, tabs,
+    ) {
+        android.util.Log.i(
+            "MainScaffold",
+            "[VOD-TAB] vodEnabled=$activePlaylistVodEnabled unsupported=${onDemandState.unsupportedSource} " +
+                "sourceOk=$vodSourceOk | movies: denied=$moviesDenied has=${onDemandState.hasMovies} " +
+                "loading=${onDemandState.isLoading} -> show=$hasMoviesContent | " +
+                "series: denied=$seriesDenied has=${onDemandState.hasSeries} " +
+                "loading=${onDemandState.isLoadingSeries} -> show=$hasSeriesContent | tabs=$tabs",
         )
     }
     val miniPlayerVm: MiniPlayerViewModel = hiltViewModel()
