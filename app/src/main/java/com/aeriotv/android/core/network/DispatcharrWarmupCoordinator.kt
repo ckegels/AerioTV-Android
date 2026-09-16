@@ -56,6 +56,9 @@ class DispatcharrWarmupCoordinator @Inject constructor(
     // Only the first one is a cold launch, and only that one force-probes.
     private var coldLaunch = true
 
+    /** When the app last went to the background, for the foreground re-probe. */
+    private var backgroundedAt = 0L
+
     /**
      * Attach this coordinator to the ProcessLifecycleOwner. Idempotent — a
      * second call is a no-op so it's safe to invoke from Application.onCreate
@@ -73,6 +76,13 @@ class DispatcharrWarmupCoordinator @Inject constructor(
         // token refresh — match iOS scene-phase .active behavior.
         val isColdLaunch = coldLaunch
         coldLaunch = false
+        // A return from the background after more than a minute re-reads
+        // permissions too, matching Apple: an admin can grant or revoke while
+        // the user is out of the app, and the TTL would otherwise hold a
+        // stale answer for hours.
+        val awayLongEnough = !isColdLaunch && backgroundedAt > 0L &&
+            System.currentTimeMillis() - backgroundedAt >= FOREGROUND_REPROBE_MS
+        val forceProbe = isColdLaunch || awayLongEnough
         scope.launch {
             warmupAll()
             // Per-user capabilities, every launch AND every return to the
@@ -87,7 +97,7 @@ class DispatcharrWarmupCoordinator @Inject constructor(
             // showing admin affordances. A return to the foreground keeps the
             // TTL (cheap, frequent, and the snapshot is usually minutes old);
             // so do the opportunistic DVR / On Demand entry checks.
-            runCatching { playlistRepository.get().probeAllCapabilities(force = isColdLaunch) }
+            runCatching { playlistRepository.get().probeAllCapabilities(force = forceProbe) }
                 .onFailure { Log.w(TAG, "capability probe pass failed: ${it.message}") }
         }
         // Cast audio, 2026-09-13: the launch / foreground re-resolve of the
@@ -138,7 +148,14 @@ class DispatcharrWarmupCoordinator @Inject constructor(
         }
     }
 
+    override fun onStop(owner: LifecycleOwner) {
+        backgroundedAt = System.currentTimeMillis()
+    }
+
     private companion object {
         const val TAG = "DispatcharrWarmup"
+
+        /** Away this long and the next foreground re-reads permissions. */
+        const val FOREGROUND_REPROBE_MS = 60_000L
     }
 }

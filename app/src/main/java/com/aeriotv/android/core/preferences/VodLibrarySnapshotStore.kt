@@ -52,6 +52,22 @@ class VodLibrarySnapshotStore @Inject constructor(
         val moviesProbeNewest: String = "",
         val seriesProbeCount: Int = 0,
         val seriesProbeNewest: String = "",
+        // Whether the per-user Dispatcharr capability for each half was DENIED
+        // when this file was written (Capability.CanViewVod / CanViewSeries).
+        // A denied half is not a library the cadence gate may call "fresh": its
+        // completion stamp is forced to 0 on write, and a launch that finds the
+        // capability restored treats the half as stale and re-sweeps it even if
+        // every other signal says the cache is current. Without this, blocking
+        // a half once and unblocking it left the tab hidden forever (phone
+        // 2026-09-15: "movies=fresh ... gate=skipped" with an emptied library).
+        val moviesDenied: Boolean = false,
+        val seriesDenied: Boolean = false,
+        // Bumped when a new field changes how the launch gate must read this
+        // file. A snapshot older than [SCHEMA] predates the denied markers, so
+        // it may have been written while a half was blocked and cannot be
+        // trusted as "fresh"; the launch still serves its rows (the tab opens
+        // populated) but re-sweeps both halves once to rebuild them honestly.
+        val schema: Int = 0,
     )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -97,7 +113,10 @@ class VodLibrarySnapshotStore @Inject constructor(
         }.onFailure { Log.w(TAG, "snapshot save failed: ${it.message}") }
     }
 
-    private companion object {
+    companion object {
+        /** Current snapshot schema; see [Snapshot.schema]. */
+        const val SCHEMA = 1
+
         const val TAG = "VodLibrarySnapshot"
         /** Big enough that a multi-megabyte document is not read a page at a
          *  time, small enough to stay out of the large-object space. */
