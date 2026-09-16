@@ -377,6 +377,38 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setAutoRecoverFrozenStreams(value) }
     }
 
+    // Player Info Card elements (App Behaviors, Apple parity). All default true;
+    // they gate ONLY the in-player program info card.
+    val playerCardShowChannelLogo: Flow<Boolean> = prefs.playerCardShowChannelLogo
+    fun setPlayerCardShowChannelLogo(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowChannelLogo(value) }
+    }
+
+    val playerCardShowChannelName: Flow<Boolean> = prefs.playerCardShowChannelName
+    fun setPlayerCardShowChannelName(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowChannelName(value) }
+    }
+
+    val playerCardShowProgramName: Flow<Boolean> = prefs.playerCardShowProgramName
+    fun setPlayerCardShowProgramName(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowProgramName(value) }
+    }
+
+    val playerCardShowProgramTime: Flow<Boolean> = prefs.playerCardShowProgramTime
+    fun setPlayerCardShowProgramTime(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowProgramTime(value) }
+    }
+
+    val playerCardShowProgramSubtitle: Flow<Boolean> = prefs.playerCardShowProgramSubtitle
+    fun setPlayerCardShowProgramSubtitle(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowProgramSubtitle(value) }
+    }
+
+    val playerCardShowProgramDescription: Flow<Boolean> = prefs.playerCardShowProgramDescription
+    fun setPlayerCardShowProgramDescription(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerCardShowProgramDescription(value) }
+    }
+
     // TMDB program posters (opt-in, off by default). Key is device-local.
     val programPostersTmdbEnabled: Flow<Boolean> = prefs.programPostersTmdbEnabled
     fun setProgramPostersTmdbEnabled(value: Boolean) {

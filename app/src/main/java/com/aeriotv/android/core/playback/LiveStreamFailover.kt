@@ -21,10 +21,17 @@ import kotlinx.coroutines.withTimeoutOrNull
  * A Dispatcharr ingest can CONNECT and then stay silent: the server's own health
  * checks cannot fail a connected-but-silent stream over for roughly 75 s
  * (60 s channel_init_grace_period plus three checks at 5 s), and the holder's
- * live no-data ceiling is 50 s. So the client arms its own 12 s first-byte
+ * live no-data ceiling is 50 s. So the client arms its own silent-start
  * deadline per live ingest (deliberately SEPARATE from any HTTP timeout) and, on
  * a Dispatcharr Direct Connect admin account, walks the channel's member streams
  * with change_stream instead of waiting.
+ *
+ * The deadline measures SILENCE, never elapsed time: while bytes keep arriving,
+ * however slowly, the stream is never abandoned. The first ingest of a tune gets
+ * a long budget (an over-the-air tuner has to lock before it can send anything)
+ * stretched further on a channel this device has LEARNED to start slowly; every
+ * later ingest of the same tune gets the short, responsive budget. A definitive
+ * server answer (503 with a reason, or a hard player error) still walks at once.
  *
  * The ExoPlayer connection is KEPT OPEN across a step: Dispatcharr swaps the
  * upstream in place behind the same /proxy/ts/stream/<uuid> URL, so re-priming
@@ -72,11 +79,40 @@ class LiveStreamFailover(
      *  "Reconnecting...", "Channel unavailable. Retrying..."), null otherwise. */
     val statusText: StateFlow<String?> = _statusText.asStateFlow()
 
+    /** This channel's learned time-to-first-byte in ms, or null when nothing is
+     *  known (or the learned value has decayed). Wired by the holder from the
+     *  persisted learner; the channel identity arrives as a PARAMETER so a
+     *  channel flip can never read the previous channel's value. */
+    @Volatile var learnedFirstByteMs: ((channelId: String) -> Int?)? = null
+
+    /** A clean, un-stepped tune produced its first byte after this long; the
+     *  holder persists it. Only successes are learned. */
+    @Volatile var onLearnFirstByte: ((channelId: String, ms: Int) -> Unit)? = null
+
     private var deadlineJob: Job? = null
     private var stepJob: Job? = null
     private var channelId: String? = null
     private var channelName: String = "?"
     private var firstByteSeen = false
+
+    /**
+     * Last moment ANY byte was seen on this pipeline (0 = none since arm).
+     * Written from loader threads, so volatile and free of any coroutine work.
+     * The deadline measures SILENCE from here: a slow but live feed can never
+     * trigger the walk (Glitzbr 2026-09-15, an upstream that degraded to 0.68
+     * of real time was walked away from onto worse backups).
+     */
+    @Volatile private var lastByteAtMs = 0L
+
+    /** When the CURRENT deadline was armed. */
+    private var armedAtMs = 0L
+
+    /** When this tune first armed a deadline, so the learned value measures the
+     *  whole tap-to-first-byte, not just the last step. */
+    private var tuneStartedAtMs = 0L
+
+    /** The budget the current deadline is running with, for the log line. */
+    private var budgetMs = FIRST_TUNE_FIRST_BYTE_MS
     /** Streams already walked this tune; the walk never revisits one. */
     private val tried = mutableSetOf<Int>()
     private var activeStreamId: Int? = null
@@ -102,16 +138,39 @@ class LiveStreamFailover(
         this.channelId = channelId
         channelName?.takeIf { it.isNotBlank() }?.let { this.channelName = it }
         _statusText.value = null
-        armDeadline()
+        armDeadline(firstAttempt = true)
+    }
+
+    /**
+     * ANY byte arrived on the live pipeline. Called from loader threads at most
+     * a few times a second (PlaybackTracer throttles), so it does exactly one
+     * volatile write and nothing else. Bytes NEVER get abandoned: the deadline
+     * counts silence from the last byte, so a feed that is crawling at a
+     * fraction of real time keeps the stream alive instead of starting a walk.
+     */
+    fun noteBytes() {
+        lastByteAtMs = SystemClock.elapsedRealtime()
     }
 
     /** First byte on the wire: disarm, and say what recovered us if we stepped. */
     fun noteFirstByte() {
+        lastByteAtMs = SystemClock.elapsedRealtime()
         scope.launch {
             if (firstByteSeen) return@launch
             firstByteSeen = true
             deadlineJob?.cancel()
             deadlineJob = null
+            // Learn only clean successes on this channel's own stream: a time
+            // measured after a change_stream walk is the backup's, not the
+            // channel's normal lock time.
+            val id = channelId
+            if (steps == 0 && id != null && tuneStartedAtMs != 0L) {
+                val ttfb = (SystemClock.elapsedRealtime() - tuneStartedAtMs).toInt()
+                if (ttfb > 0) {
+                    Log.i(TAG, "[FAILOVER] channel=$channelName firstByte in ${ttfb}ms; learning")
+                    onLearnFirstByte?.invoke(id, ttfb)
+                }
+            }
             if (steps > 0) {
                 val ms = if (walkStartedAtMs == 0L) 0L else SystemClock.elapsedRealtime() - walkStartedAtMs
                 Log.i(
@@ -181,16 +240,53 @@ class LiveStreamFailover(
         _statusText.value = null
     }
 
-    private fun armDeadline() {
+    /**
+     * Arm the silent-start deadline.
+     *
+     * [firstAttempt] is the first ingest of this tune: an over-the-air tuner has
+     * to LOCK before it can send anything, so it gets the long budget (and a
+     * longer one still on a channel this device has learned to be slow). Every
+     * later attempt is a stream the server has already swapped in behind the
+     * same connection, so it gets the short, responsive budget.
+     *
+     * The wait measures SILENCE, not wall clock: each poll restarts the budget
+     * from the last byte seen.
+     */
+    private fun armDeadline(firstAttempt: Boolean) {
         firstByteSeen = false
+        lastByteAtMs = 0L
+        armedAtMs = SystemClock.elapsedRealtime()
+        if (firstAttempt) tuneStartedAtMs = armedAtMs
+        val id = channelId
+        val learned = id?.let { cid -> runCatching { learnedFirstByteMs?.invoke(cid) }.getOrNull() }
+        budgetMs = if (!firstAttempt) {
+            STEP_FIRST_BYTE_MS
+        } else {
+            val fromLearned = learned?.let { (it * LEARNED_HEADROOM_NUM / LEARNED_HEADROOM_DEN).toLong() } ?: 0L
+            maxOf(FIRST_TUNE_FIRST_BYTE_MS, fromLearned).coerceAtMost(FIRST_BYTE_BUDGET_MAX_MS)
+        }
+        Log.i(
+            TAG,
+            "[FAILOVER] channel=$channelName silent-start budget ${budgetMs}ms " +
+                "(learned ${learned?.let { "${it}ms" } ?: "none"}, " +
+                "${if (firstAttempt) "first attempt" else "walk step"})",
+        )
         deadlineJob?.cancel()
         deadlineJob = scope.launch {
-            delay(FIRST_BYTE_DEADLINE_MS)
-            if (!firstByteSeen) handleNoFirstByte()
+            while (true) {
+                delay(SILENCE_POLL_MS)
+                if (firstByteSeen) return@launch
+                val now = SystemClock.elapsedRealtime()
+                val since = now - maxOf(armedAtMs, lastByteAtMs)
+                if (since >= budgetMs) {
+                    handleNoFirstByte(since)
+                    return@launch
+                }
+            }
         }
     }
 
-    private fun handleNoFirstByte() {
+    private fun handleNoFirstByte(silentMs: Long) {
         val id = channelId ?: return
         val h = hooks
         if (h == null || !h.canSwitch(id)) {
@@ -199,13 +295,19 @@ class LiveStreamFailover(
             _statusText.value = "Reconnecting..."
             Log.i(
                 TAG,
-                "[FAILOVER] channel=$channelName no first byte in ${FIRST_BYTE_DEADLINE_MS / 1000}s; " +
+                "[FAILOVER] channel=$channelName no bytes for ${silentMs}ms " +
+                    "(budget ${budgetMs}ms); " +
                     "no switchable streams, staying on the retry path",
             )
             return
         }
         if (stepJob?.isActive == true) return
         if (walkStartedAtMs == 0L) walkStartedAtMs = SystemClock.elapsedRealtime()
+        Log.i(
+            TAG,
+            "[FAILOVER] channel=$channelName no bytes for ${silentMs}ms " +
+                "(budget ${budgetMs}ms); walking to the next stream",
+        )
         stepJob = scope.launch { step(h, id) }
     }
 
@@ -270,17 +372,42 @@ class LiveStreamFailover(
         Log.i(
             TAG,
             "[FAILOVER] channel=$channelName stream $step/${ids.size} id=$target " +
-                "reason=${serverReason ?: "no first byte in ${FIRST_BYTE_DEADLINE_MS / 1000}s"}",
+                "reason=${serverReason ?: "no bytes within the ${budgetMs}ms silent-start budget"}",
         )
-        armDeadline()
+        armDeadline(firstAttempt = false)
     }
 
     companion object {
         private const val TAG = "AerioTrace"
 
-        /** Seconds a live ingest may stay connected-but-silent before the walk
-         *  starts. Separate from the holder's HTTP read timeout. */
-        const val FIRST_BYTE_DEADLINE_MS = 12_000L
+        /**
+         * How long a live ingest may stay connected-and-SILENT on the FIRST
+         * attempt of a tune before the walk starts. Separate from the holder's
+         * HTTP read timeout.
+         *
+         * Was 12 s. Raised 2026-09-15 (Glitzbr, over-the-air HDHomeRun tuners
+         * through Dispatcharr): a tuner has to lock before a single byte
+         * exists, and 12 s walked a working channel onto much worse backups.
+         */
+        const val FIRST_TUNE_FIRST_BYTE_MS = 28_000L
+
+        /**
+         * Silence budget for every ingest AFTER the first of a tune. The server
+         * has already swapped a stream in behind the same connection, so there
+         * is no tuner lock left to wait for and failover stays responsive.
+         */
+        const val STEP_FIRST_BYTE_MS = 12_000L
+
+        /** Hard ceiling on a learned-stretched budget. */
+        const val FIRST_BYTE_BUDGET_MAX_MS = 45_000L
+
+        /** A channel learned to start slowly gets 1.5x its learned
+         *  time-to-first-byte (never less than the base budget). */
+        private const val LEARNED_HEADROOM_NUM = 3
+        private const val LEARNED_HEADROOM_DEN = 2
+
+        /** How often the deadline re-checks silence. */
+        private const val SILENCE_POLL_MS = 500L
         private const val STATUS_READ_CAP_MS = 3_000L
 
         /** Process-lifetime cache of a channel's member-stream pks (priority

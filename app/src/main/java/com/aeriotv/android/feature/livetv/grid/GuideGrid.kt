@@ -243,7 +243,22 @@ fun GuideGrid(
             val down = event.type == KeyEventType.KeyDown
             return@handler when (event.key) {
                 Key.DirectionDown -> { if (down) clockSelected = false; true }
-                Key.DirectionUp -> { if (down) { clockSelected = false; if (!onLeaveTop()) topNav?.let { runCatching { it.requestFocus() } } }; true }
+                // Frankie B. 2026-09-15: this used to clear the clock cursor
+                // FIRST and then try to leave. When neither the pill row nor
+                // the nav took focus (an empty pill row leaves its requester
+                // unattached, and the bar's onEnter can land nowhere), the
+                // grid had already dropped the cursor and focus ended up
+                // nowhere at all: [FOCUS] grid:r0 -> none, then every key
+                // declined by guide-screen(focus-not-in-grid). Only give the
+                // cursor up once something upstairs has actually taken focus.
+                Key.DirectionUp -> {
+                    if (down) {
+                        val left = onLeaveTop() ||
+                            (topNav?.let { runCatching { it.requestFocus() }.isSuccess } ?: false)
+                        if (left) clockSelected = false
+                    }
+                    true
+                }
                 Key.DirectionLeft, Key.DirectionRight -> true
                 Key.DirectionCenter, Key.Enter -> {
                     if (down) {
@@ -465,7 +480,7 @@ fun GuideGrid(
     ) {
         TimeHeader(state, nowMs, railWidth, headerHeight, pxPerMs, textMeasurer,
                    jumpLabel = jumpLabel, onClockTap = onClockTap, onClockLongPress = onClockLongPress,
-                   clockSelected = clockSelected)
+                   clockSelected = clockSelected, isTv = isTv)
         val railPx = with(density) { railWidth.toPx() }
         LazyColumn(
             state = listState,
@@ -532,6 +547,8 @@ private fun TimeHeader(
     onClockLongPress: () -> Unit = {},
     /** TV: the grid's virtual cursor sits on the clock (accent ring). */
     clockSelected: Boolean = false,
+    /** TV: the clock is driven by the grid's virtual cursor, never by real focus. */
+    isTv: Boolean = false,
 ) {
     // Apple TV: time labels in the accent colour.
     val labelStyle = TextStyle(
@@ -556,7 +573,16 @@ private fun TimeHeader(
                 .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
                 .then(if (focused) Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)) else Modifier)
                 .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Transparent, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-                .combinedClickable(onClick = onClockTap, onLongClick = onClockLongPress),
+                // Touch only. combinedClickable() is focusable, so on TV the
+                // clock cell became a REAL focus target sitting above row 0
+                // with no D-pad handling of its own: focus could land on it
+                // and neither Up nor Down moved anywhere ("can't get past the
+                // time"). On TV the clock is the grid's virtual cursor
+                // (clockSelected) and must not take focus at all.
+                .then(
+                    if (isTv) Modifier
+                    else Modifier.combinedClickable(onClick = onClockTap, onLongClick = onClockLongPress),
+                ),
             contentAlignment = Alignment.Center,
         ) {
             val clock = remember(nowMs / 60_000L, clockMode) { ClockFormat.short(clockMode).format(Date(nowMs)) }

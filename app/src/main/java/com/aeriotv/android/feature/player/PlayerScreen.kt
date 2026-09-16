@@ -2479,9 +2479,32 @@ private fun LiveRewindChromeSection(
         }
     }
 
+    // App Behaviors > Player Info Card: element toggles for the chrome's
+    // program info card only. Collected here so they apply live.
+    val cardShowChannelLogo by settingsVm.playerCardShowChannelLogo
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowChannelName by settingsVm.playerCardShowChannelName
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowProgramName by settingsVm.playerCardShowProgramName
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowProgramTime by settingsVm.playerCardShowProgramTime
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowProgramSubtitle by settingsVm.playerCardShowProgramSubtitle
+        .collectAsStateWithLifecycle(initialValue = true)
+    val cardShowProgramDescription by settingsVm.playerCardShowProgramDescription
+        .collectAsStateWithLifecycle(initialValue = true)
+    val infoCardPrefs = PlayerInfoCardPrefs(
+        showChannelLogo = cardShowChannelLogo,
+        showChannelName = cardShowChannelName,
+        showProgramName = cardShowProgramName,
+        showProgramTime = cardShowProgramTime,
+        showProgramSubtitle = cardShowProgramSubtitle,
+        showProgramDescription = cardShowProgramDescription,
+    )
     PlayerChromeOverlay(
         channel = currentChannel,
         nowProgramme = nowProgramme,
+        infoCardPrefs = infoCardPrefs,
         timeshiftState = if (tsState.buffering) tsState else null,
         timeshiftPositionWallMs = tsPositionWallMs,
         // Live TV with pause/rewind OFF: the transport comes from Live Rewind,

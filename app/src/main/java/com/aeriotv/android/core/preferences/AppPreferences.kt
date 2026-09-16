@@ -564,6 +564,48 @@ class AppPreferences @Inject constructor(
         store.data.first()[KEY_AUTO_RECOVER_FROZEN_STREAMS] ?: true
 
     /**
+     * Player Info Card (App Behaviors, Apple-app parity): which elements the
+     * in-player program info card draws while the chrome is showing. These
+     * affect ONLY that card -- never the guide, channel list, mini player,
+     * notifications or cast UI. All default true; device-local, not synced.
+     */
+    val playerCardShowChannelLogo: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_CHANNEL_LOGO] ?: true }
+    suspend fun setPlayerCardShowChannelLogo(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_CHANNEL_LOGO] = value }
+    }
+
+    val playerCardShowChannelName: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_CHANNEL_NAME] ?: true }
+    suspend fun setPlayerCardShowChannelName(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_CHANNEL_NAME] = value }
+    }
+
+    val playerCardShowProgramName: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_PROGRAM_NAME] ?: true }
+    suspend fun setPlayerCardShowProgramName(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_PROGRAM_NAME] = value }
+    }
+
+    val playerCardShowProgramTime: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_PROGRAM_TIME] ?: true }
+    suspend fun setPlayerCardShowProgramTime(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_PROGRAM_TIME] = value }
+    }
+
+    val playerCardShowProgramSubtitle: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_PROGRAM_SUBTITLE] ?: true }
+    suspend fun setPlayerCardShowProgramSubtitle(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_PROGRAM_SUBTITLE] = value }
+    }
+
+    val playerCardShowProgramDescription: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_CARD_PROGRAM_DESCRIPTION] ?: true }
+    suspend fun setPlayerCardShowProgramDescription(value: Boolean) {
+        store.edit { it[KEY_PLAYER_CARD_PROGRAM_DESCRIPTION] = value }
+    }
+
+    /**
      * iOS TMDBPosters parity (Aerio VODService.swift). Opt-in, OFF by default:
      * when on AND a key is set, missing artwork (VOD posters, and later EPG
      * program posters) is filled from the user's OWN free TMDB key. The toggle
@@ -1859,6 +1901,19 @@ class AppPreferences @Inject constructor(
         val KEY_MATCH_CONTENT_RESOLUTION = booleanPreferencesKey("match_content_resolution")
         val KEY_AUTO_RECOVER_FROZEN_STREAMS =
             booleanPreferencesKey("app_behaviors_auto_recover_frozen_streams")
+        // Player Info Card element toggles (App Behaviors); device-local.
+        val KEY_PLAYER_CARD_CHANNEL_LOGO =
+            booleanPreferencesKey("player_card_show_channel_logo")
+        val KEY_PLAYER_CARD_CHANNEL_NAME =
+            booleanPreferencesKey("player_card_show_channel_name")
+        val KEY_PLAYER_CARD_PROGRAM_NAME =
+            booleanPreferencesKey("player_card_show_program_name")
+        val KEY_PLAYER_CARD_PROGRAM_TIME =
+            booleanPreferencesKey("player_card_show_program_time")
+        val KEY_PLAYER_CARD_PROGRAM_SUBTITLE =
+            booleanPreferencesKey("player_card_show_program_subtitle")
+        val KEY_PLAYER_CARD_PROGRAM_DESCRIPTION =
+            booleanPreferencesKey("player_card_show_program_description")
         // Synced via Drive (snapshotSyncablePreferences) -- the user's own key.
         val KEY_PROGRAM_POSTERS_TMDB_ENABLED =
             booleanPreferencesKey("app_behaviors_program_posters_tmdb_enabled")

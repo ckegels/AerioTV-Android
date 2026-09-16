@@ -214,6 +214,8 @@ fun PlayerChromeOverlay(
     scrubHudVisible: Boolean = false,
     onScrubStep: (Int, Boolean) -> Unit = { _, _ -> },
     onScrubCommit: () -> Unit = {},
+    /** App Behaviors > Player Info Card element toggles (live, no restart). */
+    infoCardPrefs: PlayerInfoCardPrefs = PlayerInfoCardPrefs(),
 ) {
     var moreOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
@@ -612,6 +614,7 @@ fun PlayerChromeOverlay(
                             channel = ch,
                             programme = nowProgramme,
                             sleepRemainingMillis = sleepRemainingMillis,
+                            infoCardPrefs = infoCardPrefs,
                         )
                     }
                 }
@@ -790,6 +793,7 @@ fun PlayerChromeOverlay(
                     channel = it,
                     programme = nowProgramme,
                     sleepRemainingMillis = sleepRemainingMillis,
+                    infoCardPrefs = infoCardPrefs,
                 )
                 // The gesture hints used to be a stack of capsule chips here,
                 // under the info card. They are now ONE centered strip at the
@@ -1238,12 +1242,38 @@ private fun PlayerMoreMenu(
     }
 }
 
+/**
+ * App Behaviors > Player Info Card: which elements the in-player program info
+ * card draws. Applies to THIS card only (not the guide, channel list, mini
+ * player, notifications or cast UI). Defaults are all-on, so any caller that
+ * does not pass prefs keeps the original card.
+ */
+data class PlayerInfoCardPrefs(
+    val showChannelLogo: Boolean = true,
+    val showChannelName: Boolean = true,
+    val showProgramName: Boolean = true,
+    val showProgramTime: Boolean = true,
+    val showProgramSubtitle: Boolean = true,
+    val showProgramDescription: Boolean = true,
+)
+
 @Composable
 private fun InfoCard(
     channel: M3UChannel,
     programme: EPGProgramme?,
     sleepRemainingMillis: Long?,
+    infoCardPrefs: PlayerInfoCardPrefs = PlayerInfoCardPrefs(),
 ) {
+    // Nothing enabled that has data to show: draw no card at all rather than
+    // an empty pill (the sleep badge alone still earns the card).
+    val subtitleText = programme?.subTitle?.takeIf { it.isNotBlank() }
+    val descriptionText = programme?.description?.takeIf { it.isNotBlank() }
+    val anyText = (infoCardPrefs.showChannelName) ||
+        (infoCardPrefs.showProgramName && programme != null) ||
+        (infoCardPrefs.showProgramTime && programme != null) ||
+        (infoCardPrefs.showProgramSubtitle && subtitleText != null) ||
+        (infoCardPrefs.showProgramDescription && descriptionText != null)
+    if (!anyText && !infoCardPrefs.showChannelLogo && sleepRemainingMillis == null) return
     // tvOS-parity info pill (Archie 2026-05-28 reference shot).
     // Layout:
     //   [ LOGO ]  <number> <name>                       [SLEEP]
@@ -1262,6 +1292,7 @@ private fun InfoCard(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (infoCardPrefs.showChannelLogo) {
             Box(
                 modifier = Modifier
                     .size(44.dp)
@@ -1300,7 +1331,9 @@ private fun InfoCard(
                     )
                 }
             }
-            Spacer(Modifier.width(12.dp))
+            if (anyText) Spacer(Modifier.width(12.dp))
+            }
+            if (anyText) {
             Column(
                 // Cap the column at a sane width so the pill stays compact
                 // (tvOS reference proportions). Without this cap, weight(1f)
@@ -1308,30 +1341,54 @@ private fun InfoCard(
                 // Compose hands it from the parent.
                 modifier = Modifier.widthIn(max = 320.dp),
             ) {
-                val nameLine = channel.channelNumber?.let { "$it  ${channel.name}" }
-                    ?: channel.name
-                Text(
-                    text = nameLine,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
-                if (programme != null) {
+                if (infoCardPrefs.showChannelName) {
+                    val nameLine = channel.channelNumber?.let { "$it  ${channel.name}" }
+                        ?: channel.name
                     Text(
-                        text = programme.title,
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = nameLine,
+                        style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                     )
-                    val timeRange = formatTimeRange(programme)
-                    val duration = formatDuration(programme.endMillis - programme.startMillis)
-                    Text(
-                        text = "$timeRange  ·  $duration",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.7f),
-                    )
                 }
+                if (programme != null) {
+                    if (infoCardPrefs.showProgramName) {
+                        Text(
+                            text = programme.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White,
+                            maxLines = 1,
+                        )
+                    }
+                    if (infoCardPrefs.showProgramSubtitle && subtitleText != null) {
+                        Text(
+                            text = subtitleText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.85f),
+                            maxLines = 1,
+                        )
+                    }
+                    if (infoCardPrefs.showProgramTime) {
+                        val timeRange = formatTimeRange(programme)
+                        val duration = formatDuration(programme.endMillis - programme.startMillis)
+                        Text(
+                            text = "$timeRange  ·  $duration",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                        )
+                    }
+                    if (infoCardPrefs.showProgramDescription && descriptionText != null) {
+                        Text(
+                            text = descriptionText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
             }
             sleepRemainingMillis?.let { remaining ->
                 val mins = (remaining / 60_000L).coerceAtLeast(0L)

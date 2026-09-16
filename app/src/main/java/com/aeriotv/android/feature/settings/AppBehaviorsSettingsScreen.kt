@@ -311,6 +311,59 @@ fun AppBehaviorsSettingsScreen(
                 }
             }
 
+            // Player Info Card (Apple parity, 2026-09-15): which elements the
+            // in-player program info card draws while the chrome is showing.
+            // Scoped to that card alone -- guide, channel list, mini player,
+            // notifications and cast UI are untouched.
+            val cardChannelLogo by viewModel.playerCardShowChannelLogo
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardChannelName by viewModel.playerCardShowChannelName
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardProgramName by viewModel.playerCardShowProgramName
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardProgramTime by viewModel.playerCardShowProgramTime
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardProgramSubtitle by viewModel.playerCardShowProgramSubtitle
+                .collectAsStateWithLifecycle(initialValue = true)
+            val cardProgramDescription by viewModel.playerCardShowProgramDescription
+                .collectAsStateWithLifecycle(initialValue = true)
+            SettingsSection(
+                header = "Player Info Card",
+                footer = "Choose what appears on the program info card in the " +
+                    "player while the controls are showing.",
+            ) {
+                SettingsToggleRow(
+                    title = "Channel Logo",
+                    checked = cardChannelLogo,
+                    onCheckedChange = viewModel::setPlayerCardShowChannelLogo,
+                )
+                SettingsToggleRow(
+                    title = "Channel Name",
+                    checked = cardChannelName,
+                    onCheckedChange = viewModel::setPlayerCardShowChannelName,
+                )
+                SettingsToggleRow(
+                    title = "Program Name",
+                    checked = cardProgramName,
+                    onCheckedChange = viewModel::setPlayerCardShowProgramName,
+                )
+                SettingsToggleRow(
+                    title = "Program Time",
+                    checked = cardProgramTime,
+                    onCheckedChange = viewModel::setPlayerCardShowProgramTime,
+                )
+                SettingsToggleRow(
+                    title = "Program Subtitle",
+                    checked = cardProgramSubtitle,
+                    onCheckedChange = viewModel::setPlayerCardShowProgramSubtitle,
+                )
+                SettingsToggleRow(
+                    title = "Program Description",
+                    checked = cardProgramDescription,
+                    onCheckedChange = viewModel::setPlayerCardShowProgramDescription,
+                )
+            }
+
             // Skip Intervals (Logan 2026-09-14): one global pair for every
             // skip control outside multiview. Shown whatever the Live Rewind
             // toggle says, since VOD and DVR use it too.

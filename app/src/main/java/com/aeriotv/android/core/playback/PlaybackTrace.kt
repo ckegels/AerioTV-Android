@@ -232,6 +232,13 @@ class PlaybackTracer {
      *  [LiveStreamFailover] cancels its first-byte deadline against it. */
     @Volatile var onFirstByte: (() -> Unit)? = null
 
+    /** Throttled "bytes are still arriving" ping (at most one per
+     *  [BYTE_ACTIVITY_PING_MS]). [LiveStreamFailover] pushes its silent-start
+     *  deadline out from it, so a slow but live feed is never abandoned. */
+    @Volatile var onByteActivity: (() -> Unit)? = null
+
+    @Volatile private var lastActivityPingAtMs = 0L
+
     /** Byte accounting. Called from loader threads (DataSource wrapper) and
      *  from onLoadCompleted for chunk-based sources. */
     fun onBytes(count: Long) {
@@ -242,6 +249,10 @@ class PlaybackTracer {
             if (connectedAtMs == 0L) connectedAtMs = n
             Log.i(TAG, "[TUNE] firstByte +${sincePress(n)}ms")
             onFirstByte?.invoke()
+        }
+        if (n - lastActivityPingAtMs >= BYTE_ACTIVITY_PING_MS) {
+            lastActivityPingAtMs = n
+            onByteActivity?.invoke()
         }
         synchronized(feedLock) {
             advanceFeedBuckets(n)
@@ -773,6 +784,7 @@ class PlaybackTracer {
         private const val MEDIA_WINDOW_MIN_MS = 20_000L
         private const val FEED_BUCKET_MS = 1_000L
         private const val FEED_WINDOW_BUCKETS = (FEED_WINDOW_MS / FEED_BUCKET_MS).toInt()
+        private const val BYTE_ACTIVITY_PING_MS = 250L
         private const val FEED_GAP_RECORD_MS = 2_000L
         private const val FEED_GAP_WARN_COOLDOWN_MS = 10_000L
         /** A rendered-frame gap this many times the content frame interval

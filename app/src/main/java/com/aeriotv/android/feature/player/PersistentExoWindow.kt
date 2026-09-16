@@ -288,6 +288,20 @@ fun BoxScope.PersistentExoWindow(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // GH #107 (Fire TV AFTKM / MediaTek): the holder asks for a NEW SurfaceView
+    // when the video decoder died (MediaCodec flush threw and the platform
+    // force-released the codec) or when a tune renders no frame while audio
+    // advances - the "Could not find corresponding native window for surface"
+    // state, where the old surface is unusable for the rest of the session.
+    // Rebuilding the player alone is not enough; the view has to go too.
+    val surfaceRebuild by holder.surfaceRebuildRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(surfaceRebuild) {
+        if (surfaceRebuild > 0) {
+            surfaceEpoch++
+            Log.i(TAG, "holder requested a fresh surface; recreating PlayerView (epoch=$surfaceEpoch)")
+        }
+    }
+
     // Shield freeze after a display mode change (Frankie B., 2026-09-02):
     // "the first channel after a UHD <-> HD change freezes; the next channel
     // is fine". His logs show every resolution switch rendering frames (the

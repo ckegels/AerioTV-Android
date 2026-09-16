@@ -466,6 +466,11 @@ fun GuideScreen(
     // only because the old guide composed first), so keep asking for about a
     // second until the grid actually holds focus.
     var gridHasFocus by remember { mutableStateOf(false) }
+    // True while ANYTHING inside the guide holds focus (grid, pills, banner,
+    // sidebar pane). The stranded-focus watchdog below keys off this, not off
+    // gridHasFocus, so it can never steal focus from the guide's own chrome
+    // (that is the GH #185 runaway shape).
+    var guideHasFocus by remember { mutableStateOf(false) }
     val topNavHasFocus = com.aeriotv.android.feature.main.LocalTvTopNavHasFocus.current
     // Trace (AerioFocus): every gate that can keep focus out of the grid or
     // block a vertical step, as one string. Logged on change (a [GUIDE] gates
@@ -485,7 +490,8 @@ fun GuideScreen(
             " manageGroups=$showManageGroups menu=${menuFor != null} info=${programInfoTarget != null} record=${recordTarget != null}" +
             " jump=$showJumpSheet collectionPicker=${collectionPickerFor != null} search=$searchActive" +
             " mini=$miniActive exoWindow=$exoWindowMode clockTrigger=$clockSelectTrigger" +
-            " rows=${rows.size} focusRow=${grid.focusRow} topNavHasFocus=${topNavHasFocus.value}]"
+            " rows=${rows.size} focusRow=${grid.focusRow} topNavHasFocus=${topNavHasFocus.value}" +
+            " guideHasFocus=$guideHasFocus]"
     }
     if (isTv) {
         val gateKey = traceGates().substringBefore(" rows=")
@@ -518,6 +524,44 @@ fun GuideScreen(
             com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=launch-loop result=${if (gridHasFocus) "success" else "failure"} attempts=12 ${traceGates()}")
         }
     }
+    // Down out of the top nav has to land somewhere deterministic. The bar's
+    // onExit only cancels the default geometric move when the tab published an
+    // entry point, and Live TV never did: the guide fills the screen UNDER the
+    // overlaid bar, so its focus rect is not "below" the bar and the geometric
+    // search found nothing. Frankie B. 2026-09-15: Down from tab:LiveTV was
+    // declined twice in a row (guide-screen(focus-not-in-grid)) with focus
+    // stuck in the bar. Publish the guide's entry point, mirroring the Up
+    // chain: the pill row when it is there, otherwise the grid itself.
+    val tabEntryFocus = com.aeriotv.android.feature.main.LocalTvTabEntryFocus.current
+    val pillsShownForEntry = isTv && !sidebarGroupMode && !favoritesOnly && pillItems.isNotEmpty()
+    androidx.compose.runtime.DisposableEffect(isTv, tabActive, pillsShownForEntry) {
+        if (isTv && tabActive) tabEntryFocus.value = if (pillsShownForEntry) pillsFocus else gridFocus
+        onDispose { if (tabEntryFocus.value === pillsFocus || tabEntryFocus.value === gridFocus) tabEntryFocus.value = null }
+    }
+
+    // Stranded-focus watchdog (Frankie B. 2026-09-15). A failed hand-off out of
+    // the grid (Up from the clock when the pill requester is unattached and the
+    // bar's onEnter lands nowhere), or a rows rebuild that disposes the focused
+    // node, can leave focus on NOTHING: [FOCUS] grid:r0 -> none with no owner
+    // after it, and from there every D-pad key is declined. Reclaim only when
+    // focus is outside the guide AND outside the nav, i.e. genuinely nowhere,
+    // and only while no overlay is up, so this never fights the single-owner
+    // model or pulls focus off chrome that legitimately has it.
+    if (isTv) {
+        val stranded = tabActive && !rows.isEmpty && !guideHasFocus && !topNavHasFocus.value &&
+            !groupSidebarOpen && !showManageGroups && !showJumpSheet && !searchActive &&
+            menuFor == null && programInfoTarget == null && recordTarget == null && collectionPickerFor == null
+        LaunchedEffect(stranded) {
+            if (!stranded) return@LaunchedEffect
+            // Let a legitimate hand-off (dialog opening, route change, the
+            // bar claiming focus a frame later) settle before assuming a trap.
+            delay(350L)
+            if (guideHasFocus || topNavHasFocus.value) return@LaunchedEffect
+            val ok = runCatching { gridFocus.requestFocus() }.isSuccess
+            com.aeriotv.android.ui.tv.TvFocusTrace.guide("refocus after=stranded result=$ok ${traceGates()}")
+        }
+    }
+
     // Logan 2026-09-02: backing out of a full-screen channel lands the guide
     // on the channel that is still playing (now in the mini player), not
     // wherever the grid was before. Keyed on the mini's channel so it fires
@@ -702,6 +746,7 @@ fun GuideScreen(
 
     var guideTopPx by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     Box(modifier = modifier.fillMaxSize().onGloballyPositioned { guideTopPx = it.positionInRoot().y }
+        .onFocusChanged { guideHasFocus = it.hasFocus }
         .onPreviewKeyEvent { e ->
             // Trace only, never consumes: a D-pad key inside the guide that the
             // grid node will not see (focus is on the banner, pills, sidebar...).

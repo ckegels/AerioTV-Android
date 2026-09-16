@@ -81,6 +81,7 @@ import kotlinx.coroutines.withContext
 class AerioExoPlayerHolder @Inject constructor(
     private val timeshift: dagger.Lazy<com.aeriotv.android.core.timeshift.TimeshiftController>,
     private val appPreferences: com.aeriotv.android.core.preferences.AppPreferences,
+    private val firstByteLearner: com.aeriotv.android.core.preferences.LiveFirstByteLearner,
 ) {
 
     var player: ExoPlayer? = null
@@ -224,9 +225,39 @@ class AerioExoPlayerHolder @Inject constructor(
         // lands, so the deadline is cancelled from there rather than by a second
         // counter.
         tracer.onFirstByte = { liveFailover.noteFirstByte() }
+        // Bytes still arriving, however slowly: push the silent-start deadline
+        // out instead of walking off a working-but-slow upstream (Glitzbr
+        // 2026-09-15, an OTA HDHomeRun feed that degraded to 0.68 of real time).
+        tracer.onByteActivity = { liveFailover.noteBytes() }
+        // Per-channel learned time-to-first-byte, persisted exactly like the
+        // learned hold-back: an OTA tuner that always takes 20 s to lock earns a
+        // longer silent-start budget on later tunes.
+        prefScope.launch { cachedFirstByteMs = firstByteLearner.allOnce() }
+        liveFailover.learnedFirstByteMs = { id -> learnedFirstByteFor(id) }
+        liveFailover.onLearnFirstByte = { id, ms ->
+            prefScope.launch { cachedFirstByteMs = firstByteLearner.record(id, ms) }
+        }
         // Every member stream answered and none delivered: hand over to the
         // standing Task #150 retry / unavailable ladder.
         liveFailover.onExhausted = { markStreamUnavailable() }
+    }
+
+    /** Learned time-to-first-byte per channel, mirrored in memory so the
+     *  failover can read it without blocking the tune path. */
+    @Volatile
+    private var cachedFirstByteMs:
+        Map<String, com.aeriotv.android.core.preferences.LearnedFirstByte> = emptyMap()
+
+    /** This channel's learned time-to-first-byte, or null when unknown or
+     *  decayed past the learner's TTL (a one-off slow start must not stretch
+     *  the budget forever). */
+    private fun learnedFirstByteFor(channelId: String): Int? {
+        val entry = cachedFirstByteMs[channelId] ?: return null
+        val age = System.currentTimeMillis() - entry.learnedAtMs
+        if (age > com.aeriotv.android.core.preferences.LiveFirstByteLearner.LEARNED_TTL_MS) {
+            return null
+        }
+        return entry.ms.takeIf { it > 0 }
     }
 
     /**
@@ -1019,6 +1050,131 @@ class AerioExoPlayerHolder @Inject constructor(
         }
     }
 
+    /**
+     * GH #107 (TwistdSpokes, Amazon Fire TV AFTKM / MediaTek, Android 11).
+     *
+     * Bumped whenever the holder needs the persistent window to throw away its
+     * SurfaceView and build a NEW one. PersistentExoWindow collects this and
+     * bumps its own surfaceEpoch, which re-runs the AndroidView factory.
+     *
+     * The failure this exists for: an in-place reload flushes the video
+     * renderer, MediaCodec.flush() throws CodecException 0xffffff92, ACodec
+     * goes "State machine stuck" and force-releases
+     * OMX.MTK.VIDEO.DECODER.AVC. From that point every tune logs "Could not
+     * find corresponding native window for surface": audio plays, the picture
+     * is frozen, and only a device reboot recovered. Neither a re-prime nor a
+     * player rebuild alone cures it, because the SURFACE the dead codec was
+     * bound to is what the platform lost; it has to be recreated too.
+     */
+    private val _surfaceRebuildRequest = MutableStateFlow(0)
+    val surfaceRebuildRequest: StateFlow<Int> = _surfaceRebuildRequest.asStateFlow()
+
+    /** Full player + surface rebuilds attempted inside the current window. */
+    private var fullRebuildAttempts = 0
+    /** elapsedRealtime of the first rebuild in the current window. */
+    private var fullRebuildWindowStartMs = 0L
+    /** elapsedRealtime of the most recent rebuild (backoff floor). */
+    private var lastFullRebuildAtMs = 0L
+
+    /**
+     * A decoder-level runtime failure: the MediaCodec instance itself died
+     * (flush / init / queue threw CodecException), not the stream. Media3
+     * reports the Fire TV flush death as ERROR_CODE_FAILED_RUNTIME_CHECK with
+     * a MediaCodec.CodecException cause, because it is raised inside renderer
+     * disable (onDisabled -> flush) rather than on a sample path.
+     *
+     * Deliberately NOT the same predicate as [isTransientDecoderError]: that
+     * one covers the tune-time codec handover race a same-url re-prime cures.
+     * This one means the codec is gone and anything short of a fresh player
+     * AND a fresh surface will render into a dead native window.
+     */
+    private fun isDecoderDeath(error: PlaybackException, causeChain: String): Boolean {
+        val codecFault = generateSequence(error as Throwable?) { it.cause }
+            .any { it is android.media.MediaCodec.CodecException }
+        if (!codecFault) {
+            // Some OEM stacks surface the same death with no CodecException in
+            // the chain, only the AOSP wording.
+            if (!causeChain.contains("native_flush", ignoreCase = true) &&
+                !causeChain.contains("MediaCodec.flush", ignoreCase = true) &&
+                !causeChain.contains("native window for surface", ignoreCase = true)
+            ) {
+                return false
+            }
+        }
+        return error.errorCode == PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+            causeChain.contains("native_flush", ignoreCase = true) ||
+            causeChain.contains("native window for surface", ignoreCase = true)
+    }
+
+    /**
+     * Full teardown of the player AND the output surface, then re-tune the same
+     * channel. The user-visible experience is the ordinary "Reconnecting"
+     * recovery; only the depth of the teardown differs.
+     *
+     * Bounded: at most [MAX_FULL_REBUILDS] inside [FULL_REBUILD_WINDOW_MS],
+     * with an escalating backoff. Past the cap the existing unavailable card
+     * takes over instead of rebuilding forever. Returns true when a rebuild was
+     * actually scheduled.
+     */
+    private fun rebuildPlayerAndSurface(reason: String): Boolean {
+        if (isTimeshifting || isCatchup) return false
+        val url = lastPlayUrl ?: reconnectUrl ?: return false
+        val ctx = appContext ?: return false
+        val now = SystemClock.elapsedRealtime()
+        if (fullRebuildWindowStartMs != 0L && now - fullRebuildWindowStartMs > FULL_REBUILD_WINDOW_MS) {
+            fullRebuildAttempts = 0
+            fullRebuildWindowStartMs = 0L
+        }
+        if (fullRebuildAttempts >= MAX_FULL_REBUILDS) {
+            Log.w(
+                TAG,
+                "[RECOVER] rebuild budget spent ($fullRebuildAttempts in " +
+                    "${now - fullRebuildWindowStartMs}ms) reason=$reason; surfacing unavailable",
+            )
+            tracer.recover("rebuild budget spent; surfacing unavailable")
+            markStreamUnavailable()
+            return false
+        }
+        if (fullRebuildWindowStartMs == 0L) fullRebuildWindowStartMs = now
+        fullRebuildAttempts++
+        lastFullRebuildAtMs = now
+        // First rebuild goes as fast as the surface swap allows; a second one
+        // waits longer so a device that needs time to reclaim the codec gets it.
+        val settleMs = if (fullRebuildAttempts <= 1) FULL_REBUILD_SETTLE_MS
+        else FULL_REBUILD_SETTLE_MS * 3
+        Log.w(
+            TAG,
+            "[RECOVER] $reason; rebuilding player and surface ch=$currentChannelId " +
+                "attempt=$fullRebuildAttempts settle=${settleMs}ms",
+        )
+        tracer.recover("$reason; rebuilding player and surface attempt=$fullRebuildAttempts")
+        liveFailover.publishServerStatus("Reconnecting...")
+        val title = lastPlayTitle
+        val subtitle = lastPlaySubtitle
+        val art = lastPlayArtworkUri
+        val chan = currentChannelId ?: currentChannelIdForRebuild ?: reconnectChannelId
+        // Release the player (and with it the dead codec) BEFORE the window
+        // drops the SurfaceView, so nothing is still bound to the old surface
+        // when it is destroyed.
+        destroy()
+        _surfaceRebuildRequest.value = _surfaceRebuildRequest.value + 1
+        watchdogScope.launch {
+            // Let the composition swap in a brand-new SurfaceView and let the
+            // platform finish tearing the old native window down.
+            delay(settleMs)
+            withContext(Dispatchers.Main) {
+                if (isTimeshifting || isCatchup) return@withContext
+                acquireOrCreate(ctx)
+                playUrl(url, title, subtitle, art, channelId = chan)
+                currentChannelId = chan
+            }
+        }
+        return true
+    }
+
     /** One transient-decoder retry per tune (session2.txt 19:56:48 codec handover).
      *  Reset by [resetWatchdogStateForNewStream] on a genuinely new tune; the retry
      *  itself re-sets it so only ONE retry runs per failure. */
@@ -1288,6 +1444,23 @@ class AerioExoPlayerHolder @Inject constructor(
             // SAME url once (the shape the catch-up path above already uses) gets
             // the channel instead of the terminal path's failover. Only inside the
             // first 3 s of the tune, and only once per tune.
+            // GH #107: decoder DEATH, not a handover race. The MediaCodec
+            // instance threw inside flush/init; an in-place reload here is what
+            // pushed the Fire TV's ACodec into "State machine stuck" and cost
+            // the whole session (every later tune: audio only, "Could not find
+            // corresponding native window for surface", reboot to recover). Go
+            // straight to the deepest teardown: release the player AND the
+            // surface, then tune the same channel.
+            if (isDecoderDeath(error, causeChain)) {
+                val kind = if (causeChain.contains("flush", ignoreCase = true)) {
+                    "decoder death (MediaCodec flush)"
+                } else {
+                    "decoder death (${error.errorCodeName})"
+                }
+                if (rebuildPlayerAndSurface(kind)) return
+                // Budget spent: markStreamUnavailable already ran inside.
+                return
+            }
             val liveUrl = lastPlayUrl
             if (liveUrl != null && !decoderRetryUsed && isTransientDecoderError(error, causeChain)) {
                 val sinceTune = SystemClock.elapsedRealtime() - streamPrimedAtMs
@@ -1355,6 +1528,18 @@ class AerioExoPlayerHolder @Inject constructor(
         override fun onRenderedFirstFrame() {
             videoFrameRendered = true
             noFrameHealAttempts = 0
+            // GH #107: video that has been painting steadily for a while means
+            // the surface and codec are genuinely healthy again, so the rebuild
+            // budget earns a fresh window. Guarded by elapsed time since the
+            // last rebuild so a rebuild that paints one frame and re-freezes
+            // cannot refill its own budget and loop.
+            if (lastFullRebuildAtMs != 0L &&
+                SystemClock.elapsedRealtime() - lastFullRebuildAtMs > FULL_REBUILD_WINDOW_MS / 3
+            ) {
+                fullRebuildAttempts = 0
+                fullRebuildWindowStartMs = 0L
+                lastFullRebuildAtMs = 0L
+            }
             // The one line that lets a user log definitively separate "video
             // rendered" from "decoded but never painted". Once per prime, so
             // it's cheap enough for release builds.
@@ -2144,7 +2329,7 @@ class AerioExoPlayerHolder @Inject constructor(
         retireLiveCalls(p, staleCalls)
         p.prepare()
         p.playWhenReady = true
-        // Arm the 12 s first-byte deadline for live only. A caller-supplied
+        // Arm the silent-start deadline for live only. A caller-supplied
         // channelId IS a user-initiated tune (internal re-primes pass null and
         // keep the walk's tried set).
         if (kind == "live") {
@@ -2721,6 +2906,27 @@ class AerioExoPlayerHolder @Inject constructor(
                     !p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO) &&
                     now - streamPrimedAtMs >= noVideoFrameThresholdMs
                 ) {
+                    // GH #107 dead-surface signal, measured not parsed: the
+                    // AUDIO clock has genuinely advanced this far past the
+                    // prime (so the pipeline is healthy and decoding) while the
+                    // video renderer has a format, video is not disabled, and
+                    // NO first frame ever arrived. That is exactly the state
+                    // "Could not find corresponding native window for surface"
+                    // produces. A re-prime cannot fix it - the surface is gone -
+                    // so skip straight to the full rebuild.
+                    val audioAdvancedMs = p.currentPosition
+                    if (audioAdvancedMs >= DEAD_SURFACE_AUDIO_ADVANCE_MS &&
+                        noFrameHealAttempts == 0
+                    ) {
+                        noFrameHealAttempts = 2
+                        Log.w(
+                            TAG,
+                            "[RECOVER] surface dead; rebuilding (audio +${audioAdvancedMs}ms, " +
+                                "no first frame ch=$currentChannelId)",
+                        )
+                        if (!rebuildPlayerAndSurface("surface dead")) noFrameHealAttempts = 3
+                        continue
+                    }
                     when (noFrameHealAttempts) {
                         0 -> if (forceReload("no-video-frame")) noFrameHealAttempts = 1
                         1 -> { noFrameHealAttempts = 2; recreateForBlackScreen() }
@@ -3225,6 +3431,11 @@ class AerioExoPlayerHolder @Inject constructor(
         val chan = currentChannelId
         val attempts = noFrameHealAttempts
         destroy()
+        // GH #107: a recreate that keeps the OLD SurfaceView re-binds the fresh
+        // codec to the same (possibly dead) native window. Ask the persistent
+        // window for a new one at the same time; the rebind happens through the
+        // playerInstance flow either way, so this only ever adds a surface swap.
+        _surfaceRebuildRequest.value = _surfaceRebuildRequest.value + 1
         acquireOrCreate(ctx)
         playUrl(url, title, subtitle, art, channelId = chan)
         // destroy()/playUrl() reset these; the heal must keep its place in the
@@ -3629,6 +3840,16 @@ class AerioExoPlayerHolder @Inject constructor(
         /** How long after a tune a decoder failure still counts as the codec
          *  handover race (session2.txt: the error landed 2.5 s after the flip). */
         private const val DECODER_RETRY_WINDOW_MS = 3_000L
+        /** GH #107: full player + surface rebuilds allowed per window. */
+        private const val MAX_FULL_REBUILDS = 2
+        /** GH #107: rolling window the rebuild budget is counted in. */
+        private const val FULL_REBUILD_WINDOW_MS = 90_000L
+        /** GH #107: settle time between dropping the old surface and tuning
+         *  into the new one (tripled on the second attempt). */
+        private const val FULL_REBUILD_SETTLE_MS = 600L
+        /** GH #107: a tune whose audio clock has advanced this far with no
+         *  first video frame is rendering into a dead surface. */
+        private const val DEAD_SURFACE_AUDIO_ADVANCE_MS = 3_000L
 
         /** How long one 503 stays "already decided" while its load error and the
          *  terminal player error it becomes both reach [handleLive503]. Shorter
