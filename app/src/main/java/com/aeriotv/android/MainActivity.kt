@@ -1005,10 +1005,14 @@ class MainActivity : ComponentActivity() {
             // reads LocalTextContrast to build its text color tokens.
             val subtextScale by appPreferences.subtextScale.collectAsState(initial = 1f)
             val textContrast by appPreferences.textContrast.collectAsState(initial = 0f)
+            // Appearance > Rounded corners on logos and artwork. One local,
+            // read by every logo / program-art surface (core/ui/ArtworkCorners.kt).
+            val roundedArtwork by appPreferences.roundedArtwork.collectAsState(initial = true)
             CompositionLocalProvider(
                 LocalAppTextScale provides textScale,
                 com.aeriotv.android.ui.scale.LocalSubtextScale provides subtextScale,
                 com.aeriotv.android.ui.theme.LocalTextContrast provides textContrast,
+                com.aeriotv.android.core.ui.LocalRoundedArtwork provides roundedArtwork,
             ) {
             ProvideAppTextScale {
             AerioTVTheme(

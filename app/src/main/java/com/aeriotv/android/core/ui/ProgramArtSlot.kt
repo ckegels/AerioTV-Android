@@ -83,6 +83,12 @@ object ProgramArtSlot {
     val minWidth: Dp
         @Composable get() = baseMinWidth * scale
 
+    /**
+     * Legacy fixed corner. Kept only as the DEFAULT for callers that have not
+     * declared their container's radius. The rounding a caller actually gets
+     * is [ProgramArtSlot]'s `containerCorner` run through
+     * [artworkTileShape] (Appearance > Rounded corners on logos and artwork).
+     */
     val corner = 6.dp
 
     /** The reserved footprint, for callers that lay out space themselves. */
@@ -120,6 +126,12 @@ fun ProgramArtSlot(
     model: Any?,
     modifier: Modifier = Modifier,
     onAspect: ((Float) -> Unit)? = null,
+    /**
+     * Corner radius of the CARD or CELL this slot sits in. The art matches it
+     * when the user has rounding on, and is square when they have it off or
+     * when the container itself is square (Logan 2026-09-16).
+     */
+    containerCorner: Dp = ProgramArtSlot.corner,
     fallback: @Composable (() -> Unit)? = null,
 ) {
     // Default to 16:9 until the real aspect lands, so the slot reserves a
@@ -155,7 +167,10 @@ fun ProgramArtSlot(
                 },
                 modifier = Modifier
                     .size(width, slotHeight)
-                    .clip(RoundedCornerShape(ProgramArtSlot.corner)),
+                    // The slot is sized TO the art, so the art fills it edge to
+                    // edge: the shared tile rule, capped at 25% of the shorter
+                    // side, not a per-surface clip.
+                    .clip(artworkTileShape(containerCorner, minOf(width, slotHeight))),
             )
         } else {
             fallback?.invoke()

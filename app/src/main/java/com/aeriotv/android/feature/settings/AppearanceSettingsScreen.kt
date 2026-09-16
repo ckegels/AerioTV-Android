@@ -135,6 +135,7 @@ fun AppearanceSettingsScreen(
     val useCustomAccent by viewModel.useCustomAccent.collectAsStateWithLifecycle(initialValue = false)
     val customAccentHex by viewModel.customAccentHex.collectAsStateWithLifecycle(initialValue = "")
     val showChannelLogos by viewModel.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
+    val roundedArtwork by viewModel.roundedArtwork.collectAsStateWithLifecycle(initialValue = true)
     val showChannelNumbers by viewModel.showChannelNumbers.collectAsStateWithLifecycle(initialValue = true)
     val showChannelNames by viewModel.showChannelNames.collectAsStateWithLifecycle(initialValue = true)
     val showProgramSubtitles by viewModel.showProgramSubtitles.collectAsStateWithLifecycle(initialValue = true)
@@ -374,6 +375,19 @@ fun AppearanceSettingsScreen(
                         subtitle = "Display the episode or match name under each program title in the Guide and Live TV list. Turn off if your EPG repeats the description there.",
                         checked = showProgramSubtitles,
                         onCheckedChange = viewModel::setShowProgramSubtitles,
+                    )
+                }
+
+                // Artwork rounding. Logos and program art take the corner
+                // radius of the card or cell they sit in; off squares them.
+                settingsCard(
+                    header = "Artwork",
+                    footer = "Applies to channel logos and program artwork throughout the app.",
+                ) {
+                    ToggleRow(
+                        title = "Rounded corners on logos and artwork",
+                        checked = roundedArtwork,
+                        onCheckedChange = viewModel::setRoundedArtwork,
                     )
                 }
 
@@ -886,7 +900,7 @@ private fun CheckRow(
 @Composable
 private fun ToggleRow(
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
@@ -910,11 +924,13 @@ private fun ToggleRow(
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Medium,
             )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall.subtext(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Spacer(Modifier.size(12.dp))
         OnOffIndicator(on = checked)

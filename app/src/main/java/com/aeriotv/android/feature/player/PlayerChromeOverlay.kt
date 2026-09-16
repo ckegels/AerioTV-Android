@@ -1286,7 +1286,7 @@ private fun InfoCard(
     // earlier Android pass added.
     Surface(
         color = Color.Black.copy(alpha = 0.55f),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(INFO_CARD_CORNER),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -1296,7 +1296,8 @@ private fun InfoCard(
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    // Reads the info card's OWN radius, never a copy of it.
+                    .clip(com.aeriotv.android.core.ui.artworkTileShape(INFO_CARD_CORNER, model = channel.tvgLogo))
                     .background(Color.Black.copy(alpha = 0.6f)),
                 contentAlignment = Alignment.Center,
             ) {
@@ -2338,3 +2339,7 @@ internal fun RestoreOrientationOnExit(activity: android.app.Activity?) {
         }
     }
 }
+
+/** The in-player info card's own corner radius. The card and the channel logo
+ *  inside it both read this, so the two shapes cannot drift. */
+private val INFO_CARD_CORNER = 12.dp

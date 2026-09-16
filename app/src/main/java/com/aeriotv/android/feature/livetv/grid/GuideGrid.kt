@@ -49,6 +49,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
@@ -665,6 +666,9 @@ private fun GridRow(
     val hiddenBadges = com.aeriotv.android.core.ui.LocalHiddenEpgBadges.current
     val clockMode = rememberClockMode()
     val rail = com.aeriotv.android.core.ui.LocalGuideRailPrefs.current
+    // Appearance > Rounded corners on logos and artwork. Read here in
+    // composition and handed to the shared rounding rule inside the Canvas.
+    val roundedArtwork = com.aeriotv.android.core.ui.LocalRoundedArtwork.current
     val shortFmt = remember(clockMode) { ClockFormat.guideShort(clockMode) }
     val catchupPainter = androidx.compose.ui.graphics.vector.rememberVectorPainter(androidx.compose.material.icons.Icons.Outlined.History)
     val starPainter = androidx.compose.ui.graphics.vector.rememberVectorPainter(androidx.compose.material.icons.Icons.Filled.Star)
@@ -737,9 +741,6 @@ private fun GridRow(
         // Rail: number, logo, name. Drawn here so a row is ONE draw node and
         // composing a newly visible row costs nothing measurable.
         drawRect(surface, topLeft = Offset.Zero, size = Size(railWidthPx, size.height))
-        val number = textCache.getOrPut(RAIL_NUMBER_KEY) {
-            CellText(textMeasurer.measure(channel.channelNumber.orEmpty(), style = railNumberStyle, maxLines = 1, constraints = Constraints(maxWidth = 30.dp.roundToPx())), null)
-        }
         // Narrow (phone) rail: number tucked top-left, logo and name centred across the full rail.
         val narrowRail = railWidthPx < 100.dp.toPx()
         val nameLeft = 4.dp.toPx()
@@ -747,12 +748,12 @@ private fun GridRow(
         // Settings > Appearance > Channel List toggles (Show Channel Logos /
         // Numbers / Names): each element is skipped when off, and the rest
         // re-centre in the freed space.
-        if (rail.numbers && !(narrowRail && size.height >= 90.dp.toPx())) {
-            if (narrowRail) drawText(number.title, topLeft = Offset(3.dp.toPx(), 2.dp.toPx()))
-            else drawText(number.title, topLeft = Offset(6.dp.toPx(), (size.height - number.title.size.height) / 2f))
-        }
+        // The channel number is no longer drawn beside the logo (corner on
+        // narrow rails, left column on wide). It is stacked UNDER the logo with
+        // the name, in [underNumber] below, so the logo gets the rail's full
+        // width in every state (Logan 2026-09-16).
         // iPhone rail (EPGGuideView.swift GuideChannelButton, phone branch):
-        // logo 40x28, name 10pt, number 8pt bold UNDER the name, all centred;
+        // logo 40x28, number 8pt bold then name 10pt UNDER the logo, centred;
         // the favorite star sits top-trailing as its own glyph (11pt, warning),
         // left of the catch-up clock when both show. Wider rails keep the
         // inline star and the number in the corner.
@@ -764,49 +765,107 @@ private fun GridRow(
         } else null
         val logo = if (rail.logos && channel.tvgLogo.isNotBlank()) logos.bitmap(channel.tvgLogo) else null
         val logoH = if (phoneRail) 28.dp.toPx() else 24.dp.toPx(); val logoW = if (phoneRail) 40.dp.toPx() else 36.dp.toPx()
-        val underNumber = if (phoneRail && rail.numbers) textCache.getOrPut(RAIL_UNDER_NUMBER_KEY) {
-            CellText(textMeasurer.measure(channel.channelNumber.orEmpty(), style = railUnderNumberStyle, maxLines = 1, constraints = Constraints(maxWidth = nameW)), null)
-        } else null
-        val nameH = (name?.title?.size?.height ?: 0) + (underNumber?.let { it.title.size.height + 1.dp.toPx().toInt() } ?: 0)
-        val nameX = nameLeft + (nameW - (name?.title?.size?.width ?: 0)) / 2f
-        fun drawNameStack(top: Float) {
-            var ny = top
-            name?.let { drawText(it.title, topLeft = Offset(nameX, ny)); ny += it.title.size.height + 1.dp.toPx() }
-            underNumber?.let { drawText(it.title, topLeft = Offset(nameLeft + (nameW - it.title.size.width) / 2f, ny)) }
-        }
-        if (logo != null) {
-            val gap = if (name != null || underNumber != null) (if (phoneRail) 4.dp.toPx() else 2.dp.toPx()) else 0f
-            // Hidden number and/or name: the logo box grows into the freed
-            // space (Fit keeps the aspect). The band clears the corner star /
-            // catch-up icons on top and, on the wide rail, the number column
-            // on the left. Both shown keeps the stock 36x24 (40x28 phone) box.
-            // boxLeft/boxW = centring region, fitW/boxH = the Fit box.
-            var boxLeft = nameLeft; var boxW = nameW.toFloat()
-            var fitW = logoW; var boxH = logoH
-            var top = (size.height - logoH - nameH - gap) / 2f
-            if (!(rail.numbers && rail.names)) {
-                var bandTop = if (isFavorite || channel.hasCatchup) RAIL_LOGO_ICON_CLEAR.toPx() else RAIL_LOGO_INSET.toPx()
-                var left = nameLeft; var w = nameW.toFloat()
-                if (rail.numbers && !phoneRail) {
-                    if (narrowRail) bandTop = maxOf(bandTop, 2.dp.toPx() + number.title.size.height + RAIL_LOGO_INSET.toPx())
-                    else { left = RAIL_NUMBER_COLUMN.toPx(); w = railWidthPx - left - RAIL_LOGO_INSET.toPx() }
-                }
-                val grownH = size.height - bandTop - RAIL_LOGO_INSET.toPx() - nameH - gap
-                // Never shrink below the stock box on a short row.
-                if (grownH >= logoH && w >= logoW) {
-                    boxLeft = left; boxW = w; fitW = w; boxH = grownH; top = bandTop
-                }
-            }
-            val scale = minOf(fitW / logo.width, boxH / logo.height)
-            val dw = logo.width * scale; val dh = logo.height * scale
-            drawImage(
-                logo,
-                dstOffset = IntOffset((boxLeft + (boxW - dw) / 2f).toInt(), (top + (boxH - dh) / 2f).toInt()),
-                dstSize = IntSize(dw.toInt(), dh.toInt()),
+        // Stacked under the logo (and under the name when names are on) on
+        // EVERY rail now, not just the phone rail. Each rail keeps its own
+        // number type: 8 sp bold on the tall phone rail, the rail's 12 sp
+        // elsewhere, so nothing about the existing look changes except the
+        // position.
+        val underNumber = if (rail.numbers) textCache.getOrPut(RAIL_UNDER_NUMBER_KEY) {
+            CellText(
+                textMeasurer.measure(
+                    channel.channelNumber.orEmpty(),
+                    style = if (phoneRail) railUnderNumberStyle else railNumberStyle,
+                    maxLines = 1,
+                    constraints = Constraints(maxWidth = nameW),
+                ),
+                null,
             )
-            drawNameStack(top + boxH + gap)
-        } else if (name != null || underNumber != null) {
-            drawNameStack((size.height - nameH) / 2f)
+        } else null
+        // SHARED GEOMETRY (core/ui/ChannelBadge.kt). The rail keeps its
+        // Canvas for scroll performance, so it cannot host the ChannelBadge
+        // composable; instead both surfaces call the SAME pure functions, so
+        // the slot rect, the number rect, the name rect, the fitted image rect
+        // and the corner rule are identical by construction.
+        // Order: logo, number, name.
+        val numberH = (underNumber?.title?.size?.height ?: 0).toFloat()
+        val nameH = (name?.title?.size?.height ?: 0).toFloat()
+        val lineGap = com.aeriotv.android.core.ui.CHANNEL_BADGE_LINE_GAP.toPx()
+        val logoGap = if (phoneRail) 4.dp.toPx() else 2.dp.toPx()
+        // Top clearance for the favorite star / catch-up clock glyphs. Always
+        // reserved, on EVERY row, even when this row has neither glyph: rail
+        // rows are all one height, so a per-row inset was the one thing that
+        // could still make one row's logo bigger than its neighbour's
+        // (Logan 2026-09-16).
+        val topInset = RAIL_LOGO_ICON_CLEAR.toPx()
+        // Both number AND name shown: the logo keeps its stock box so a tall
+        // row does not blow the logo up past the rail's design. Any element
+        // hidden and the logo takes all the room that is left.
+        val stock = rail.numbers && rail.names
+        val geometry = com.aeriotv.android.core.ui.channelBadgeLayout(
+            slotWidth = nameW.toFloat(),
+            slotHeight = size.height,
+            showLogo = logo != null,
+            numberHeight = numberH,
+            nameHeight = nameH,
+            topInset = topInset,
+            bottomInset = RAIL_LOGO_INSET.toPx(),
+            logoGap = logoGap,
+            lineGap = lineGap,
+            maxLogoWidth = if (stock) logoW else Float.MAX_VALUE,
+            maxLogoHeight = if (stock) logoH else Float.MAX_VALUE,
+        )
+        geometry.logo?.let { slot ->
+            val image = logo!!
+            val fitted = com.aeriotv.android.core.ui.fitArtwork(
+                slotWidth = slot.width,
+                slotHeight = slot.height,
+                imageWidth = image.width.toFloat(),
+                imageHeight = image.height.toFloat(),
+            )
+            val left = nameLeft + slot.left + fitted.left
+            val top = slot.top + fitted.top
+            val radius = com.aeriotv.android.core.ui.artworkRadiusPx(
+                fitted = fitted,
+                containerRadiusPx = GUIDE_RAIL_CORNER.toPx(),
+                rounded = roundedArtwork,
+                // Same decoded-image verdict the list row gets: opaque tile
+                // rounds, floating logo stays square.
+                isTile = com.aeriotv.android.core.ui.ArtworkTile
+                    .verdict(channel.tvgLogo) == true,
+            )
+            val drawLogo = {
+                drawImage(
+                    image,
+                    dstOffset = IntOffset(left.toInt(), top.toInt()),
+                    dstSize = IntSize(fitted.width.toInt(), fitted.height.toInt()),
+                )
+            }
+            if (radius > 0f) {
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    addRoundRect(
+                        androidx.compose.ui.geometry.RoundRect(
+                            left = left,
+                            top = top,
+                            right = left + fitted.width,
+                            bottom = top + fitted.height,
+                            cornerRadius = CornerRadius(radius, radius),
+                        ),
+                    )
+                }
+                clipPath(path) { drawLogo() }
+            } else {
+                drawLogo()
+            }
+        }
+        geometry.number?.let { rect ->
+            underNumber?.let {
+                drawText(it.title, topLeft = Offset(nameLeft + (nameW - it.title.size.width) / 2f, rect.top))
+            }
+        }
+        geometry.name?.let { rect ->
+            name?.let {
+                drawText(it.title, topLeft = Offset(nameLeft + (nameW - it.title.size.width) / 2f, rect.top))
+            }
         }
         if (isFavorite) {
             // Same 12 dp box and 4 dp top as the catch-up clock so the two sit
@@ -1021,7 +1080,14 @@ class GuideLogoCache(private val context: android.content.Context) {
             .data(url)
             .size(128, 128)
             .target(
-                onSuccess = { image -> bitmaps[url] = image.toBitmap().asImageBitmap(); inFlight.remove(url) },
+                onSuccess = { image ->
+                    val bitmap = image.toBitmap()
+                    // Sample the tile/floating verdict once, here, off the
+                    // decoded bitmap: every surface reads the same answer.
+                    com.aeriotv.android.core.ui.ArtworkTile.sample(url, bitmap)
+                    bitmaps[url] = bitmap.asImageBitmap()
+                    inFlight.remove(url)
+                },
                 onError = { bitmaps[url] = null; inFlight.remove(url) },
             )
             .build()
@@ -1061,16 +1127,21 @@ internal fun guideTraceCell(state: GuideGridState): String {
 
 private fun GuideRemoteAction.orDefault(default: GuideRemoteAction) = if (this == GuideRemoteAction.NONE) default else this
 private const val MIN_CELL_PX = 6f
-private const val RAIL_NUMBER_KEY = Long.MIN_VALUE + 1
 private const val RAIL_NAME_KEY = Long.MIN_VALUE + 2
 private const val RAIL_UNDER_NUMBER_KEY = Long.MIN_VALUE + 3
 
 // Grown rail logo (number and/or name hidden): inset from the rail edges,
 // top clearance under the 12 dp corner icons (4 dp top + 12 dp + 2 dp), and
-// the wide rail's number column (6 dp left + 30 dp text + 4 dp).
+// (the wide rail's separate number column is gone: the number is stacked
+// under the logo now).
 private val RAIL_LOGO_INSET = 4.dp
+
+/**
+ * The guide cell/rail's own corner radius, handed to the SHARED rounding rule
+ * so a rail logo and a list row logo round the same way (Logan 2026-09-16).
+ */
+private val GUIDE_RAIL_CORNER = 6.dp
 private val RAIL_LOGO_ICON_CLEAR = 18.dp
-private val RAIL_NUMBER_COLUMN = 40.dp
 private val NOW_RED = Color(0xFFFF4757)
 
 private class CellText(

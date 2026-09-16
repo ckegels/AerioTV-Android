@@ -222,6 +222,9 @@ fun GuidePreviewBanner(
         // as art of a different aspect arrives.
         ProgramArtSlot(
             model = art,
+            // The hero banner is a flat surface, not a rounded card, so the
+            // art follows it and stays square (Logan 2026-09-16).
+            containerCorner = 0.dp,
             modifier = Modifier.onGloballyPositioned {
                 com.aeriotv.android.feature.player.MiniPlayerChrome
                     .bannerArtBottomPx.value = it.boundsInRoot().bottom

@@ -784,7 +784,7 @@ private fun NowPlayingPinnedRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = channel.tvgLogo))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -867,7 +867,7 @@ private fun ChannelPickerRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = channel.tvgLogo))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -973,7 +973,7 @@ private fun VodPickerRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = posterUrl))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -981,7 +981,7 @@ private fun VodPickerRow(
                 AsyncImage(
                     model = posterUrl,
                     contentDescription = null,
-                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)),
+                    modifier = Modifier.size(36.dp).clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER)),
                 )
             } else {
                 Icon(
@@ -1071,3 +1071,7 @@ private fun BackRow(onClick: () -> Unit) {
         )
     }
 }
+
+/** The logo tile's own corner radius. The tile and the art inside it read this
+ *  one value, so they cannot drift. */
+private val LOGO_TILE_CORNER = 6.dp
