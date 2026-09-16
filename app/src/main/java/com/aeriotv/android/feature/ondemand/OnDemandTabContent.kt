@@ -546,6 +546,14 @@ private fun MoviesSubScreen(
         }
     }
 
+    // The field here is always visible, so "search is open" means it holds a
+    // query. Leaving the tab or opening the fullscreen player cancels it and
+    // drops IME focus, so the minimize / PiP return cannot bring the keyboard
+    // back with it.
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(state.searchQuery.isNotBlank()) {
+        viewModel.setSearchQuery("")
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         VodHeaderRow(
             upTarget = sectionPillsFocus,

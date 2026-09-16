@@ -245,6 +245,18 @@ fun AerioTVNavHost(
     // ESPN2/ESPNU, TV stayed put). Here it runs no matter which screen is up.
     // We still wait for the playlist graph + loaded channels before acting.
     val dlCurrentEntry by navController.currentBackStackEntryAsState()
+    // Leaving the tabs for a fullscreen player cancels any search a tab left
+    // open. Without this the keyboard came back when the user minimized to the
+    // mini player or PiP: the MAIN route is disposed while a player route is on
+    // top, so popping back re-mounted the tab with its search still open and the
+    // field's focus effect ran again. One observer here covers every player
+    // route (live, catch-up, recording, on demand) and every tab.
+    val dlRoute = dlCurrentEntry?.destination?.route
+    LaunchedEffect(dlRoute) {
+        if (dlRoute != null && dlRoute != Routes.MAIN) {
+            com.aeriotv.android.ui.search.SearchDismissSignal.dismissAll()
+        }
+    }
     val dlGraphEntry = remember(dlCurrentEntry) {
         runCatching { navController.getBackStackEntry(Routes.PLAYLIST_GRAPH) }.getOrNull()
     }

@@ -397,13 +397,19 @@ private fun saveMiniProgress(
 }
 
 /**
- * VODPlayerScreen's tap layer gestures: the Fit / Fill pinch plus the top-strip
- * swipe-down that minimizes (phone only; [enabled] is already false on TV and
- * in PiP). One call so that composable's modifier chain stays the same size.
+ * VODPlayerScreen's tap layer gestures: the brightness / volume edge slides,
+ * the Fit / Fill pinch, and the top-strip swipe-down that minimizes (phone
+ * only; [enabled] is already false on TV and in PiP). One call so that
+ * composable's modifier chain stays the same size.
+ *
+ * Order matches the live player: the edge slides claim only inside a narrow
+ * band at one bezel, the pinch wants two fingers, and playerTopSwipeDown must
+ * stay LAST so it sees the Main pass after the others.
  */
 fun Modifier.vodTapLayerGestures(
     settingsVm: com.aeriotv.android.feature.settings.SettingsViewModel,
     enabled: Boolean,
 ): Modifier = this
+    .playerEdgeSlideGesturesFromSettings(settingsVm, enabled = enabled)
     .videoScalePinch(settingsVm, enabled = enabled)
     .playerTopSwipeDown(enabled = enabled)

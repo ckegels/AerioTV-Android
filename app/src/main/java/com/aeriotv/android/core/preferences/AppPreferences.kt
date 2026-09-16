@@ -383,6 +383,38 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * In-Player Gestures (phone and tablet only): a vertical slide along one
+     * screen edge of the fullscreen player adjusts screen brightness, and the
+     * other edge adjusts media volume.
+     *
+     * Both default OFF: the player already owns the vertical axis (channel
+     * flip) and the top strip (swipe down to minimize), so these only exist
+     * for users who ask for them. Device-local (not in the sync snapshot) -
+     * brightness and volume are per-device, and a TV has neither gesture.
+     */
+    val playerBrightnessGesture: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_BRIGHTNESS_GESTURE] ?: false }
+    suspend fun setPlayerBrightnessGesture(value: Boolean) {
+        store.edit { it[KEY_PLAYER_BRIGHTNESS_GESTURE] = value }
+    }
+
+    val playerVolumeGesture: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_VOLUME_GESTURE] ?: false }
+    suspend fun setPlayerVolumeGesture(value: Boolean) {
+        store.edit { it[KEY_PLAYER_VOLUME_GESTURE] = value }
+    }
+
+    /**
+     * Which edge brightness lives on: [PLAYER_EDGE_LEFT] or
+     * [PLAYER_EDGE_RIGHT]. Volume always takes the other edge.
+     */
+    val playerBrightnessEdge: Flow<String> =
+        store.data.map { it[KEY_PLAYER_BRIGHTNESS_EDGE] ?: PLAYER_EDGE_LEFT }
+    suspend fun setPlayerBrightnessEdge(value: String) {
+        store.edit { it[KEY_PLAYER_BRIGHTNESS_EDGE] = value }
+    }
+
+    /**
      * TV remote button mapping (Remote Control settings; plan
      * ~/Desktop/AerioTV-Remote-Control-Plan.md). Raw JSON blob in the
      * shared cross-platform schema; decode via RemoteControlMap.fromJson
@@ -1886,6 +1918,9 @@ class AppPreferences @Inject constructor(
         val KEY_AUTO_ROTATE = booleanPreferencesKey("app_behaviors_auto_rotate")
         val KEY_DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
         val KEY_APPLE_TV_CHANNEL_FLIP = booleanPreferencesKey("app_behaviors_apple_tv_channel_flip")
+        val KEY_PLAYER_BRIGHTNESS_GESTURE = booleanPreferencesKey("in_player_gesture_brightness")
+        val KEY_PLAYER_VOLUME_GESTURE = booleanPreferencesKey("in_player_gesture_volume")
+        val KEY_PLAYER_BRIGHTNESS_EDGE = stringPreferencesKey("in_player_gesture_brightness_edge")
         val KEY_REMOTE_CONTROL_MAP = stringPreferencesKey("remote_control_map")
         val KEY_SYNC_REMOTE_CONTROL_MAP = booleanPreferencesKey("sync_remote_control_map")
         val KEY_GUIDE_GROUP_SELECTOR = stringPreferencesKey("guide_group_selector")
@@ -2018,3 +2053,9 @@ fun snapTextContrast(value: Float): Float {
     val v = if (value.isNaN()) 0f else value.coerceIn(0f, 1f)
     return kotlin.math.round(v * 10f) / 10f
 }
+
+/** Brightness slides on the left edge of the player; volume on the right. */
+const val PLAYER_EDGE_LEFT = "left"
+
+/** Brightness slides on the right edge of the player; volume on the left. */
+const val PLAYER_EDGE_RIGHT = "right"

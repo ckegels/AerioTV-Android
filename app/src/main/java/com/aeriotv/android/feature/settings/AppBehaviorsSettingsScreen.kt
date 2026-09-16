@@ -48,6 +48,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aeriotv.android.core.preferences.PLAYER_EDGE_LEFT
+import com.aeriotv.android.core.preferences.PLAYER_EDGE_RIGHT
 import com.aeriotv.android.core.ui.SkipIntervals
 import com.aeriotv.android.feature.main.AppTab
 import com.aeriotv.android.ui.TmdbAttribution
@@ -81,6 +83,11 @@ fun AppBehaviorsSettingsScreen(
 ) {
     val skipLoadingScreen by viewModel.skipLoadingScreen.collectAsStateWithLifecycle(initialValue = false)
     val appleTVChannelFlip by viewModel.appleTVChannelFlip.collectAsStateWithLifecycle(initialValue = true)
+    // In-Player Gestures (touch only). All off by default.
+    val playerBrightnessGesture by viewModel.playerBrightnessGesture.collectAsStateWithLifecycle(initialValue = false)
+    val playerVolumeGesture by viewModel.playerVolumeGesture.collectAsStateWithLifecycle(initialValue = false)
+    val playerBrightnessEdge by viewModel.playerBrightnessEdge
+        .collectAsStateWithLifecycle(initialValue = PLAYER_EDGE_LEFT)
     val autoRecoverFrozenStreams by viewModel.autoRecoverFrozenStreams.collectAsStateWithLifecycle(initialValue = true)
     val autoResumeLastChannel by viewModel.autoResumeLastChannel.collectAsStateWithLifecycle(initialValue = false)
     val defaultTab by viewModel.defaultTab.collectAsStateWithLifecycle(initialValue = "")
@@ -476,13 +483,18 @@ fun AppBehaviorsSettingsScreen(
                 }
             }
 
+            // In-Player Gestures: everything the fullscreen player recognizes
+            // from a finger or the D-pad. Channel flip works on every form
+            // factor; the edge slides are touch only, so TV never sees them.
             SettingsSection(
-                header = "Channel Flip Gesture",
+                header = "In-Player Gestures",
                 // tvOS / Android TV flip channels with D-pad up/down, not a
                 // swipe, so the "accidental swipes" caution is meaningless on
                 // a remote (user request: drop the note on TV). Phones keep it.
                 footer = if (isTv) null
-                else "Turn off if accidental swipes during playback flip channels by mistake.",
+                else "Turn off if accidental swipes during playback flip channels by mistake. " +
+                    "Brightness and volume slides are recognized only inside a narrow band at the very edge of the screen, " +
+                    "so they stay clear of the channel flip and of swiping down to minimize.",
             ) {
                 SettingsToggleRow(
                     title = "Up / Down channel change",
@@ -493,6 +505,32 @@ fun AppBehaviorsSettingsScreen(
                     checked = appleTVChannelFlip,
                     onCheckedChange = viewModel::setAppleTVChannelFlip,
                 )
+                if (!isTv) {
+                    SettingsToggleRow(
+                        title = "Brightness edge slide",
+                        subtitle = "Slide a finger up or down the brightness edge to dim or brighten the screen. Applies to this app only and is restored when you leave the player.",
+                        checked = playerBrightnessGesture,
+                        onCheckedChange = viewModel::setPlayerBrightnessGesture,
+                    )
+                    SettingsToggleRow(
+                        title = "Volume edge slide",
+                        subtitle = "Slide a finger up or down the other edge to change the media volume.",
+                        checked = playerVolumeGesture,
+                        onCheckedChange = viewModel::setPlayerVolumeGesture,
+                    )
+                    if (playerBrightnessGesture || playerVolumeGesture) {
+                        listOf(
+                            PLAYER_EDGE_LEFT to "Brightness: Left, Volume: Right",
+                            PLAYER_EDGE_RIGHT to "Brightness: Right, Volume: Left",
+                        ).forEach { (wire, label) ->
+                            SettingsSelectionRow(
+                                label = label,
+                                selected = playerBrightnessEdge == wire,
+                                onClick = { viewModel.setPlayerBrightnessEdge(wire) },
+                            )
+                        }
+                    }
+                }
             }
 
             // GH #38 + #40: display-mode controls, TV boxes only. Each switch

@@ -198,8 +198,15 @@ fun MediaTabContent(
     // Genre pill selection lives in the view model with the built list, so a
     // tab return finds the same page it left (tvos_movies_spec 1.3).
     val selectedGenre by viewModel.selectedGenre(kind == MediaKind.Movies).collectAsStateWithLifecycle()
-    var searchActive by rememberSaveable { mutableStateOf(false) }
-    var query by rememberSaveable { mutableStateOf("") }
+    // Deliberately NOT rememberSaveable: a search left open must not be
+    // restored when this tab re-mounts (the minimize / PiP return path), or
+    // the field's focus effect runs again and the keyboard pops up.
+    var searchActive by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {
+        searchActive = false
+        query = ""
+    }
     var showSort by remember { mutableStateOf(false) }
     var showManageGroups by remember { mutableStateOf(false) }
 

@@ -371,6 +371,22 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setAppleTVChannelFlip(value) }
     }
 
+    /** In-Player Gestures (phone and tablet). All default off. */
+    val playerBrightnessGesture: Flow<Boolean> = prefs.playerBrightnessGesture
+    fun setPlayerBrightnessGesture(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerBrightnessGesture(value) }
+    }
+
+    val playerVolumeGesture: Flow<Boolean> = prefs.playerVolumeGesture
+    fun setPlayerVolumeGesture(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerVolumeGesture(value) }
+    }
+
+    val playerBrightnessEdge: Flow<String> = prefs.playerBrightnessEdge
+    fun setPlayerBrightnessEdge(value: String) {
+        viewModelScope.launch { prefs.setPlayerBrightnessEdge(value) }
+    }
+
     // iOS appBehaviorsAutoRecoverFrozenStreams (#37). Default true; device-local.
     val autoRecoverFrozenStreams: Flow<Boolean> = prefs.autoRecoverFrozenStreams
     fun setAutoRecoverFrozenStreams(value: Boolean) {

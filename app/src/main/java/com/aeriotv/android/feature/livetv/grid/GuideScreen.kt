@@ -217,6 +217,10 @@ fun GuideScreen(
     val tabActive = com.aeriotv.android.feature.main.LocalTabIsActive.current
     var groupSidebarOpen by remember { mutableStateOf(false) }
     var searchActive by remember { mutableStateOf(false) }
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {
+        searchActive = false
+        viewModel.onSearchQueryChange("")
+    }
     var collectionPickerFor by remember { mutableStateOf<Pair<String, String>?>(null) }
     var showManageGroups by remember { mutableStateOf(false) }
     var sidebarOriginalGroup by remember { mutableStateOf<String?>(null) }
@@ -458,6 +462,19 @@ fun GuideScreen(
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var menuFor by remember { mutableStateOf<Pair<M3UChannel, EPGProgramme>?>(null) }
     val menuGuard = rememberTvMenuGuard()
+    // Start catch-up playback of one already-aired cell. Shared by the grid's
+    // primary action (single tap / OK) and the long-press menu's "Watch from
+    // Start", so both go through one resolve + navigate path.
+    val startCatchup: (M3UChannel, EPGProgramme) -> Unit = { channel, cell ->
+        viewModel.playCatchup(channel, cell) { result ->
+            result.onSuccess { r ->
+                // TV: remember the launched cell and the timeline so the
+                // guide that composes again after the replay lands back here.
+                if (isTv) GuideCatchupReturn.set(channel.id, cell.startMillis, grid.viewportStartMs)
+                onPlayCatchup(channel.id, r.url, cell.title, cell.startMillis, cell.endMillis, r.panelTimeZoneId, r.channelUuid.orEmpty())
+            }
+        }
+    }
     val guideFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
     // Land focus on the grid on entry (TV).
@@ -925,10 +942,14 @@ fun GuideScreen(
                 favoriteIds = favoriteIds,
                 recordingWindows = recordingWindows,
                 isTv = isTv,
-                onPlay = { channel, _ ->
+                onPlay = { channel, cell ->
+                    // Already-aired + within the catch-up window: play it from
+                    // the start right away (no menu first). The rail tap hands
+                    // us the cell airing NOW, so tapping the logo still tunes live.
+                    if (!cell.isPlaceholder && channel.canReplay(cell, nowMs)) startCatchup(channel, cell)
                     // OK on the channel already in the corner mini promotes the
                     // mini to fullscreen instead of re-tuning the same stream.
-                    if (isTv && miniChannelId == channel.id) miniPlayerVm.session.requestResume()
+                    else if (isTv && miniChannelId == channel.id) miniPlayerVm.session.requestResume()
                     else onChannelClick(channel)
                 },
                 onOpenMenu = { channel, cell -> menuFor = channel to cell; menuGuard.arm() },
@@ -1167,16 +1188,7 @@ fun GuideScreen(
         val replayable = !cell.isPlaceholder && channel.canReplay(cell, nowMs)
         // Apple TV order (Logan 2026-09-02): Favorites, Multiview, Collection,
         // Program Info, Record from Now, then the Android-only extras.
-        val watchFromStart: () -> Unit = {
-            viewModel.playCatchup(channel, cell) { result ->
-                result.onSuccess { r ->
-                    // TV: remember the launched cell and the timeline so the
-                    // guide that composes again after the replay lands back here.
-                    if (isTv) GuideCatchupReturn.set(channel.id, cell.startMillis, grid.viewportStartMs)
-                    onPlayCatchup(channel.id, r.url, cell.title, cell.startMillis, cell.endMillis, r.panelTimeZoneId, r.channelUuid.orEmpty())
-                }
-            }
-        }
+        val watchFromStart: () -> Unit = { startCatchup(channel, cell) }
         val reminderSet = key in reminderKeys
         val toggleReminder: () -> Unit = {
             if (reminderSet) remindersVm.cancelReminder(key)

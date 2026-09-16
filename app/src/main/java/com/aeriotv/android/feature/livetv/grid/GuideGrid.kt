@@ -704,10 +704,20 @@ private fun GridRow(
             .fillMaxWidth()
             .height(rowHeight)
             .semantics { contentDescription = rowDescription }
-            .pointerInput(row) {
+            // Keyed on the minute tick as well as the row: the tap handler
+            // resolves the rail's "airing now" cell from nowMs, and a stale
+            // capture there would replay a program that just ended.
+            .pointerInput(row, nowMs / 60_000L) {
                 detectTapGestures(
                     onTap = { pos ->
-                        if (pos.x < railWidthPx) { onTapFocus(row, state.rows.cells(row).first()); onPlay(channel, state.rows.cells(row).first()); return@detectTapGestures }
+                        if (pos.x < railWidthPx) {
+                            // Rail (logo / name) = tune this channel live. Hand
+                            // onPlay the cell airing NOW, not the row's first
+                            // cell: the first cell is usually already in the
+                            // past, and a past cell now means "play it back".
+                            val railCell = state.rows.cellAt(row, nowMs) ?: state.rows.cells(row).first()
+                            onTapFocus(row, railCell); onPlay(channel, railCell); return@detectTapGestures
+                        }
                         val t = state.drawViewportStartMs + ((pos.x - railWidthPx) / pxPerMs).toLong()
                         state.rows.cellAt(row, t)?.let { cell -> onTapFocus(row, cell); onPlay(channel, cell) }
                     },

@@ -216,6 +216,10 @@ fun ChannelListScreen(
     // always-on field, so the channel list gets full height until the user
     // opts into searching. Closing it clears the query.
     var searchActive by remember { mutableStateOf(false) }
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {
+        searchActive = false
+        viewModel.onSearchQueryChange("")
+    }
     val isTv = rememberIsTvDevice()
     // Phone group selector (Logan 2026-09-05, Apple parity): the slide-in
     // drawer by default, the pill strip when the user picks "pills". TV keeps
@@ -1503,18 +1507,24 @@ private fun ChannelGuidePanel(
                 items(recentlyAired.size) { i ->
                     val programme = recentlyAired[i]
                     val replayable = channel.canReplay(programme, now)
+                    val watchPast: (() -> Unit)? = if (replayable && onWatchPast != null) {
+                        { onWatchPast(programme) }
+                    } else {
+                        null
+                    }
                     UpcomingProgrammeRow(
                         programme = programme,
                         channelName = channelName,
                         channelId = channelId,
                         isPast = true,
                         replayable = replayable,
-                        onWatch = if (replayable && onWatchPast != null) {
-                            { onWatchPast(programme) }
-                        } else {
-                            null
-                        },
-                        onTap = { onShowProgramInfo(programme.toInfoTarget(channelName, channelDispatcharrId)) },
+                        onWatch = watchPast,
+                        // A single tap / OK on a replayable aired programme
+                        // plays it from the start; the long-press menu still
+                        // carries Program Info and everything else. Rows
+                        // outside the archive window keep opening the info sheet.
+                        onTap = watchPast
+                            ?: { onShowProgramInfo(programme.toInfoTarget(channelName, channelDispatcharrId)) },
                         onShowRecord = { onShowRecord(programme.toInfoTarget(channelName, channelDispatcharrId)) },
                     )
                 }
