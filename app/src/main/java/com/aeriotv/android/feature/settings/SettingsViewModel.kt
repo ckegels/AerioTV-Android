@@ -11,6 +11,7 @@ import com.aeriotv.android.ui.theme.AppTheme
 import com.aeriotv.android.ui.theme.AppearanceMode
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import com.aeriotv.android.core.data.db.entity.nativeHlsSupported
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -448,6 +449,49 @@ class SettingsViewModel @Inject constructor(
             // change; positives re-resolve cheaply on next lookup.
             tmdb.clearCache()
             _tmdbKeyTestState.value = TmdbKeyTestState.Saved
+        }
+    }
+
+    // Developer: live playback engine (TS vs Dispatcharr native HLS).
+    data class LiveEngineDiagnostics(
+        val playlistId: String,
+        /** Measured server capability: null when never measured. */
+        val supported: Boolean?,
+        val override: com.aeriotv.android.core.playback.LiveEngineOverride,
+        /** What the next live tune would actually use. */
+        val effective: com.aeriotv.android.core.playback.LiveEngine,
+    )
+
+    private val _liveEngine = MutableStateFlow<LiveEngineDiagnostics?>(null)
+    val liveEngine: StateFlow<LiveEngineDiagnostics?> = _liveEngine
+
+    fun refreshLiveEngine() {
+        viewModelScope.launch {
+            val active = playlistRepository.activePlaylist()
+            if (active == null) {
+                _liveEngine.value = null
+                return@launch
+            }
+            // activePlaylist() republished the selector, so it is current.
+            val override = com.aeriotv.android.core.playback.LiveEngineOverride.fromStored(
+                prefs.liveEngineOverrideOnce(active.id),
+            )
+            _liveEngine.value = LiveEngineDiagnostics(
+                playlistId = active.id,
+                supported = active.nativeHlsSupported(),
+                override = override,
+                effective = com.aeriotv.android.core.playback.LiveEngineSelector.engine(),
+            )
+        }
+    }
+
+    fun setLiveEngineOverride(
+        playlistId: String,
+        override: com.aeriotv.android.core.playback.LiveEngineOverride,
+    ) {
+        viewModelScope.launch {
+            playlistRepository.setLiveEngineOverride(playlistId, override)
+            refreshLiveEngine()
         }
     }
 

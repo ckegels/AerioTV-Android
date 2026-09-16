@@ -75,6 +75,20 @@ fun aerioRenderersFactory(
     // re-selection, no source re-load on a focus switch) while no AudioTrack
     // exists and the tile's clock runs off the wall clock like a muted tile.
     tileAudioGate: TileAudioGate? = null,
+    // How long the video renderer may report itself READY while it has not yet
+    // rendered a frame. Media3's default is 5 s, and that window is exactly why
+    // a stream joined mid-segment starts with AUDIO ONLY: the audio renderer is
+    // genuinely ready, the video renderer claims to be, and playback starts
+    // while the decoder is still chewing from the segment's keyframe up to the
+    // join position. The same symptom was measured on Apple for Dispatcharr's
+    // native HLS output. Passing 0 makes the first rendered video frame a
+    // precondition for starting, so picture and sound begin together.
+    //
+    // Live native HLS passes 0. The progressive TS path keeps the Media3
+    // default: it joins at the start of a fresh connection where video is ready
+    // almost immediately, and shortening the window there would only risk a new
+    // stall on a mid-stream track re-selection.
+    allowedVideoJoiningTimeMs: Long = DefaultRenderersFactory.DEFAULT_ALLOWED_VIDEO_JOINING_TIME_MS,
 ): DefaultRenderersFactory {
     val factory = object : DefaultRenderersFactory(context) {
         override fun buildAudioSink(
@@ -242,6 +256,7 @@ fun aerioRenderersFactory(
             if (preferSoftwareAudio) DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
             else DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON,
         )
+        .setAllowedVideoJoiningTimeMs(allowedVideoJoiningTimeMs)
 }
 
 /**

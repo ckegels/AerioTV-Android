@@ -40,6 +40,18 @@ interface ChannelSnapshotDao {
     )
     suspend fun distinctGroupTitles(playlistId: String): List<String>
 
+    /**
+     * One cached Dispatcharr live proxy URL for this playlist, or null when
+     * nothing is cached. The native-HLS capability probe needs a real channel
+     * to ask about and must not pull the whole snapshot to find one.
+     */
+    @Query(
+        "SELECT url FROM channel_snapshot " +
+            "WHERE playlistId = :playlistId AND url LIKE '%/proxy/ts/stream/%' " +
+            "ORDER BY position ASC LIMIT 1",
+    )
+    suspend fun firstLiveProxyUrl(playlistId: String): String?
+
     @Query("DELETE FROM channel_snapshot WHERE playlistId = :playlistId")
     suspend fun deleteForPlaylist(playlistId: String)
 

@@ -855,6 +855,31 @@ class AppPreferences @Inject constructor(
      * until the user checks it, and picking it as the Default Group checks it
      * too. Scoped per playlist alongside [defaultGroupToken].
      */
+    /**
+     * Developer diagnostics: force the live playback engine for one playlist.
+     * "" = Auto (follow the detected Dispatcharr native-HLS capability),
+     * "ts" = always today's progressive TS path,
+     * "hls" = always HlsMediaSource on `?output_format=hls`.
+     *
+     * Device-local and per playlist so Logan can compare both engines on the
+     * same channel without touching anything server-side. Deliberately a
+     * DataStore key rather than a playlist column: it is a diagnostic, not part
+     * of the account snapshot, and must not need a schema migration.
+     */
+    fun liveEngineOverride(playlistId: String): Flow<String> =
+        store.data.map { it[keyLiveEngineOverride(playlistId)] ?: "" }
+
+    suspend fun liveEngineOverrideOnce(playlistId: String): String =
+        if (playlistId.isBlank()) "" else store.data.first()[keyLiveEngineOverride(playlistId)] ?: ""
+
+    suspend fun setLiveEngineOverride(playlistId: String, value: String) {
+        if (playlistId.isBlank()) return
+        store.edit { prefs ->
+            if (value.isBlank()) prefs.remove(keyLiveEngineOverride(playlistId))
+            else prefs[keyLiveEngineOverride(playlistId)] = value
+        }
+    }
+
     fun recentGroupVisible(playlistId: String): Flow<Boolean> =
         store.data.map { it[keyRecentGroupVisible(playlistId)] ?: false }
 
@@ -1863,6 +1888,8 @@ class AppPreferences @Inject constructor(
 
         /** Per-playlist "Recently Watched" group visibility (see [recentGroupVisible]). */
         private fun keyRecentGroupVisible(playlistId: String) = booleanPreferencesKey("recent_group_visible_$playlistId")
+
+        private fun keyLiveEngineOverride(playlistId: String) = stringPreferencesKey("live_engine_override_$playlistId")
         private fun keyFeedValidators(url: String): androidx.datastore.preferences.core.Preferences.Key<String> {
             val d = java.security.MessageDigest.getInstance("SHA-1").digest(url.toByteArray())
             return stringPreferencesKey("feed_validators_" + d.joinToString("") { "%02x".format(it) })

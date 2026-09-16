@@ -66,6 +66,7 @@ import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.SettingsInfoRow
 import com.aeriotv.android.ui.settings.SettingsSection
+import com.aeriotv.android.ui.settings.SettingsSelectionRow
 import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import dagger.hilt.android.EntryPointAccessors
@@ -107,6 +108,10 @@ fun DeveloperSettingsScreen(
         entry.debugLogger()
     }
     val loggingEnabled by settingsVm.debugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val liveEngine by settingsVm.liveEngine.collectAsStateWithLifecycle()
+    // Re-read on entry: the capability probe may have measured the server since
+    // this screen was last open.
+    LaunchedEffect(Unit) { settingsVm.refreshLiveEngine() }
 
     val isTv = rememberIsTvDevice()
     var pendingEnable by remember { mutableStateOf(false) }
@@ -168,6 +173,15 @@ fun DeveloperSettingsScreen(
                         // tvOS LogShareServer port). Phones keep the chooser.
                         onShare = { if (isTv) showQrShare = true else shareLogFile(context, debugLogger) },
                         onClear = { pendingClear = true },
+                    )
+                }
+            }
+
+            liveEngine?.let { engine ->
+                item("live-engine") {
+                    LiveEngineSection(
+                        diagnostics = engine,
+                        onSelect = { settingsVm.setLiveEngineOverride(engine.playlistId, it) },
                     )
                 }
             }
@@ -553,4 +567,69 @@ private fun formatBytes(bytes: Long): String {
     if (kb < 1024.0) return String.format(java.util.Locale.US, "%.1f KB", kb)
     val mb = kb / 1024.0
     return String.format(java.util.Locale.US, "%.2f MB", mb)
+}
+
+/**
+ * Developer diagnostic: which Media3 pipeline a LIVE tune uses on this
+ * playlist. Auto follows the measured server capability; the two forced modes
+ * exist so the same channel can be compared on both engines back to back.
+ *
+ * The override is device-local and per playlist, and changes nothing
+ * server-side. It takes effect on the NEXT tune.
+ */
+@Composable
+private fun LiveEngineSection(
+    diagnostics: SettingsViewModel.LiveEngineDiagnostics,
+    onSelect: (com.aeriotv.android.core.playback.LiveEngineOverride) -> Unit,
+) {
+    val detected = when (diagnostics.supported) {
+        true -> "Supported, server redirects to a per-client playlist"
+        false -> "Not supported, this server has no HLS output"
+        null -> "Not measured yet"
+    }
+    val effective = when (diagnostics.effective) {
+        com.aeriotv.android.core.playback.LiveEngine.NativeHls -> "Native HLS"
+        com.aeriotv.android.core.playback.LiveEngine.Ts -> "Transport Stream"
+    }
+    SettingsSection(
+        header = "Live Playback Engine",
+        footer = "Auto uses native HLS only on a server measured to support it; anything " +
+            "else plays the transport stream exactly as before. Forcing a mode applies to " +
+            "the next channel you tune, on this device only, and changes nothing on the " +
+            "server. Each tune logs its choice as [TUNE] engine=native-hls or engine=ts.",
+    ) {
+        SettingsInfoRow(
+            label = "Native HLS",
+            value = detected,
+            leadingIcon = Icons.Outlined.NetworkCheck,
+        )
+        SettingsInfoRow(
+            label = "Next Tune Uses",
+            value = effective,
+            leadingIcon = Icons.Filled.PlayArrow,
+        )
+        SettingsSelectionRow(
+            label = "Auto",
+            subtitle = "Follow the measured server capability",
+            selected = diagnostics.override ==
+                com.aeriotv.android.core.playback.LiveEngineOverride.Auto,
+            onClick = { onSelect(com.aeriotv.android.core.playback.LiveEngineOverride.Auto) },
+        )
+        SettingsSelectionRow(
+            label = "Force Transport Stream",
+            subtitle = "Always the progressive TS proxy path",
+            selected = diagnostics.override ==
+                com.aeriotv.android.core.playback.LiveEngineOverride.ForceTs,
+            onClick = { onSelect(com.aeriotv.android.core.playback.LiveEngineOverride.ForceTs) },
+        )
+        SettingsSelectionRow(
+            label = "Force Native HLS",
+            subtitle = "Always request output_format=hls, even if unmeasured",
+            selected = diagnostics.override ==
+                com.aeriotv.android.core.playback.LiveEngineOverride.ForceNativeHls,
+            onClick = {
+                onSelect(com.aeriotv.android.core.playback.LiveEngineOverride.ForceNativeHls)
+            },
+        )
+    }
 }

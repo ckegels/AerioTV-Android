@@ -273,6 +273,22 @@ data class PlaylistEntity(
      */
     @ColumnInfo(defaultValue = "-1")
     val dispatcharrSystemCatchupEnabled: Int = -1,
+
+    /**
+     * Whether this server answers `?output_format=hls` on a live channel with a
+     * 302 to a per-client HLS playlist: 1 = yes, 0 = no, -1 = never measured.
+     *
+     * Detected by BEHAVIOR, never by version number (Logan's test server
+     * reports 0.28.2 because the HLS branch is behind current Dispatcharr).
+     * -1 means the TS path, exactly as today: an unmeasured server must never
+     * have its playback blocked or changed.
+     *
+     * Written by the same probe pass that writes the capability snapshot, so
+     * it re-checks on the same cadence (cold launch, foreground after a
+     * minute, manual refresh, six-hour TTL).
+     */
+    @ColumnInfo(defaultValue = "-1")
+    val dispatcharrNativeHls: Int = -1,
 )
 
 /** Stored sentinel for "this server has no AAC output profile", so the
@@ -348,6 +364,19 @@ fun PlaylistEntity.capabilitiesNeedProbe(nowMillis: Long = System.currentTimeMil
     if (dispatcharrCapabilitiesFetchedAt <= 0L) return true
     if (dispatcharrCapabilitiesStale) return true
     return nowMillis - dispatcharrCapabilitiesFetchedAt >= CAPABILITIES_TTL_MS
+}
+
+/**
+ * Whether live tunes on this playlist may use Dispatcharr's native HLS output.
+ * Null when never measured, which the engine selector reads as "use TS".
+ */
+fun PlaylistEntity.nativeHlsSupported(): Boolean? {
+    if (!isDispatcharrDirectConnect()) return null
+    return when (dispatcharrNativeHls) {
+        1 -> true
+        0 -> false
+        else -> null
+    }
 }
 
 /** Effective level: staff / superuser read as admin regardless of user_level. */

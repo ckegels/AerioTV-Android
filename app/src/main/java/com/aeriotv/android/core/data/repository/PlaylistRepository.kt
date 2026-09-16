@@ -14,6 +14,7 @@ import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.db.entity.dispatcharrVersionAtLeast
 import com.aeriotv.android.core.data.db.entity.capabilitiesNeedProbe
 import com.aeriotv.android.core.data.db.entity.isDispatcharrDirectConnect
+import com.aeriotv.android.core.data.db.entity.nativeHlsSupported
 import com.aeriotv.android.core.data.capability.CAPABILITIES_SCHEMA
 import com.aeriotv.android.core.data.capability.Capability
 import com.aeriotv.android.core.data.capability.CapabilityCorrections
@@ -294,6 +295,11 @@ class PlaylistRepository @Inject constructor(
         // cold-launch path where AerioTVApplication kicks off a read on
         // startup. Read-only callers benefit too -- they're cheap.
         publishActiveCredentials(pl)
+        // Same idea for the live-engine decision: the tune path reads it
+        // synchronously, so it has to follow the active row. Memoized on
+        // (id, verdict) because activePlaylist() is a hot read and the
+        // override lives in DataStore.
+        publishLiveEngineFor(pl)
         return pl
     }
 
@@ -600,6 +606,87 @@ class PlaylistRepository @Inject constructor(
         }.onFailure { Log.w(TAG_CAPS, "cached-identity reset failed", it) }
     }
 
+    // ---- Native HLS live output (Dispatcharr HLS branch) ----
+
+    /**
+     * Ask the server, once per capability pass, whether a live channel plus
+     * `?output_format=hls` redirects to a per-client HLS playlist.
+     *
+     * Detection is behavioral on purpose: the branch reports an OLD version
+     * number, so a version gate would be wrong in both directions.
+     *
+     * An inconclusive answer (no cached channel to ask about, transport
+     * failure) leaves the stored verdict alone, so a flaky moment never
+     * downgrades a server that was measured as supporting the feature, and an
+     * unmeasured server keeps playing on today's TS path.
+     */
+    private suspend fun probeNativeHls(playlistId: String, base: String, apiKey: String?) {
+        val cachedUrl = runCatching { channelSnapshotDao.firstLiveProxyUrl(playlistId) }.getOrNull()
+        val uuid = com.aeriotv.android.core.playback.StreamEndVerifier.channelUuidFromUrl(cachedUrl)
+        if (uuid.isNullOrBlank()) {
+            // Nothing cached yet (first launch on a fresh install). The next
+            // capability pass, after channels load, measures the server.
+            Log.i(TAG_CAPS, "native-hls probe skipped: no cached live channel yet")
+            return
+        }
+        val headers = apiKey?.takeIf { it.isNotBlank() }?.let {
+            mapOf("X-API-Key" to it, "Authorization" to "ApiKey $it")
+        }.orEmpty()
+        val verdict = com.aeriotv.android.core.network.NativeHlsProbe.probe(
+            dispatcharrClient.streamUrl(base, uuid),
+            headers,
+        ) ?: return
+        val current = dao.byId(playlistId) ?: return
+        val stored = if (verdict) 1 else 0
+        if (current.dispatcharrNativeHls == stored) return
+        runCatching { dao.update(current.copy(dispatcharrNativeHls = stored)) }
+            .onFailure { Log.w(TAG_CAPS, "native-hls persist failed", it) }
+    }
+
+    /**
+     * Republish the live-engine decision for the ACTIVE playlist so the next
+     * tune reads it. Called after every capability pass, on a playlist switch
+     * and when the developer override changes.
+     */
+    suspend fun publishLiveEngine(playlistId: String? = null) {
+        val active = runCatching { dao.firstActive() }.getOrNull()
+        // A probe for a background playlist must not move the active decision.
+        if (playlistId != null && playlistId != active?.id) return
+        publishLiveEngineFor(active, force = true)
+    }
+
+    /** Last (playlist id, stored verdict) published, so the hot path re-reads
+     *  DataStore only when something actually moved. */
+    @Volatile
+    private var lastLiveEngineKey: String? = null
+
+    private suspend fun publishLiveEngineFor(active: PlaylistEntity?, force: Boolean = false) {
+        if (active == null) {
+            lastLiveEngineKey = null
+            com.aeriotv.android.core.playback.LiveEngineSelector.clear()
+            return
+        }
+        val key = "${active.id}:${active.dispatcharrNativeHls}"
+        if (!force && key == lastLiveEngineKey) return
+        val override = com.aeriotv.android.core.playback.LiveEngineOverride.fromStored(
+            runCatching { appPreferences.liveEngineOverrideOnce(active.id) }.getOrNull(),
+        )
+        lastLiveEngineKey = key
+        com.aeriotv.android.core.playback.LiveEngineSelector.publish(
+            supported = active.nativeHlsSupported(),
+            override = override,
+        )
+    }
+
+    /** Developer diagnostics: force TS or native HLS for one playlist. */
+    suspend fun setLiveEngineOverride(
+        playlistId: String,
+        override: com.aeriotv.android.core.playback.LiveEngineOverride,
+    ) {
+        appPreferences.setLiveEngineOverride(playlistId, override.stored())
+        publishLiveEngine(playlistId)
+    }
+
     suspend fun probeCapabilities(playlistId: String, force: Boolean = false): Boolean {
         // One pass per playlist at a time. Launch fires the coordinator probe
         // while a gated surface (DVR / On Demand) can fire its own within the
@@ -625,7 +712,23 @@ class PlaylistRepository @Inject constructor(
     private suspend fun probeCapabilitiesUncoalesced(playlistId: String, force: Boolean): Boolean {
         val playlist = dao.byId(playlistId) ?: return false
         if (!playlist.isDispatcharrDirectConnect()) return false
-        if (!force && !playlist.capabilitiesNeedProbe()) return false
+        if (!force && !playlist.capabilitiesNeedProbe()) {
+            // The account snapshot is still fresh, so nothing else here needs
+            // to run. Native HLS can still be UNMEASURED, though: the very
+            // first pass on a new server runs before any channel is cached, and
+            // it needs a real channel to ask about. Catch that one case here
+            // rather than leaving the server on the TS path until the TTL
+            // expires hours later.
+            if (playlist.dispatcharrNativeHls == -1) {
+                probeNativeHls(
+                    playlistId,
+                    effectiveBaseUrl(playlist),
+                    playlist.apiKey?.takeIf { it.isNotBlank() },
+                )
+                publishLiveEngine(playlistId)
+            }
+            return false
+        }
         val base = effectiveBaseUrl(playlist)
         val key = playlist.apiKey?.takeIf { it.isNotBlank() }
         val snapshot = key?.let {
@@ -705,6 +808,11 @@ class PlaylistRepository @Inject constructor(
         )
         runCatching { dao.update(updated) }
             .onFailure { Log.w(TAG_CAPS, "capability persist failed", it) }
+        // Native HLS rides the same pass and therefore the same cadence (cold
+        // launch, foreground after a minute, manual refresh, six-hour TTL).
+        // Inconclusive keeps the last verdict; it never downgrades one.
+        probeNativeHls(playlistId, base, key)
+        publishLiveEngine(playlistId)
         // Session corrections are guesses; persisted truth supersedes them.
         CapabilityCorrections.clear(playlistId)
         // Log the DERIVED verdicts, not just the raw level: the raw level alone
@@ -2589,6 +2697,12 @@ class PlaylistRepository @Inject constructor(
         dao.switchActive(playlistId)
         val entity = dao.byId(playlistId)
             ?: throw IllegalStateException("Playlist $playlistId vanished after switch")
+        // The live-engine decision belongs to the OUTGOING server until the new
+        // one's verdict is read. Clearing first means a tune landing mid-switch
+        // falls back to the TS path rather than asking a server that may not
+        // have the feature for `?output_format=hls`.
+        com.aeriotv.android.core.playback.LiveEngineSelector.clear()
+        publishLiveEngine(playlistId)
         val base = effectiveBaseUrl(entity)
         val sourceType = entity.resolvedSourceType()
         val channels = when (sourceType) {

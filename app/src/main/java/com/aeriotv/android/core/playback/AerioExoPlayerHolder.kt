@@ -143,6 +143,18 @@ class AerioExoPlayerHolder @Inject constructor(
     /** Start gate the next [acquireOrCreate] must build with, stamped by
      *  [playUrl] from the learned per-channel hold-back. */
     @Volatile private var desiredStartGateMs: Int = LIVE_START_GATE_DEFAULT_MS
+    /** Video joining time the player was last BUILT with, and the one the next
+     *  [acquireOrCreate] must build with. 0 on the native-HLS live path so the
+     *  first video frame gates the start and audio cannot run ahead of the
+     *  picture; the Media3 default everywhere else. */
+    private var builtWithVideoJoiningMs: Long? = null
+    @Volatile private var desiredVideoJoiningMs: Long =
+        androidx.media3.exoplayer.DefaultRenderersFactory.DEFAULT_ALLOWED_VIDEO_JOINING_TIME_MS
+    /** Engine the CURRENT prime resolved to, stamped by [buildMediaSource] and
+     *  read by [wrapForSwitchSkip] (which runs immediately after, on the same
+     *  built source). Keeps the two from disagreeing if a capability probe or a
+     *  playlist switch republishes the selector between them. */
+    @Volatile private var lastBuiltNativeHls: Boolean = false
     /** In-memory mirror of AppPreferences.liveStartBufferMs so [playUrl] can
      *  read the learned hold-back without blocking the channel-tap path. */
     @Volatile private var cachedLiveStartBuffers:
@@ -692,6 +704,14 @@ class AerioExoPlayerHolder @Inject constructor(
     /** Wrap a freshly built live source for [followStreamSwitch]. Non raw-TS
      *  sources pass through untouched. */
     private fun wrapForSwitchSkip(url: String, source: MediaSource): MediaSource {
+        // Native HLS needs no keyframe skip: a change_stream swaps the upstream
+        // behind the same channel, and the per-client playlist simply starts
+        // listing the new source's segments, so the player follows it without
+        // the mid-TS-packet resynchronisation SwitchSkipMediaSource exists for.
+        if (lastBuiltNativeHls) {
+            switchSkipSource = null
+            return source
+        }
         if (!isRawTsUrl(url)) {
             switchSkipSource = null
             return source
@@ -1603,15 +1623,25 @@ class AerioExoPlayerHolder @Inject constructor(
             .coerceIn(LIVE_START_GATE_DEFAULT_MS, LIVE_START_GATE_MAX_MS)
         // watchdogReloadEnabled is kept current by the autoRecoverFrozenStreams
         // collector launched in init{}; no blocking read needed here.
+        // Native HLS joins mid-segment, so the video renderer must not be
+        // allowed to claim readiness before it has rendered a frame (see
+        // aerioRenderersFactory). That is a build-time renderer property, so a
+        // change of live engine rebuilds the player exactly as a start-gate
+        // change does.
+        val videoJoiningMs = desiredVideoJoiningMs
         player?.let { existing ->
             if (builtWithPassthrough == audioPassthrough &&
                 builtWithBufferFloorMs == bufferFloorMs &&
-                builtWithStartGateMs == startGateMs
+                builtWithStartGateMs == startGateMs &&
+                builtWithVideoJoiningMs == videoJoiningMs
             ) {
                 return existing
             }
             if (builtWithStartGateMs != startGateMs) {
                 Log.i(TAG, "[HOLDBACK] rebuilding player for start gate $startGateMs ms")
+            }
+            if (builtWithVideoJoiningMs != videoJoiningMs) {
+                Log.i(TAG, "[TUNE] rebuilding player for video joining time $videoJoiningMs ms")
             }
             Log.i(TAG, "Player build pref changed (passthrough/buffer); rebuilding player")
             destroy()
@@ -1634,6 +1664,7 @@ class AerioExoPlayerHolder @Inject constructor(
             context,
             audioPassthrough,
             forceVideoCodecReinit = true,
+            allowedVideoJoiningTimeMs = videoJoiningMs,
         )
 
         // LoadControl: live-stream buffer durations. The ExoPlayer defaults
@@ -1772,6 +1803,7 @@ class AerioExoPlayerHolder @Inject constructor(
         builtWithPassthrough = audioPassthrough
         builtWithBufferFloorMs = bufferFloorMs
         builtWithStartGateMs = startGateMs
+        builtWithVideoJoiningMs = videoJoiningMs
         builtMaxBufferMs = liveMaxBufferMs
         startWatchdog()
         return fresh
@@ -1800,9 +1832,34 @@ class AerioExoPlayerHolder @Inject constructor(
         // Wrapping here means the tee survives LAN/WAN failover and the
         // stall-watchdog re-prime, both of which come back through
         // buildMediaSource with a fresh connection.
-        val rawTs = isRawTsUrl(url)
+        // Dispatcharr native HLS: when this server was MEASURED to redirect
+        // `?output_format=hls` to a per-client playlist (and the developer
+        // override allows it), the live tune plays that playlist with
+        // HlsMediaSource instead of the progressive TS source.
+        //
+        // The query is added HERE, at the last possible moment, and never
+        // persisted: lastPlayUrl, the LAN/WAN rebuild, StreamEndVerifier's
+        // uuid parse, CatchupUrlBuilder's base extraction, the failover walk
+        // and the cast ingest all keep seeing the canonical
+        // /proxy/ts/stream/<uuid> form, so nothing layered on top has to learn
+        // a second URL shape.
+        //
+        // ONE TUNE == ONE CLIENT: this single URL is the only request the app
+        // makes. Media3 follows the 302 itself, parses the playlist against the
+        // RESOLVED uri (ParsingLoadable uses DataSource.getUri(), which
+        // OkHttpDataSource reports post-redirect) and DefaultHlsPlaylistTracker
+        // wraps that resolved uri as its single variant, so every playlist
+        // reload and segment GET afterwards stays on the client this one
+        // request minted. There is no probe-then-open pair here; the capability
+        // probe runs on the capability cadence, never on the tune path.
+        val playbackUrl = effectiveLiveUrl(url)
+        val nativeHls = playbackUrl != url
+        lastBuiltNativeHls = nativeHls
+        val rawTs = isRawTsUrl(url) && !nativeHls
         var dataSourceFactory: androidx.media3.datasource.DataSource.Factory =
-            httpDataSourceFactory(rawTs)
+            // Native HLS is live and must keep OkHttp (GH #32) plus the
+            // LiveCallTracker that retires a superseded tune's sockets.
+            httpDataSourceFactory(rawTs || nativeHls)
         if (rawTs) {
             dataSourceFactory = com.aeriotv.android.core.timeshift.TeeDataSource.Factory(
                 dataSourceFactory,
@@ -1857,12 +1914,44 @@ class AerioExoPlayerHolder @Inject constructor(
                 clearKeyJwk(drmLicenseKey)
             } else null
         val mediaItemBuilder = MediaItem.Builder()
-            .setUri(url)
+            .setUri(playbackUrl)
             .setMediaId(title.orEmpty().ifBlank { url })
             .setMediaMetadata(mediaMetadata)
         if (drmConfiguration != null) mediaItemBuilder.setDrmConfiguration(drmConfiguration)
+        if (nativeHls) {
+            // Media3's live playback-speed control chases a target live offset
+            // by running the stream slightly fast or slow. On this app that
+            // would fight three things that already own the live edge: the
+            // learned hold-back, Return to Live, and AudioSyncShiftSink's fixed
+            // offset. Pinning min == max == 1.0 leaves the playlist's own
+            // #EXT-X-START:TIME-OFFSET=-10 as the join point and keeps the rate
+            // exactly real time, which is how the TS path behaves.
+            mediaItemBuilder.setLiveConfiguration(
+                MediaItem.LiveConfiguration.Builder()
+                    .setMinPlaybackSpeed(1.0f)
+                    .setMaxPlaybackSpeed(1.0f)
+                    .build(),
+            )
+        }
         val mediaItem = mediaItemBuilder.build()
         return when {
+            nativeHls -> {
+                // Live HLS from Dispatcharr: #EXT-X-VERSION:3, ~4 s plain .ts
+                // segments, an advancing #EXT-X-MEDIA-SEQUENCE and
+                // #EXT-X-START:TIME-OFFSET=-10. Media3 honors the START tag,
+                // and the app's own learned hold-back / start gate still runs
+                // on top of it in acquireOrCreate.
+                //
+                // allowChunklessPreparation is left ON (the default): with a
+                // media playlist and no multivariant there is nothing to
+                // prepare chunklessly, and turning it off would only add a
+                // segment download before the first frame.
+                HlsMediaSource.Factory(dataSourceFactory)
+                    // A Dispatcharr 503 must reach our own handler on the
+                    // FIRST answer, exactly as on the TS path.
+                    .setLoadErrorHandlingPolicy(Live503LoadErrorPolicy())
+                    .createMediaSource(mediaItem)
+            }
             isRawTsUrl(url) -> {
                 // SINGLE_PMT is what HlsMediaSource uses internally and
                 // what nearly every IPTV provider delivers: one program,
@@ -2028,8 +2117,15 @@ class AerioExoPlayerHolder @Inject constructor(
 
     /** Live Rewind can only buffer what the tee mirrors: raw MPEG-TS.
      *  PlayerScreen gates session start on this so HLS/DASH live channels
-     *  never show a transport over a permanently empty buffer. */
-    fun canBufferLiveRewind(url: String): Boolean = isRawTsUrl(url)
+     *  never show a transport over a permanently empty buffer.
+     *
+     *  On the native-HLS path the tee is not installed (the bytes arriving are
+     *  a playlist plus per-segment GETs, not one continuous transport), so the
+     *  local buffer is not offered. Rewind there is the server's own sliding
+     *  playlist window, which the player seeks in directly; goLive() and
+     *  isAtLiveEdge() work off the player timeline and are unchanged. */
+    fun canBufferLiveRewind(url: String): Boolean =
+        isRawTsUrl(url) && effectiveLiveUrl(url) == url
 
     fun playTimeshift(fromWallMs: Long): Boolean {
         val p = player ?: return false
@@ -2263,6 +2359,15 @@ class AerioExoPlayerHolder @Inject constructor(
             .coerceAtMost(LIVE_START_GATE_MAX_MS)
         Log.i(TAG, "[HOLDBACK] ch=${title ?: "?"} start gate $startGateMs ms (learned $learnedGateMs ms)")
         desiredStartGateMs = startGateMs
+        // Resolve the live engine ONCE per tune, before the player is acquired:
+        // the renderers factory is built from it, and the [TUNE] line below has
+        // to name the engine the source is actually built with.
+        val nativeHlsTune = kind == "live" && effectiveLiveUrl(url) != url
+        desiredVideoJoiningMs = if (nativeHlsTune) {
+            0L
+        } else {
+            androidx.media3.exoplayer.DefaultRenderersFactory.DEFAULT_ALLOWED_VIDEO_JOINING_TIME_MS
+        }
         // acquireOrCreate rebuilds when the gate changed (DefaultLoadControl is
         // fixed at build time). Doing it HERE, before the source is primed, is
         // what keeps a raised gate out of a running playback.
@@ -2318,6 +2423,13 @@ class AerioExoPlayerHolder @Inject constructor(
         // UNLESS a companion remote explicitly asked for Audio Only, which a
         // watchdog/poller re-prime must not undo.
         setVideoTrackEnabled(!remoteAudioOnly)
+        if (kind == "live") {
+            val engine = if (nativeHlsTune) "native-hls" else "ts"
+            Log.i(
+                TAG,
+                "[TUNE] engine=$engine (${LiveEngineSelector.reason()}) ch=${title ?: "?"}",
+            )
+        }
         tracer.markTuneStart(title, kind)
         primeGeneration += 1
         noteSourceOpen(url, effectiveChannelId)
@@ -2571,6 +2683,19 @@ class AerioExoPlayerHolder @Inject constructor(
             .followRedirects(true)
             .followSslRedirects(true)
             .build()
+    }
+
+    /**
+     * The URL a LIVE tune should actually open, given the measured server
+     * capability and the developer override. Returns [url] unchanged for
+     * anything that is not a canonical Dispatcharr live stream, for a server
+     * that does not support native HLS, for one we have not measured (unknown
+     * never changes behavior) and whenever the override forces TS.
+     */
+    internal fun effectiveLiveUrl(url: String): String {
+        if (!isDispatcharrLiveTsUrl(url)) return url
+        if (LiveEngineSelector.engine() != LiveEngine.NativeHls) return url
+        return withNativeHls(url)
     }
 
     private fun isRawTsUrl(url: String): Boolean {
