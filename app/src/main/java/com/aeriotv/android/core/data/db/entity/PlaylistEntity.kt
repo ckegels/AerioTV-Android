@@ -4,6 +4,13 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.aeriotv.android.core.data.SourceType
+import com.aeriotv.android.core.data.capability.CAPABILITIES_SCHEMA
+import com.aeriotv.android.core.data.capability.CAPABILITIES_TTL_MS
+import com.aeriotv.android.core.data.capability.Capability
+import com.aeriotv.android.core.data.capability.CapabilityCorrections
+import com.aeriotv.android.core.data.capability.CapabilitySet
+import com.aeriotv.android.core.data.capability.CapabilitySnapshot
+import com.aeriotv.android.core.data.capability.deriveCapabilities
 import java.util.UUID
 
 /**
@@ -207,6 +214,65 @@ data class PlaylistEntity(
      * list is unreadable), which always reads as a change. Added in DB v30.
      */
     val dispatcharrEpgSourceFingerprint: String? = null,
+
+    // ---------------------------------------------------------------------
+    // Per-user capability SNAPSHOT (DB v33). The columns above
+    // (dispatcharrDvrAccess / dispatcharrCatchupEnabled / the two vod flags)
+    // are DERIVED conveniences kept for back-compat; these five are the raw
+    // truth the server told us about THIS user, so a new Dispatcharr
+    // permission key becomes a derivation change in
+    // core/data/capability/DispatcharrCapability.kt rather than a migration.
+    // ---------------------------------------------------------------------
+
+    /** `is_staff` from /api/accounts/users/me/. Staff reads as effective level 10. */
+    @ColumnInfo(defaultValue = "0")
+    val dispatcharrIsStaff: Boolean = false,
+
+    /** `is_superuser` from /api/accounts/users/me/. Also effective level 10. */
+    @ColumnInfo(defaultValue = "0")
+    val dispatcharrIsSuperuser: Boolean = false,
+
+    /**
+     * The FULL `custom_properties` object from /api/accounts/users/me/, stored
+     * verbatim as JSON text ("" = never captured / none). Deliberately opaque:
+     * Dispatcharr keeps adding per-user keys (dvr_access, vod_movies_enabled,
+     * vod_series_enabled, catchup_enabled, allowed_m3u_profile_ids,
+     * hide_adult_content, output_profile, ...) and the app must be able to read
+     * a key it did not know about at install time.
+     */
+    @ColumnInfo(defaultValue = "")
+    val dispatcharrCustomProperties: String = "",
+
+    /** When the snapshot was last successfully read (epoch ms; 0 = never). */
+    @ColumnInfo(defaultValue = "0")
+    val dispatcharrCapabilitiesFetchedAt: Long = 0L,
+
+    /**
+     * Derivation schema the stored snapshot was written under. A row below
+     * [com.aeriotv.android.core.data.capability.CAPABILITIES_SCHEMA] is treated
+     * as having NO snapshot (every capability Unknown, so nothing is hidden)
+     * and is force-re-probed once. This is the upgrade repair for users stuck
+     * at view-only DVR under the old hard gates.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val dispatcharrCapabilitiesSchema: Int = 0,
+
+    /**
+     * True when the most recent probe FAILED and the stored snapshot is the
+     * last good one. A failed probe never writes an empty snapshot over a good
+     * one; it only flags it stale so the next opportunity re-probes.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val dispatcharrCapabilitiesStale: Boolean = false,
+
+    /**
+     * `system_settings.catchup_enabled` from /api/core/settings/ (readable at
+     * level >= 1), as 1 / 0, or -1 when never read. Catch-up needs BOTH this
+     * and the per-user flag, so an unread system flag leaves the capability
+     * Unknown rather than denying it.
+     */
+    @ColumnInfo(defaultValue = "-1")
+    val dispatcharrSystemCatchupEnabled: Int = -1,
 )
 
 /** Stored sentinel for "this server has no AAC output profile", so the
@@ -229,34 +295,105 @@ fun PlaylistEntity.castAacOutputProfileId(): Int? =
     else dispatcharrCastAacProfileId?.takeIf { it > 0 }
 
 /**
- * True when this playlist is a Dispatcharr admin account (user_level >= 10),
- * the only level Dispatcharr permits to POST server-side recordings. Drives
- * whether the Record affordances surface (channel long-press, guide cell,
- * player More menu). Mirrors iOS ServerConnection.dispatcharrCanRecordToServer.
+ * True when this playlist can create SERVER-side recordings.
+ *
+ * This is [Capability.CanManageDvr], not the old `user_level >= 10` admin bar:
+ * Dispatcharr's recording writes are IsAdminOrDVRManager, so a standard account
+ * whose `custom_properties.dvr_access` is "manage" can record and must see the
+ * Record affordances. An unprobed account reads capable (Unknown never hides).
  */
 fun PlaylistEntity.canRecordToServer(): Boolean =
     isDispatcharrDirectConnect() && dispatcharrCanManageDvr()
 
 /**
- * Effective DVR access (Dispatcharr 0.30, mirrors apps/channels/dvr_access.py):
- * "none" / "view" / "manage". Non-Dispatcharr sources are "manage" (their
- * recordings are local and never gated).
+ * This playlist's per-user capability snapshot, or null for a non-Dispatcharr
+ * source / a row that has never been probed under the current schema.
+ */
+fun PlaylistEntity.capabilitySnapshot(): CapabilitySnapshot? {
+    if (!isDispatcharrDirectConnect()) return null
+    return CapabilitySnapshot(
+        userLevel = dispatcharrUserLevel,
+        isStaff = dispatcharrIsStaff,
+        isSuperuser = dispatcharrIsSuperuser,
+        customPropertiesJson = dispatcharrCustomProperties,
+        fetchedAtMillis = dispatcharrCapabilitiesFetchedAt,
+        schema = dispatcharrCapabilitiesSchema,
+        isStale = dispatcharrCapabilitiesStale,
+        systemCatchupEnabled = when (dispatcharrSystemCatchupEnabled) {
+            1 -> true
+            0 -> false
+            else -> null
+        },
+    )
+}
+
+/**
+ * The capabilities this playlist's account actually has, with any corrections
+ * learned from server responses this session applied on top.
+ *
+ * Non-Dispatcharr sources are fully permissive (nothing is gated server-side).
+ * A Dispatcharr row with no usable snapshot reads Unknown, which renders every
+ * affordance ENABLED: the app never silently downgrades a user it has not
+ * measured.
+ */
+fun PlaylistEntity.capabilities(): CapabilitySet {
+    if (!isDispatcharrDirectConnect()) return CapabilitySet.PERMISSIVE
+    return CapabilityCorrections.apply(id, deriveCapabilities(capabilitySnapshot()))
+}
+
+/** True when the snapshot is missing, past its TTL, or flagged stale. */
+fun PlaylistEntity.capabilitiesNeedProbe(nowMillis: Long = System.currentTimeMillis()): Boolean {
+    if (!isDispatcharrDirectConnect()) return false
+    if (dispatcharrCapabilitiesSchema < CAPABILITIES_SCHEMA) return true
+    if (dispatcharrCapabilitiesFetchedAt <= 0L) return true
+    if (dispatcharrCapabilitiesStale) return true
+    return nowMillis - dispatcharrCapabilitiesFetchedAt >= CAPABILITIES_TTL_MS
+}
+
+/** Effective level: staff / superuser read as admin regardless of user_level. */
+fun PlaylistEntity.effectiveUserLevel(): Int =
+    if (dispatcharrIsStaff || dispatcharrIsSuperuser) 10 else dispatcharrUserLevel
+
+fun PlaylistEntity.allows(capability: Capability): Boolean = capabilities().allows(capability)
+
+fun PlaylistEntity.isDenied(capability: Capability): Boolean = capabilities().isDenied(capability)
+
+/**
+ * Effective DVR access (mirrors apps/channels/dvr_access.py): "none" / "view" /
+ * "manage". Non-Dispatcharr sources are "manage" (their recordings are local
+ * and never gated). An UNPROBED Dispatcharr row reads "manage" so nothing is
+ * hidden before we have measured the account.
  */
 fun PlaylistEntity.dispatcharrEffectiveDvrAccess(): String {
-    if (!isDispatcharrDirectConnect()) return "manage"
-    if (dispatcharrUserLevel >= 10) return "manage"
-    if (dispatcharrUserLevel < 1) return "none"
-    return when (dispatcharrDvrAccess) {
-        "none" -> "none"
-        "manage" -> "manage"
+    val caps = capabilities()
+    return when {
+        caps.isDenied(Capability.CanViewDvr) -> "none"
+        caps.allows(Capability.CanManageDvr) -> "manage"
         else -> "view"
     }
 }
 
-fun PlaylistEntity.dispatcharrCanViewDvr(): Boolean = dispatcharrEffectiveDvrAccess() != "none"
-fun PlaylistEntity.dispatcharrCanManageDvr(): Boolean = dispatcharrEffectiveDvrAccess() == "manage"
+fun PlaylistEntity.dispatcharrCanViewDvr(): Boolean = capabilities().allows(Capability.CanViewDvr)
+
+fun PlaylistEntity.dispatcharrCanManageDvr(): Boolean = capabilities().allows(Capability.CanManageDvr)
+
 fun PlaylistEntity.dispatcharrCanUseCatchup(): Boolean =
-    !isDispatcharrDirectConnect() || dispatcharrCatchupEnabled
+    capabilities().allows(Capability.CanUseCatchup)
+
+fun PlaylistEntity.dispatcharrCanViewVod(): Boolean = capabilities().allows(Capability.CanViewVod)
+
+fun PlaylistEntity.dispatcharrCanViewSeries(): Boolean =
+    capabilities().allows(Capability.CanViewSeries)
+
+/**
+ * Whether this playlist can use the player's Switch Stream picker.
+ * POST /proxy/ts/change_stream is still IsAdmin on the server, so this resolves
+ * to admin today; routing it through [Capability.CanSwitchStream] means a
+ * future server change (a per-user key, say) is a one-line edit in
+ * [deriveCapabilities], not a hunt through the player UI.
+ */
+fun PlaylistEntity.canSwitchStream(): Boolean =
+    isDispatcharrDirectConnect() && capabilities().allows(Capability.CanSwitchStream)
 
 /** Whether the server is at least [minimum] ("0.30.0"); false when unknown. */
 fun PlaylistEntity.dispatcharrVersionAtLeast(minimum: String): Boolean {
@@ -288,8 +425,11 @@ fun PlaylistEntity.isDispatcharrDirectConnect(): Boolean =
  * option gates on this so a standard sub-account never sees an option that would
  * 403. Same admin bar as server-side recording (see [canRecordToServer]).
  */
-fun PlaylistEntity.isDispatcharrAdmin(): Boolean =
-    isDispatcharrDirectConnect() && dispatcharrUserLevel >= 10
+@Deprecated(
+    "Hard admin gate. Use canSwitchStream() or capabilities()[Capability.X].",
+    ReplaceWith("canSwitchStream()"),
+)
+fun PlaylistEntity.isDispatcharrAdmin(): Boolean = canSwitchStream()
 
 /**
  * User-facing label for this playlist's source type. Single source of truth
@@ -308,7 +448,7 @@ fun PlaylistEntity.sourceTypeDisplayLabel(): String = when (sourceType) {
     SourceType.DispatcharrUserPass.name ->
         "Dispatcharr Direct Connect - Username & Password"
     SourceType.DispatcharrApiKey.name ->
-        if (dispatcharrUserLevel >= 10) "Dispatcharr Direct Connect - Admin API Key"
+        if (effectiveUserLevel() >= 10) "Dispatcharr Direct Connect - Admin API Key"
         else "Dispatcharr Direct Connect - Standard API Key"
     SourceType.XtreamCodes.name -> "Xtream Codes (XC)"
     SourceType.M3uUrl.name -> "M3U"

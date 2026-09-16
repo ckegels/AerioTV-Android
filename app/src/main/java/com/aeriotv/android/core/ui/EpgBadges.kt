@@ -44,11 +44,23 @@ data class EpgFlag(val label: String, val color: Color)
  * call sites gate on it. Defaults to true so any surface without an explicit
  * provider still shows badges.
  */
-val LocalShowEpgBadges = androidx.compose.runtime.staticCompositionLocalOf { true }
+// Settings > Appearance > Channel List / program badges are LIVE preferences:
+// the user flips a toggle while the Live TV list or the guide is on screen
+// (on TV, Settings can sit beside the list). These four MUST be dynamic
+// `compositionLocalOf`, never `staticCompositionLocalOf`. A static local's
+// reads are not tracked, so nothing invalidates a reader whose own parameters
+// did not change -- and the guide's rows (GuideGrid.GridRow) and the list's
+// rows live inside a LazyColumn subcomposition, which is only re-invoked when
+// its item-content lambda changes. A static local therefore left the rows
+// drawing the OLD prefs until a tab switch forced the lazy layout to
+// re-subcompose, which is exactly the "leave the tab and come back" bug
+// (2026-09-15). A dynamic local reads as state inside each row's own
+// recompose scope, so only the rows that read it recompose.
+val LocalShowEpgBadges = androidx.compose.runtime.compositionLocalOf { true }
 
 /** Settings > Appearance > Channel List: what the guide rail draws. */
 data class GuideRailPrefs(val logos: Boolean = true, val numbers: Boolean = true, val names: Boolean = true)
-val LocalGuideRailPrefs = androidx.compose.runtime.staticCompositionLocalOf { GuideRailPrefs() }
+val LocalGuideRailPrefs = androidx.compose.runtime.compositionLocalOf { GuideRailPrefs() }
 
 /**
  * True when the XMLTV sub-title would only repeat what the title or the
@@ -68,14 +80,14 @@ fun subtitleIsRedundant(sub: String?, title: String?, description: String?): Boo
 }
 
 /** Settings > Appearance > Channel List > Show Program Subtitles. */
-val LocalShowProgramSubtitles = androidx.compose.runtime.staticCompositionLocalOf { true }
+val LocalShowProgramSubtitles = androidx.compose.runtime.compositionLocalOf { true }
 
 /**
  * Labels of badge kinds the user has hidden under the master switch (Logan,
  * 2026-08-19). Provided at the Live TV level; EpgFlagsRow and the program-info
  * badge list filter against it, so every surface obeys the same choice.
  */
-val LocalHiddenEpgBadges = androidx.compose.runtime.staticCompositionLocalOf { emptySet<String>() }
+val LocalHiddenEpgBadges = androidx.compose.runtime.compositionLocalOf { emptySet<String>() }
 
 /**
  * Ordered badge list for a program, most-salient first. REPEAT is suppressed

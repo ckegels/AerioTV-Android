@@ -371,10 +371,132 @@ class DispatcharrClient @Inject constructor() {
         )
     }.getOrNull()
 
+    /**
+     * The RAW per-user capability snapshot from GET /api/accounts/users/me/.
+     *
+     * That endpoint is Authenticated (any level) and returns user_level,
+     * is_staff, is_superuser, channel_profiles and the FULL custom_properties
+     * dict, which is where Dispatcharr keeps the per-user feature flags
+     * (dvr_access, vod_movies_enabled, vod_series_enabled, catchup_enabled,
+     * allowed_m3u_profile_ids, hide_adult_content, output_profile, ...).
+     *
+     * Everything is carried through verbatim -- custom_properties as JSON TEXT
+     * -- so the app can read a key that did not exist when it was built.
+     *
+     * Returns null on ANY failure (transport, non-2xx, decode) so the caller
+     * KEEPS its last good snapshot and merely flags it stale. Never returns a
+     * half-empty snapshot that would look like a demotion.
+     *
+     * Note: unlike the old [fetchUserLevel] this does NOT promote a sub-admin
+     * level via the IsAdmin users-list probe on its own; [probeAdminByUsersList]
+     * does that separately so the caller can decide when to spend the request.
+     */
+    data class AccountSnapshot(
+        val userLevel: Int,
+        val isStaff: Boolean,
+        val isSuperuser: Boolean,
+        /** custom_properties, verbatim, as JSON text ("" when absent). */
+        val customPropertiesJson: String,
+        val channelProfiles: List<Int>,
+    )
+
+    suspend fun fetchAccountSnapshot(baseUrl: String, apiKey: String): AccountSnapshot? = runCatching {
+        val url = "${baseUrl.trimEnd('/')}/api/accounts/users/me/"
+        val response = client.get(url) { applyAuth(apiKey) }
+        if (!response.status.isSuccess()) return@runCatching null
+        val me: MeResponse = response.body()
+        // A Django superuser / staff account is a functional admin even when
+        // its custom user_level is still 0 or 1 (accounts created before
+        // Dispatcharr v0.20.0 defaulted user_level). Derivation applies that
+        // rule; the snapshot stores the raw flags.
+        var level = me.userLevel ?: 0
+        if (!me.isStaff && !me.isSuperuser && level < 10) {
+            // Servers older than the 2025-06 serializer omit is_staff /
+            // is_superuser entirely, so a legacy superuser reads as level 0
+            // here. Settle it with a capability probe: /api/accounts/users/ is
+            // IsAdmin server-side, so a 2xx proves admin whatever /me/ claims.
+            if (probeAdminByUsersList(baseUrl, apiKey)) level = 10
+        }
+        AccountSnapshot(
+            userLevel = level,
+            isStaff = me.isStaff,
+            isSuperuser = me.isSuperuser,
+            customPropertiesJson = me.customProperties?.toString().orEmpty(),
+            channelProfiles = me.channelProfiles,
+        )
+    }.getOrNull()
+
+    /** /api/accounts/users/ is IsAdmin-gated: a 2xx proves this account is admin. */
+    private suspend fun probeAdminByUsersList(baseUrl: String, apiKey: String): Boolean =
+        runCatching {
+            client.get("${baseUrl.trimEnd('/')}/api/accounts/users/") { applyAuth(apiKey) }
+                .status.isSuccess()
+        }.getOrDefault(false)
+
+    /**
+     * `system_settings.catchup_enabled` from GET /api/core/settings/ (readable
+     * at user_level >= 1). Catch-up needs BOTH this and the per-user flag.
+     *
+     * Null on any failure OR when the key is absent, which leaves the catch-up
+     * capability Unknown rather than denying it -- an unreadable settings
+     * endpoint must never take catch-up away from a user who has it.
+     */
+    suspend fun fetchSystemCatchupEnabled(baseUrl: String, apiKey: String): Boolean? = runCatching {
+        val url = "${baseUrl.trimEnd('/')}/api/core/settings/"
+        val response = client.get(url) { applyAuth(apiKey) }
+        if (!response.status.isSuccess()) return@runCatching null
+        val root: JsonElement = response.body()
+        // The payload has been both an object with a system_settings child and
+        // a flat list of setting rows across versions; accept either, and a
+        // top-level catchup_enabled too.
+        fun fromObject(obj: JsonObject?): Boolean? =
+            (obj?.get("catchup_enabled") as? JsonPrimitive)?.booleanOrNull
+        when (root) {
+            is JsonObject ->
+                fromObject(root["system_settings"] as? JsonObject) ?: fromObject(root)
+            is JsonArray -> root.asSequence()
+                .mapNotNull { it as? JsonObject }
+                .firstOrNull { (it["key"] as? JsonPrimitive)?.contentOrNull == "catchup_enabled" }
+                ?.let { row -> (row["value"] as? JsonPrimitive)?.let { v -> v.booleanOrNull ?: (v.contentOrNull?.lowercase() == "true") } }
+            else -> null
+        }
+    }.getOrNull()
+
     // Cast audio, 2026-09-13: the /api/core/outputprofiles/ fetch and the
     // stereo-AAC pick that lived here are GONE. Cast sessions ingest the
     // plain stream and AC-3 / E-AC-3 passes through to the receiver, so no
     // server-side output profile is ever requested.
+
+    /**
+     * Turn a 401 / 403 on a DVR WRITE into copy the user can act on. Those
+     * endpoints are IsAdminOrDVRManager, so a refusal means either the account
+     * lacks DVR manage access or a per-user allowed_networks policy blocked the
+     * request. Null for any other status, so the caller keeps its own message.
+     * These errors are surfaced, never swallowed.
+     */
+    private fun dvrPermissionMessage(status: Int): String? = when (status) {
+        403 -> "Your Dispatcharr account can view recordings but not manage them. " +
+            "Ask your server administrator for DVR manage access."
+        401 -> "Dispatcharr rejected this request as unauthorized. " +
+            "Your session or API key may have expired."
+        else -> null
+    }
+
+    /**
+     * Permission gate for a DVR WRITE response. A 403 here is a capability
+     * refusal, not a stale api_key, so it becomes [DispatcharrError.Forbidden]
+     * (which the auth broker does NOT rebootstrap-and-replay) and the caller
+     * self-corrects by re-probing users/me. A 401 still falls through to
+     * [unauthorizedCheck] so a genuinely rotated key is recovered as before.
+     */
+    private fun dvrWriteForbiddenCheck(response: HttpResponse) {
+        if (response.status.value == 403) {
+            throw DispatcharrError.Forbidden(
+                dvrPermissionMessage(403)!!,
+                capabilityHint = "CanManageDvr",
+            )
+        }
+    }
 
     /** Server version from /api/core/version/, or null when unreachable. */
     suspend fun fetchServerVersion(baseUrl: String, apiKey: String): String? =
@@ -1137,10 +1259,12 @@ class DispatcharrClient @Inject constructor() {
             contentType(ContentType.Application.Json)
             setBody(body)
         }
+        dvrWriteForbiddenCheck(response)
         unauthorizedCheck(response, url)
         if (!response.status.isSuccess()) {
             throw DispatcharrError.Transport(
-                "Recording create failed: HTTP ${response.status.value} ${response.status.description}",
+                dvrPermissionMessage(response.status.value)
+                    ?: "Recording create failed: HTTP ${response.status.value} ${response.status.description}",
             )
         }
         return response.body()
@@ -2041,10 +2165,12 @@ class DispatcharrClient @Inject constructor() {
     suspend fun deleteRecording(baseUrl: String, apiKey: String, recordingId: Int) {
         val url = "${baseUrl.trimEnd('/')}/api/channels/recordings/$recordingId/"
         val response: HttpResponse = client.delete(url) { applyAuth(apiKey) }
+        dvrWriteForbiddenCheck(response)
         unauthorizedCheck(response, url)
         if (!response.status.isSuccess()) {
             throw DispatcharrError.Transport(
-                "Recording delete failed: HTTP ${response.status.value} ${response.status.description}",
+                dvrPermissionMessage(response.status.value)
+                    ?: "Recording delete failed: HTTP ${response.status.value} ${response.status.description}",
             )
         }
     }

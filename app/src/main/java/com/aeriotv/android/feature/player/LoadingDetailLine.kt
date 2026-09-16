@@ -230,8 +230,10 @@ fun LiveFailoverStatusOverlay(
     val statusStreamId = rememberUpdatedState(onLoadCurrentStreamId)
     DisposableEffect(isAdmin) {
         exoHolder.liveFailover.hooks = LiveStreamFailover.Hooks(
-            // Direct Connect + admin + an integer channel pk: change_stream is
-            // IsAdmin server-side, so a standard sub-account would only get 403.
+            // Direct Connect + Capability.CanSwitchStream + an integer channel
+            // pk. change_stream is still IsAdmin server-side, so the capability
+            // resolves to admin today; the gate goes through the capability so
+            // a future server change is a one-line update.
             canSwitch = { id ->
                 isAdmin && id.startsWith("disp:") &&
                     channelsNow.value.firstOrNull { it.id == id }?.dispatcharrChannelId != null

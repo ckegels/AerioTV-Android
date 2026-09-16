@@ -495,7 +495,7 @@ fun RecordProgramSheet(
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                text = "Recording to the Dispatcharr server requires a Dispatcharr admin account.",
+                                text = "Recording to the Dispatcharr server needs DVR manage access on your account. Contact your server administrator for more information.",
                                 style = MaterialTheme.typography.bodySmall.subtext(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -736,7 +736,7 @@ private fun TvRecordForm(
                     TvNoteBox("Keep AerioTV open. Closing the app will stop this recording.")
                 }
                 if (hasNoRecordingPath) {
-                    TvNoteBox("Recording requires DVR access on Dispatcharr", "Scheduling a recording on the Dispatcharr server needs an account with DVR access set to Manage. Your account can watch and record live programs to this device, but not schedule server recordings. Ask your Dispatcharr administrator for access, or wait until the program is airing to record it on this device.")
+                    TvNoteBox("Recording requires DVR access on Dispatcharr", "Scheduling a recording on the Dispatcharr server needs DVR manage access on your account. Your account can watch and record live programs to this device, but not schedule server recordings. Contact your server administrator for more information, or wait until the program is airing to record it on this device.")
                 }
 
                 if (!hasNoRecordingPath) {

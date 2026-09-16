@@ -9,6 +9,18 @@ import com.aeriotv.android.core.data.db.dao.LocalRecordingDao
 import com.aeriotv.android.core.data.db.entity.LocalRecordingEntity
 import com.aeriotv.android.core.data.db.entity.canRecordToServer
 import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewDvr
+import com.aeriotv.android.core.data.db.entity.capabilitiesNeedProbe
+import com.aeriotv.android.core.data.db.entity.capabilities
+import com.aeriotv.android.core.data.db.entity.allows
+import com.aeriotv.android.core.data.db.entity.isDenied
+import com.aeriotv.android.core.data.capability.Capability
+import com.aeriotv.android.core.data.capability.CapabilityCorrections
+import com.aeriotv.android.core.data.capability.CapabilityNotice
+import com.aeriotv.android.core.data.capability.CapabilityNotices
+import com.aeriotv.android.core.data.capability.CapabilityState
+import com.aeriotv.android.core.data.capability.deniedMessage
+import com.aeriotv.android.core.data.capability.networkRestrictionMessage
+import com.aeriotv.android.core.network.DispatcharrError
 import com.aeriotv.android.core.data.db.entity.isDispatcharrDirectConnect
 import com.aeriotv.android.core.data.repository.PlaylistRepository
 import com.aeriotv.android.core.network.DispatcharrAuthBroker
@@ -446,8 +458,10 @@ class DvrViewModel @Inject constructor(
         // still in flight.
         viewModelScope.launch {
             val playlist = playlistRepository.activePlaylist() ?: return@launch
-            val hint = runCatching { appPreferences.dvrTabHintOnce(playlist.id) }
-                .getOrDefault(false)
+            // dvr_access "none": the last session's verdict must not paint the
+            // DVR tab for an account the server no longer lets list recordings.
+            val hint = playlist.dispatcharrCanViewDvr() &&
+                runCatching { appPreferences.dvrTabHintOnce(playlist.id) }.getOrDefault(false)
             if (hint && !authoritativeLoaded) {
                 _state.update { it.copy(hasRecordingsHint = true) }
             }
@@ -461,7 +475,9 @@ class DvrViewModel @Inject constructor(
                 .drop(1)
                 .collect { newId ->
                     authoritativeLoaded = false
-                    val hint = newId != null &&
+                    val canView = playlistRepository.activePlaylist()
+                        ?.dispatcharrCanViewDvr() != false
+                    val hint = newId != null && canView &&
                         runCatching { appPreferences.dvrTabHintOnce(newId) }.getOrDefault(false)
                     _state.update { st ->
                         st.copy(
@@ -527,6 +543,16 @@ class DvrViewModel @Inject constructor(
 
     fun refresh() {
         refreshJob = viewModelScope.launch {
+            // Opportunistic capability probe: entering DVR with a snapshot that
+            // is missing, stale or past its TTL re-reads it before the list is
+            // gated, so a user whose admin just granted DVR manage access does
+            // not have to restart the app. A no-op when the snapshot is fresh,
+            // and it never downgrades on failure.
+            playlistRepository.activePlaylist()?.let { active ->
+                if (active.capabilitiesNeedProbe()) {
+                    runCatching { playlistRepository.probeCapabilities(active.id) }
+                }
+            }
             val playlist = playlistRepository.activePlaylist()
             val sourceType = playlist?.sourceType?.let { SourceType.entries.firstOrNull { st -> st.name == it } }
             val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
@@ -534,10 +560,13 @@ class DvrViewModel @Inject constructor(
             // Record-destination capability for RecordProgramSheet, resolved off
             // the SAME activePlaylist() the recordings list uses so the sheet no
             // longer depends on a possibly-unloaded PlaylistViewModel. isDispatcharrDirect
-            // gates the non-admin hint; canRecordToServer (direct-connect AND
-            // userLevel>=10) gates the server destination toggle.
+            // gates the "no server destination" hint; canRecordToServer is now
+            // Capability.CanManageDvr, so a NON-admin account whose
+            // custom_properties.dvr_access is "manage" gets the server
+            // destination toggle too (recording writes are IsAdminOrDVRManager,
+            // not IsAdmin). Unknown reads as capable.
             val isDispatcharrDirect = playlist?.isDispatcharrDirectConnect() == true
-            val canRecordToServer = playlist?.canRecordToServer() == true
+            val canRecordToServer = playlist?.canRecordToServer() != false
             if (playlist == null || !isDispatcharr || playlist.apiKey.isNullOrBlank()) {
                 authoritativeLoaded = true
                 _state.update {
@@ -580,6 +609,8 @@ class DvrViewModel @Inject constructor(
             runCatching {
                 dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
                     // Dispatcharr 0.30 dvr_access "none": the endpoint 403s.
+                    // dvr_access "none": the endpoint 403s. Unknown reads as
+                    // viewable so we ask the server rather than assume.
                     if (playlist.dispatcharrCanViewDvr()) dispatcharrClient.listRecordings(base, key)
                     else emptyList()
                 }
@@ -667,13 +698,18 @@ class DvrViewModel @Inject constructor(
      * short-circuiting, so a single server 401 doesn't strand a dozen
      * local rows.
      */
-    suspend fun deleteAllCompleted(): Result<Int> = runCatching {
+    suspend fun deleteAllCompleted(includeServer: Boolean = true): Result<Int> = runCatching {
         // Snapshot the list -- as we delete, the state list flips out from
         // under us; we want to preserve the original work order.
+        // Dispatcharr 0.30 dvr_access "view": the caller passes
+        // includeServer = false so the sweep clears only this device's
+        // files instead of firing a dozen doomed 403s at the server.
         val targets = _state.value.recordings.filter {
-            it.status == Recording.Status.Completed ||
-                it.status == Recording.Status.Stopped ||
-                it.status == Recording.Status.Failed
+            (includeServer || it.source == Source.Local) && (
+                it.status == Recording.Status.Completed ||
+                    it.status == Recording.Status.Stopped ||
+                    it.status == Recording.Status.Failed
+                )
         }
         var failures = 0
         for (rec in targets) {
@@ -685,8 +721,90 @@ class DvrViewModel @Inject constructor(
         targets.size
     }
 
+
+    /**
+     * Run a MUTATING Dispatcharr call that assumed [capability], and
+     * self-correct when the server disagrees.
+     *
+     * On 401 / 403 we re-probe /api/accounts/users/me/, re-derive the
+     * capability, and then either
+     *  - demote the capability for this session (so the affordance disappears
+     *    instead of failing a second time) and surface the specific missing
+     *    permission, or
+     *  - when the re-derived permissions say it SHOULD be allowed, say it looks
+     *    like a network restriction on the account (per-user allowed_networks),
+     *    which is the other thing that produces a 403.
+     *
+     * On SUCCESS, a capability we believed Denied is promoted, so a server-side
+     * grant applies immediately rather than at the next TTL expiry.
+     *
+     * Either way the error is returned to the caller: these are never swallowed.
+     */
+    private suspend fun <T> withCapability(
+        capability: Capability,
+        block: suspend () -> T,
+    ): Result<T> {
+        val playlistId = playlistRepository.activePlaylist()?.id
+        val believedDenied = playlistId != null &&
+            playlistRepository.activePlaylist()?.isDenied(capability) == true
+        val result = runCatching { block() }
+        result.onSuccess {
+            if (believedDenied && playlistId != null) {
+                // We were wrong, and the server just proved it.
+                CapabilityCorrections.record(playlistId, capability, CapabilityState.Allowed)
+                runCatching { playlistRepository.probeCapabilities(playlistId, force = true) }
+                refresh()
+            }
+            return result
+        }
+        val error = result.exceptionOrNull()
+        val denied = error is DispatcharrError.Forbidden ||
+            error is DispatcharrError.Unauthorized
+        if (!denied || playlistId == null) return result
+
+        // Re-probe and re-derive before deciding what to tell the user.
+        val probed = runCatching { playlistRepository.probeCapabilities(playlistId, force = true) }
+            .getOrDefault(false)
+        val fresh = playlistRepository.activePlaylist()
+        val stillAllowed = probed && fresh?.allows(capability) == true &&
+            fresh.capabilities().isKnownAllowed(capability)
+        val message = if (stillAllowed) {
+            // Permissions say yes, the server still said no.
+            capability.networkRestrictionMessage()
+        } else {
+            CapabilityCorrections.record(playlistId, capability, CapabilityState.Denied)
+            capability.deniedMessage()
+        }
+        CapabilityNotices.emit(
+            CapabilityNotice(
+                playlistId = playlistId,
+                capability = capability,
+                message = message,
+                looksLikeNetworkRestriction = stillAllowed,
+            ),
+        )
+        _state.update { it.copy(error = message) }
+        // Re-read so the affordance follows the corrected capability.
+        refresh()
+        return Result.failure(DispatcharrError.Forbidden(message))
+    }
+
     suspend fun deleteRecording(recording: Recording): Result<Unit> {
-        return runCatching {
+        // Local rows are on-device files; only the SERVER branch needs the
+        // DVR-manage capability, so the local path keeps its plain runCatching.
+        if (recording.source == Source.Local) {
+            return runCatching {
+                val rowId = recording.id.removePrefix("local-").toLongOrNull()
+                    ?: throw IllegalStateException("Invalid local recording id: ${recording.id}")
+                val rows = localRecordingDao.observeAll().first()
+                val match = rows.firstOrNull { it.id == rowId }
+                if (match != null) {
+                    deleteLocalFile(match.filePath)
+                    localRecordingDao.delete(rowId)
+                }
+            }
+        }
+        return withCapability(Capability.CanManageDvr) {
             when (recording.source) {
                 Source.Server -> {
                     val playlist = playlistRepository.activePlaylist()
@@ -702,16 +820,7 @@ class DvrViewModel @Inject constructor(
                     }
                     refresh()
                 }
-                Source.Local -> {
-                    val rowId = recording.id.removePrefix("local-").toLongOrNull()
-                        ?: throw IllegalStateException("Invalid local recording id: ${recording.id}")
-                    val rows = localRecordingDao.observeAll().first()
-                    val match = rows.firstOrNull { it.id == rowId }
-                    if (match != null) {
-                        deleteLocalFile(match.filePath)
-                        localRecordingDao.delete(rowId)
-                    }
-                }
+                Source.Local -> Unit // handled above
             }
         }
     }
@@ -774,7 +883,7 @@ class DvrViewModel @Inject constructor(
             return Result.failure(IllegalStateException("Active source is not Dispatcharr-backed."))
         }
         val base = playlistRepository.effectiveBaseUrl(playlist)
-        return runCatching {
+        return withCapability(Capability.CanManageDvr) {
             val result = dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
                 dispatcharrClient.createRecording(
                     baseUrl = base,
@@ -825,7 +934,10 @@ class DvrViewModel @Inject constructor(
             return Result.failure(IllegalStateException("Active source is not Dispatcharr-backed."))
         }
         val base = playlistRepository.effectiveBaseUrl(playlist)
-        return runCatching {
+        // PATCH /api/channels/recordings/<id>/ is IsAdminOrDVRManager: route it
+        // through the capability layer so a 403 self-corrects instead of
+        // surfacing as a bare toast.
+        return withCapability(Capability.CanManageDvr) {
             val result = dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
                 dispatcharrClient.updateRecording(
                     baseUrl = base,
@@ -861,7 +973,9 @@ class DvrViewModel @Inject constructor(
         val intId = recording.id.removePrefix("server-").toIntOrNull()
             ?: return Result.failure(IllegalStateException("Invalid recording id."))
         val base = playlistRepository.effectiveBaseUrl(playlist)
-        return runCatching {
+        // Comskip is a server-side write (IsAdminOrDVRManager), so a 403 must
+        // reach the capability self-correction path like every other one.
+        return withCapability(Capability.CanManageDvr) {
             dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
                 dispatcharrClient.applyComskip(base, key, intId)
             }
@@ -886,7 +1000,7 @@ class DvrViewModel @Inject constructor(
         val intId = recording.id.removePrefix("server-").toIntOrNull()
             ?: return Result.failure(IllegalStateException("Invalid recording id."))
         val base = playlistRepository.effectiveBaseUrl(playlist)
-        return runCatching {
+        return withCapability(Capability.CanManageDvr) {
             dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
                 dispatcharrClient.stopRecording(base, key, intId)
             }

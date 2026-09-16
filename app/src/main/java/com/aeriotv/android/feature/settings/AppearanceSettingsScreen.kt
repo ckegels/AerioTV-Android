@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -379,7 +381,7 @@ fun AppearanceSettingsScreen(
                 // categories" navigator and the Reset link.
                 settingsCard(
                     header = "Category Colors",
-                    footer = "Tint EPG cells and channel cards by programme category. Select a category below to override its hex.",
+                    footer = "Tint EPG cells and channel cards by program category. Select a category below to override its hex.",
                 ) {
                     ToggleRow(
                         title = "Color Programs by Category",
@@ -982,6 +984,18 @@ private fun TextSizeSliderRow(
     }
 }
 
+/**
+ * Width at which the label and the seven percentage segments still fit on one
+ * line. Below it the row stacks (label above, segments wrapping beneath).
+ *
+ * A Row measures its unweighted children FIRST, with an unbounded max width,
+ * and only hands what is LEFT to the weighted ones. The seven segments are
+ * unweighted, so on a phone they eat the whole row and the weighted label is
+ * measured at a few dp, which is why it rendered one character per line.
+ */
+private val ScaleSegmentsInlineMinWidth = 560.dp
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ScaleSliderRow(
     label: String,
@@ -991,42 +1005,73 @@ private fun ScaleSliderRow(
 ) {
     // tvOS renders Display Scale as inline percentage segments, not a slider
     // (cleaner with a remote + no focus-trap). The selected segment is filled.
-    Row(
-        modifier = modifier
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        SCALE_SEGMENTS.forEach { (segValue, segLabel) ->
-            val selected = kotlin.math.abs(value - segValue) < 0.03f
-            Box(
-                modifier = Modifier
-                    .padding(start = 6.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                        else Color.Transparent,
-                    )
-                    .dpadFocusRing(
-                        shape = RoundedCornerShape(8.dp),
-                        washTint = MaterialTheme.colorScheme.primary,
-                    )
-                    .clickable { onValueChange(segValue) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+    val isTv = rememberIsTvDevice()
+    BoxWithConstraints(modifier = modifier) {
+        // TV always keeps the single-line row (10-foot layout is wide and the
+        // D-pad expects one horizontal axis). Everywhere else it depends on
+        // whether the label and all seven segments actually fit.
+        val inline = isTv || maxWidth >= ScaleSegmentsInlineMinWidth
+        val segments: @Composable (Modifier) -> Unit = { segModifier ->
+            FlowRow(
+                modifier = segModifier,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(
-                    text = segLabel,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (selected) MaterialTheme.colorScheme.textAccent
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                )
+                SCALE_SEGMENTS.forEach { (segValue, segLabel) ->
+                    val selected = kotlin.math.abs(value - segValue) < 0.03f
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                else Color.Transparent,
+                            )
+                            .dpadFocusRing(
+                                shape = RoundedCornerShape(8.dp),
+                                washTint = MaterialTheme.colorScheme.primary,
+                            )
+                            .clickable { onValueChange(segValue) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = segLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (selected) MaterialTheme.colorScheme.textAccent
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    }
+                }
+            }
+        }
+        val labelText: @Composable (Modifier) -> Unit = { labelModifier ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+                modifier = labelModifier,
+            )
+        }
+        if (inline) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                labelText(Modifier.weight(1f))
+                segments(Modifier)
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                labelText(Modifier.fillMaxWidth())
+                segments(Modifier.fillMaxWidth())
             }
         }
     }

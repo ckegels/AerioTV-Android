@@ -34,6 +34,9 @@ import kotlinx.coroutines.flow.first
 import com.aeriotv.android.core.preferences.VodVersionItemType
 import com.aeriotv.android.core.preferences.VodVersionSelectionStore
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
+import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewVod
+import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewSeries
+import com.aeriotv.android.core.data.db.entity.capabilitiesNeedProbe
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Deferred
@@ -1159,6 +1162,15 @@ class OnDemandViewModel @Inject constructor(
         }
         movieSweepIsBackground = background
         movieSweepJob = viewModelScope.launch(sweepContext(background)) {
+            // Opportunistic capability probe on entering On Demand with a
+            // stale / unprobed snapshot, so a just-granted VOD permission takes
+            // effect without an app restart. No-op when fresh; never downgrades
+            // on failure.
+            playlistRepository.activePlaylist()?.let { active ->
+                if (active.capabilitiesNeedProbe()) {
+                    runCatching { playlistRepository.probeCapabilities(active.id) }
+                }
+            }
             val playlist = playlistRepository.activePlaylist()
             val sourceType = playlist?.sourceType?.let { SourceType.entries.firstOrNull { st -> st.name == it } }
             val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
@@ -1169,7 +1181,10 @@ class OnDemandViewModel @Inject constructor(
             // hasVodContent ALSO gates on vodEnabled so the tab disappears,
             // but we still belt-and-suspenders here in case something opens
             // the tab through another path (e.g. a deep link).
-            if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrVodMoviesEnabled)) {
+            // Capability.CanViewVod. Denied = the server serves an EMPTY
+            // catalog (apps/vod/utils.py blocks, it does not 403), so skipping
+            // the fetch matches the server exactly. Unknown still fetches.
+            if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrCanViewVod())) {
                 _state.update {
                     it.copy(
                         unsupportedSource = true,
@@ -1400,7 +1415,8 @@ class OnDemandViewModel @Inject constructor(
             // Same opt-out gate as refresh() above for the series side; see
             // the longer comment there. Belt-and-suspenders with MainScaffold's
             // hasVodContent.
-            if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrVodSeriesEnabled)) {
+            // Capability.CanViewSeries; same server semantics as movies above.
+            if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrCanViewSeries())) {
                 _state.update {
                     it.copy(
                         unsupportedSource = true,

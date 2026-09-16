@@ -33,7 +33,10 @@ import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.db.entity.canRecordToServer
 import com.aeriotv.android.core.data.db.entity.dispatcharrEffectiveDvrAccess
 import com.aeriotv.android.ui.LocalDvrAccess
-import com.aeriotv.android.core.data.db.entity.isDispatcharrAdmin
+import com.aeriotv.android.core.data.db.entity.canSwitchStream
+import com.aeriotv.android.core.data.db.entity.capabilities
+import com.aeriotv.android.core.data.capability.CapabilitySet
+import com.aeriotv.android.ui.LocalCapabilities
 import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.pip.findActivity
 import com.aeriotv.android.core.preferences.AppPreferences
@@ -857,8 +860,14 @@ fun AerioTVNavHost(
                 // Task #148 milestone B: routing decision for catch-up
                 // (TV = unified live player, phone = recording player).
                 val isTvDevice = com.aeriotv.android.ui.settings.rememberIsTvDevice()
+                // Per-user capabilities from the active playlist's Dispatcharr
+                // snapshot. `?: true` / PERMISSIVE on a null playlist is
+                // deliberate: the row simply has not loaded yet, and an
+                // unmeasured account must never have affordances hidden.
                 CompositionLocalProvider(
-                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: false),
+                    LocalCapabilities provides
+                        (state.playlist?.capabilities() ?: CapabilitySet.UNKNOWN),
+                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: true),
                     LocalDvrAccess provides (state.playlist?.dispatcharrEffectiveDvrAccess() ?: "manage"),
                     // One ViewModel set for the whole main destination (Streamer
                     // 2026-09-03): the tabs' default hiltViewModel() resolved
@@ -1194,8 +1203,12 @@ fun AerioTVNavHost(
                 // effect already no-ops on a blank url.
                 val playableChannels = state.channels
                 CompositionLocalProvider(
-                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: false),
-                    LocalIsDispatcharrAdmin provides (state.playlist?.isDispatcharrAdmin() ?: false),
+                    LocalCapabilities provides
+                        (state.playlist?.capabilities() ?: CapabilitySet.UNKNOWN),
+                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: true),
+                    // Switch Stream: change_stream is still IsAdmin server-side,
+                    // but the gate now runs through Capability.CanSwitchStream.
+                    LocalIsDispatcharrAdmin provides (state.playlist?.canSwitchStream() ?: true),
                 ) {
                 PlayerScreen(
                     channels = playableChannels,

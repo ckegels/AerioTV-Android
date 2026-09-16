@@ -12,7 +12,20 @@ import com.aeriotv.android.core.data.db.entity.ChannelSnapshotEntity
 import com.aeriotv.android.core.data.db.entity.EpgProgrammeEntity
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.db.entity.dispatcharrVersionAtLeast
+import com.aeriotv.android.core.data.db.entity.capabilitiesNeedProbe
+import com.aeriotv.android.core.data.db.entity.isDispatcharrDirectConnect
+import com.aeriotv.android.core.data.capability.CAPABILITIES_SCHEMA
+import com.aeriotv.android.core.data.capability.Capability
+import com.aeriotv.android.core.data.capability.CapabilityCorrections
+import com.aeriotv.android.core.data.capability.CapabilityState
+import com.aeriotv.android.core.data.capability.parseCustomProperties
+import com.aeriotv.android.core.data.db.entity.capabilities
+import com.aeriotv.android.core.data.db.entity.dispatcharrEffectiveDvrAccess
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import com.aeriotv.android.core.data.db.entity.dispatcharrAccountProfileIdList
+import com.aeriotv.android.core.data.db.entity.dispatcharrCanUseCatchup
 import com.aeriotv.android.core.data.db.entity.EPG_CHUNK_TTL_MS
 import com.aeriotv.android.core.data.db.entity.EpgChunkCoverage
 import com.aeriotv.android.core.data.db.entity.sanitizeGuideDays
@@ -454,6 +467,13 @@ class PlaylistRepository @Inject constructor(
             android.util.Log.w("PlaylistRepository", "saveChannelsToCache failed (loadAndPersist)", t)
         }
         publishActiveCredentials(entity)
+        // Playlist creation / edit: take the per-user capability snapshot now,
+        // so the very first frame of Live TV, DVR and On Demand reflects what
+        // THIS account can actually do. Best-effort; a failure just leaves the
+        // snapshot unprobed, which renders every affordance enabled and lets
+        // the server speak.
+        runCatching { probeCapabilities(playlistId, force = true) }
+            .onFailure { Log.w(TAG_CAPS, "initial capability probe failed", it) }
         // The user just edited connection details: probe the LAN URL now so
         // the very next request routes correctly instead of waiting for a
         // network change.
@@ -465,6 +485,150 @@ class PlaylistRepository @Inject constructor(
      * Re-fetch channels for an existing playlist row, updating channelCount and
      * lastRefreshedAt without changing identity fields.
      */
+    /**
+     * Re-read this playlist's per-user capability snapshot from Dispatcharr and
+     * persist it.
+     *
+     * Runs on playlist creation, on every app launch / foreground, on manual
+     * refresh, and opportunistically when a gated surface (DVR, On Demand) is
+     * entered with a stale snapshot. [force] skips the TTL check.
+     *
+     * Failure policy, deliberately asymmetric:
+     *  - A failed probe KEEPS the last good snapshot and only flags it stale.
+     *    An empty snapshot is NEVER written over a good one, because that would
+     *    read as a demotion and silently hide features on a network blip.
+     *  - A SUCCESSFUL probe is authoritative and REPLACES the stored values,
+     *    including clearing keys the admin removed. The old code coalesced a
+     *    null live value onto the stored one (`live ?: stored`), so removing
+     *    dvr_access server-side left the app pinned to the old value forever.
+     *
+     * Returns true when a fresh snapshot landed.
+     */
+    suspend fun probeCapabilities(playlistId: String, force: Boolean = false): Boolean {
+        // One pass per playlist at a time. Launch fires the coordinator probe
+        // while a gated surface (DVR / On Demand) can fire its own within the
+        // same second; without this the server saw two identical probes and the
+        // log printed two "probe OK" lines. Late callers join the running pass
+        // instead of starting a second one.
+        val pending = CompletableDeferred<Boolean>()
+        val running = inFlightCapabilityProbes.putIfAbsent(playlistId, pending)
+        if (running != null) return running.await()
+        return try {
+            val result = probeCapabilitiesUncoalesced(playlistId, force)
+            pending.complete(result)
+            result
+        } catch (t: Throwable) {
+            // Includes cancellation: joiners must never hang on a dropped pass.
+            pending.complete(false)
+            throw t
+        } finally {
+            inFlightCapabilityProbes.remove(playlistId, pending)
+        }
+    }
+
+    private suspend fun probeCapabilitiesUncoalesced(playlistId: String, force: Boolean): Boolean {
+        val playlist = dao.byId(playlistId) ?: return false
+        if (!playlist.isDispatcharrDirectConnect()) return false
+        if (!force && !playlist.capabilitiesNeedProbe()) return false
+        val base = effectiveBaseUrl(playlist)
+        val key = playlist.apiKey?.takeIf { it.isNotBlank() }
+        val snapshot = key?.let {
+            runCatching {
+                dispatcharrAuth.withApiKeyRetry(playlist.id) { k ->
+                    dispatcharrClient.fetchAccountSnapshot(base, k)
+                }
+            }.getOrNull()
+        }
+        if (snapshot == null) {
+            // Keep the last good snapshot; just mark it stale so the next
+            // opportunity re-probes. Nothing is downgraded here.
+            val current = dao.byId(playlistId) ?: return false
+            if (!current.dispatcharrCapabilitiesStale) {
+                runCatching { dao.update(current.copy(dispatcharrCapabilitiesStale = true)) }
+            }
+            Log.w(TAG_CAPS, "probe failed for ${playlistId.take(8)}; keeping last good snapshot")
+            return false
+        }
+        // system_settings.catchup_enabled needs level >= 1; null (unreadable or
+        // absent) leaves the capability Unknown rather than denying catch-up.
+        val systemCatchup = key.let {
+            runCatching {
+                dispatcharrAuth.withApiKeyRetry(playlist.id) { k ->
+                    dispatcharrClient.fetchSystemCatchupEnabled(base, k)
+                }
+            }.getOrNull()
+        }
+        val props = parseCustomProperties(snapshot.customPropertiesJson)
+        fun flag(name: String): Boolean =
+            (props?.get(name) as? JsonPrimitive)?.booleanOrNull != false
+        val current = dao.byId(playlistId) ?: return false
+        val updated = current.copy(
+            dispatcharrUserLevel = snapshot.userLevel,
+            dispatcharrIsStaff = snapshot.isStaff,
+            dispatcharrIsSuperuser = snapshot.isSuperuser,
+            dispatcharrCustomProperties = snapshot.customPropertiesJson,
+            dispatcharrCapabilitiesFetchedAt = System.currentTimeMillis(),
+            dispatcharrCapabilitiesSchema = CAPABILITIES_SCHEMA,
+            dispatcharrCapabilitiesStale = false,
+            dispatcharrSystemCatchupEnabled = when (systemCatchup) {
+                true -> 1
+                false -> 0
+                null -> -1
+            },
+            // Legacy derived mirrors, written UNCONDITIONALLY from the fresh
+            // payload (no coalescing) so a removed key clears our copy too.
+            dispatcharrDvrAccess =
+                (props?.get("dvr_access") as? JsonPrimitive)?.contentOrNull?.lowercase().orEmpty(),
+            dispatcharrCatchupEnabled = flag("catchup_enabled"),
+            dispatcharrVodMoviesEnabled = flag("vod_movies_enabled"),
+            dispatcharrVodSeriesEnabled = flag("vod_series_enabled"),
+            dispatcharrAccountProfileIds = snapshot.channelProfiles.joinToString(","),
+        )
+        runCatching { dao.update(updated) }
+            .onFailure { Log.w(TAG_CAPS, "capability persist failed", it) }
+        // Session corrections are guesses; persisted truth supersedes them.
+        CapabilityCorrections.clear(playlistId)
+        // Log the DERIVED verdicts, not just the raw level: the raw level alone
+        // cannot tell you whether a demotion actually closed the gates.
+        val caps = updated.capabilities()
+        fun verdict(capability: Capability): String = when (caps[capability]) {
+            CapabilityState.Allowed -> "true"
+            CapabilityState.Denied -> "false"
+            CapabilityState.Unknown -> "unknown"
+        }
+        Log.i(
+            TAG_CAPS,
+            "probe OK ${playlistId.take(8)} level=${caps.effectiveUserLevel} " +
+                "staff=${snapshot.isStaff} su=${snapshot.isSuperuser} " +
+                "dvr=${updated.dispatcharrEffectiveDvrAccess()} " +
+                "vod=${verdict(Capability.CanViewVod)} " +
+                "series=${verdict(Capability.CanViewSeries)} " +
+                "catchup=${verdict(Capability.CanUseCatchup)} " +
+                "switch=${if (caps.isDenied(Capability.CanSwitchStream)) "denied" else "allowed"}",
+        )
+        return true
+    }
+
+    /** One in-flight probe per playlist id; concurrent callers join it. */
+    private val inFlightCapabilityProbes =
+        ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+
+    /**
+     * Probe every Dispatcharr playlist.
+     *
+     * [force] true = a COLD APP LAUNCH, which always re-reads the account
+     * regardless of TTL: an admin can demote a user while the app is closed,
+     * and a 6 h TTL meant a relaunch still showed admin affordances. Softer
+     * triggers (return to foreground, gated-surface entry) pass false and keep
+     * the TTL.
+     */
+    suspend fun probeAllCapabilities(force: Boolean = false) {
+        for (playlist in dao.allOnce()) {
+            if (!playlist.isDispatcharrDirectConnect()) continue
+            runCatching { probeCapabilities(playlist.id, force) }
+        }
+    }
+
     suspend fun refresh(playlist: PlaylistEntity): Result<List<M3UChannel>> = runCatching {
         val sourceType = playlist.resolvedSourceType()
         val base = effectiveBaseUrl(playlist)
@@ -491,23 +655,16 @@ class PlaylistRepository @Inject constructor(
         // clobbers a good value with the recording-capable default). Mirrors
         // the loadAndPersist level capture and the liveAccountIds self-heal
         // just above. iOS d8aa76b re-reads dispatcharrUserLevel on reconnect.
-        val liveUserLevel: Int? =
-            if (sourceType == SourceType.DispatcharrApiKey ||
-                sourceType == SourceType.DispatcharrUserPass
-            ) {
-                playlist.apiKey?.takeIf { it.isNotBlank() }
-                    ?.let { dispatcharrClient.fetchUserLevel(base, it) }
-            } else {
-                null
-            }
-        // Dispatcharr 0.30 permissions + version: re-read on every refresh so a
-        // server-side change applies without an Edit-Playlist Save. Null keeps
-        // the persisted values.
-        val livePerms = if (liveUserLevel != null) {
-            playlist.apiKey?.takeIf { it.isNotBlank() }
-                ?.let { dispatcharrClient.fetchAccountPermissions(base, it) }
-        } else null
-        val liveVersion = if (liveUserLevel != null) {
+        // Per-user capabilities: a manual refresh always re-probes, so a
+        // server-side grant or revoke applies without an Edit-Playlist Save.
+        // The probe is authoritative on success (it clears keys the admin
+        // removed) and a no-op on failure (last good snapshot kept, flagged
+        // stale). Re-read the row so THIS pass uses the fresh values.
+        val probed = if (playlist.isDispatcharrDirectConnect()) {
+            runCatching { probeCapabilities(playlist.id, force = true) }.getOrDefault(false)
+        } else false
+        val fresh = if (probed) dao.byId(playlist.id) ?: playlist else playlist
+        val liveVersion = if (probed) {
             playlist.apiKey?.takeIf { it.isNotBlank() }
                 ?.let { dispatcharrClient.fetchServerVersion(base, it) }
         } else null
@@ -517,7 +674,7 @@ class PlaylistRepository @Inject constructor(
                     fetchChannelsFor(
                         sourceType, base, playlist.epgUrl, key,
                         playlist.dispatcharrProfileId, effectiveAccountIds,
-                        catchupEnabled = livePerms?.catchupEnabled ?: playlist.dispatcharrCatchupEnabled,
+                        catchupEnabled = fresh.dispatcharrCanUseCatchup(),
                     )
                 }
             else -> fetchChannelsFor(
@@ -526,7 +683,7 @@ class PlaylistRepository @Inject constructor(
                 playlist.username, playlist.password,
             )
         }
-        val refreshed = playlist.copy(
+        val refreshed = fresh.copy(
             channelCount = channels.size,
             lastRefreshedAt = System.currentTimeMillis(),
             // Persist the self-healed snapshot ONLY when the live whoami
@@ -534,14 +691,11 @@ class PlaylistRepository @Inject constructor(
             // clobber a good fail-closed snapshot via the fallback value.
             dispatcharrAccountProfileIds =
                 if (liveAccountIds != null) liveAccountIds.joinToString(",")
-                else playlist.dispatcharrAccountProfileIds,
-            dispatcharrUserLevel =
-                liveUserLevel ?: playlist.dispatcharrUserLevel,
-            dispatcharrDvrAccess = livePerms?.dvrAccess ?: playlist.dispatcharrDvrAccess,
-            dispatcharrCatchupEnabled = livePerms?.catchupEnabled ?: playlist.dispatcharrCatchupEnabled,
-            dispatcharrVodMoviesEnabled = livePerms?.vodMoviesEnabled ?: playlist.dispatcharrVodMoviesEnabled,
-            dispatcharrVodSeriesEnabled = livePerms?.vodSeriesEnabled ?: playlist.dispatcharrVodSeriesEnabled,
-            dispatcharrServerVersion = liveVersion ?: playlist.dispatcharrServerVersion,
+                else fresh.dispatcharrAccountProfileIds,
+            // The level / permission columns are owned by probeCapabilities()
+            // above; `fresh` already carries them, so nothing is re-derived (or
+            // re-coalesced) here.
+            dispatcharrServerVersion = liveVersion ?: fresh.dispatcharrServerVersion,
         )
         dao.update(refreshed)
         // Persist the freshly-fetched channels so the next cold launch repaints
@@ -3197,3 +3351,5 @@ private fun Double.formatChannelNumber(): String {
 
 /** How often the launch / foreground cast-profile re-resolve may hit the
  *  server per playlist. */
+
+private const val TAG_CAPS = "AerioCaps"

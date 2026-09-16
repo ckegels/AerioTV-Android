@@ -31,4 +31,22 @@ sealed class DispatcharrError(message: String) : Exception(message) {
     class RefreshExpired(message: String) : DispatcharrError(message)
     class UnexpectedResponse(message: String) : DispatcharrError(message)
     class Transport(message: String) : DispatcharrError(message)
+
+    /**
+     * A 403 from an endpoint whose permission class is a CAPABILITY check
+     * rather than an authentication check (the DVR writes, which are
+     * IsAdminOrDVRManager).
+     *
+     * Deliberately NOT [Unauthorized]: the auth broker rebootstraps the
+     * api_key on Unauthorized and silently replays, which turned a real "your
+     * account may not manage recordings" into a confusing retry loop. This one
+     * is not retried; the caller re-probes /api/accounts/users/me/, re-derives
+     * the capability, and either names the missing permission or -- when the
+     * account's permissions say it SHOULD be allowed -- points at a network
+     * restriction (per-user allowed_networks) instead.
+     */
+    class Forbidden(
+        message: String,
+        val capabilityHint: String? = null,
+    ) : DispatcharrError(message)
 }

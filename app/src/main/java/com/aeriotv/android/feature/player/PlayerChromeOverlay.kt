@@ -275,12 +275,13 @@ fun PlayerChromeOverlay(
     // RecordProgramSheet. Keep the dispatcharrChannelId gate so M3U/Xtream
     // channels (no recordable id) still hide the pill.
     val canRecord = channel?.dispatcharrChannelId != null
-    // Switch Stream needs a Dispatcharr Direct Connect ADMIN account: the streams
-    // list + change_stream live behind it, and change_stream is IsAdmin on the
-    // server. Gate on the admin signal (LocalIsDispatcharrAdmin, which implies
-    // Direct Connect) AND the per-channel int PK, so the option is hidden for
-    // XC / M3U playlists AND for standard (non-admin) Dispatcharr sub-accounts
-    // that would only get a 403 -- never show an option the user can't use.
+    // Switch Stream routes through Capability.CanSwitchStream
+    // (LocalIsDispatcharrAdmin), which resolves to admin TODAY because
+    // POST /proxy/ts/change_stream is still IsAdmin server-side. If Dispatcharr
+    // ever moves stream switching to a per-user permission, only
+    // deriveCapabilities changes and this gate follows. Paired with the
+    // per-channel int PK so the option stays hidden for XC / M3U playlists,
+    // which have no streams list to switch between.
     val canSwitchStream =
         LocalIsDispatcharrAdmin.current && channel?.dispatcharrChannelId != null
     val recordCurrent: () -> Unit = {

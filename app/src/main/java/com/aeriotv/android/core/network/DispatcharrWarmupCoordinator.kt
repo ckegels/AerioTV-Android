@@ -52,6 +52,10 @@ class DispatcharrWarmupCoordinator @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var bound = false
 
+    // ON_START fires on cold launch AND on every return to the foreground.
+    // Only the first one is a cold launch, and only that one force-probes.
+    private var coldLaunch = true
+
     /**
      * Attach this coordinator to the ProcessLifecycleOwner. Idempotent — a
      * second call is a no-op so it's safe to invoke from Application.onCreate
@@ -67,7 +71,25 @@ class DispatcharrWarmupCoordinator @Inject constructor(
         // ON_START fires both on cold-launch foreground AND every time the
         // app comes back from the background. Both cases benefit from a
         // token refresh — match iOS scene-phase .active behavior.
-        scope.launch { warmupAll() }
+        val isColdLaunch = coldLaunch
+        coldLaunch = false
+        scope.launch {
+            warmupAll()
+            // Per-user capabilities, every launch AND every return to the
+            // foreground: an admin can grant or revoke DVR / VOD / catch-up
+            // access at any time, and the app should reflect it without the
+            // user editing the playlist.
+            //
+            // A COLD LAUNCH always forces, TTL ignored. An admin demotion
+            // happens while the app is closed, and force-closing plus
+            // relaunching is exactly what a user does to make the app notice;
+            // with the 6 h TTL that relaunch probed nothing and the app kept
+            // showing admin affordances. A return to the foreground keeps the
+            // TTL (cheap, frequent, and the snapshot is usually minutes old);
+            // so do the opportunistic DVR / On Demand entry checks.
+            runCatching { playlistRepository.get().probeAllCapabilities(force = isColdLaunch) }
+                .onFailure { Log.w(TAG, "capability probe pass failed: ${it.message}") }
+        }
         // Cast audio, 2026-09-13: the launch / foreground re-resolve of the
         // Dispatcharr AAC output profile is GONE. Cast sessions ingest the
         // plain stream and AC-3 / E-AC-3 passes through to the receiver, so
