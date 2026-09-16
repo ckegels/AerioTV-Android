@@ -295,20 +295,28 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Text Size",
-            body = "Make text larger or smaller across the whole app, from 85% to 150% in 5% steps. Find it in Settings > Appearance.",
+            title = "Switch Stream stays connected",
+            body = "Switching a channel's stream now keeps one connection, so the channel no longer drops or falls back to the stream you switched away from.",
         ),
         WhatsNewItem(
-            title = "Subtext Size",
-            body = "Adjust just the secondary text, like descriptions and details, from 85% to 150%, without changing titles.",
+            title = "Your Dispatcharr permissions",
+            body = "The app now follows what your own Dispatcharr account can do instead of assuming an admin. DVR, Movies and TV Shows appear when your account has access, and recording works for any account allowed to manage the DVR.",
         ),
         WhatsNewItem(
-            title = "Text Contrast",
-            body = "Turn up contrast from 0 to 100% to make dimmed and theme-colored text easier to read.",
+            title = "Clear connection limit notices",
+            body = "When a stream is refused because your account or the provider is out of connections, the player says so and offers Retry instead of failing quietly.",
         ),
         WhatsNewItem(
-            title = "Bigger channel logos",
-            body = "Channel logos in the guide and channel list grow to use the space when channel numbers or names are hidden.",
+            title = "Steadier live playback",
+            body = "A channel that keeps ending now waits longer between attempts instead of fighting other devices for the slot, and a slow channel gets more time to start before another stream is tried.",
+        ),
+        WhatsNewItem(
+            title = "Player Info Card",
+            body = "Choose what appears on the info card in the player, from the channel logo and name to the program name, time, subtitle and description. Find it in Settings > App Behaviors.",
+        ),
+        WhatsNewItem(
+            title = "Program art in the guide",
+            body = "Artwork keeps its own shape, so landscape stays landscape and posters stay posters, and it grows with the app-wide Text Size setting.",
         ),
     )
 }
