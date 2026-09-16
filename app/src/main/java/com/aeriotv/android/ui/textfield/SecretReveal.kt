@@ -16,6 +16,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
@@ -74,6 +79,27 @@ fun SecretRevealIconButton(
         onClick = { state.toggle() },
         modifier = Modifier
             .onFocusChanged { state.controlFocused = it.isFocused }
+            .onPreviewKeyEvent { ev ->
+                // Measured on a Google TV Streamer (2026-09-15): when the
+                // leanback IME was open for this field and focus then moved to
+                // the eye, the next OK arrived as a KeyUp ONLY - the IME
+                // consumed the KeyDown to dismiss itself. Compose's clickable
+                // needs the DOWN/UP pair, so that press did nothing and the
+                // key looked unrevealable. Own the OK key here: consume both
+                // edges and toggle on the release, so a lone release still
+                // works. Consuming DOWN also keeps clickable from firing a
+                // second toggle.
+                val isOk = ev.key == Key.DirectionCenter || ev.key == Key.Enter ||
+                    ev.key == Key.NumPadEnter
+                when {
+                    isOk && ev.type == KeyEventType.KeyDown -> true
+                    isOk && ev.type == KeyEventType.KeyUp -> {
+                        state.toggle()
+                        true
+                    }
+                    else -> false
+                }
+            }
             .dpadFocusRing(CircleShape),
     ) {
         Icon(
