@@ -104,34 +104,33 @@ fun visibleSettingsSections(
     updaterEnabled: Boolean,
 ): List<SettingsSectionGroupSpec> = listOf(
     SettingsSectionGroupSpec(
-        key = "app-settings",
-        header = "App Settings",
+        key = "app",
+        header = "App",
+        sections = listOf(
+            SettingsSection.LiveTV,
+            SettingsSection.Player,
+            SettingsSection.MoviesAndTvShows,
+            SettingsSection.DvrSettings,
+        ),
+    ),
+    SettingsSectionGroupSpec(
+        key = "device",
+        header = "Device",
         sections = buildList {
             add(SettingsSection.Appearance)
-            add(SettingsSection.AppBehaviors)
-            add(SettingsSection.Multiview)
-            add(SettingsSection.Network)
+            add(SettingsSection.General)
             // Remote Control initiative: TV form factors only.
             if (isTv) add(SettingsSection.RemoteControl)
+            add(SettingsSection.Sync)
             if (updaterEnabled) add(SettingsSection.AppUpdates)
         },
     ),
     SettingsSectionGroupSpec(
-        key = "sync",
-        header = "Sync",
-        sections = listOf(SettingsSection.Sync),
-        footer = "Playlists, preferences, and watch progress sync across all devices " +
-            "signed into the same Google account. Credentials stay in encrypted Android storage.",
-    ),
-    SettingsSectionGroupSpec(
-        key = "dvr",
-        header = "DVR",
-        sections = listOf(SettingsSection.DvrSettings),
-    ),
-    SettingsSectionGroupSpec(
-        key = "developer",
-        header = "Developer",
-        sections = listOf(SettingsSection.Developer),
+        key = "system",
+        // Header-less closing group (Settings phase 1): Developer and About sit
+        // together at the bottom with nothing to label them.
+        header = "",
+        sections = listOf(SettingsSection.Developer, SettingsSection.About),
     ),
 )
 

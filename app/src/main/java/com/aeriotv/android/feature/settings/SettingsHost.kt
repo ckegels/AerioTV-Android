@@ -223,7 +223,8 @@ private fun SettingsSidebar(
                 modifier = Modifier.padding(start = 6.dp, top = 8.dp, bottom = 10.dp),
             )
         }
-        // Canon order: Playlists first, then the section groups, About last.
+        // Canon order: Playlists first, then the section groups (About is the
+        // last row of the closing group).
         item("playlists") {
             SettingsNavRow(
                 title = "Playlists",
@@ -236,10 +237,12 @@ private fun SettingsSidebar(
             )
         }
         sections.forEach { group ->
+            // A blank header means an unlabeled group (the closing Developer /
+            // About group); keep the spacing, drop the eyebrow.
             item("header-${group.key}") {
                 Column {
                     Spacer(Modifier.height(10.dp))
-                    SettingsSectionHeader(group.header)
+                    if (group.header.isNotBlank()) SettingsSectionHeader(group.header)
                 }
             }
             items(items = group.sections, key = { "row-${it.name}" }) { section ->
@@ -250,20 +253,6 @@ private fun SettingsSidebar(
                     onClick = { onSelect(SettingsRoute.Section(section)) },
                     selected = selection is SettingsRoute.Section &&
                         selection.section == section,
-                    trailingChevron = false,
-                    flat = true,
-                )
-            }
-        }
-        item("about") {
-            Column {
-                Spacer(Modifier.height(10.dp))
-                SettingsNavRow(
-                    title = "About",
-                    subtitle = null,
-                    icon = Icons.Outlined.Info,
-                    onClick = { onSelect(SettingsRoute.About) },
-                    selected = selection is SettingsRoute.About,
                     trailingChevron = false,
                     flat = true,
                 )
@@ -471,7 +460,8 @@ private fun SettingsTvRail(
     modifier: Modifier = Modifier,
 ) {
     // Flatten to one list so the selected index (for initial scroll + focus) is
-    // a simple lookup rather than a per-section calculation.
+    // a simple lookup rather than a per-section calculation. About arrives from
+    // the closing section group like any other row.
     val rows = remember(sections, activePlaylistName) {
         buildList {
             add(Triple(SettingsRoute.Playlists as SettingsRoute, "Playlists", activePlaylistName))
@@ -480,7 +470,6 @@ private fun SettingsTvRail(
                     add(Triple(SettingsRoute.Section(section), section.title, section.subtitle))
                 }
             }
-            add(Triple(SettingsRoute.About as SettingsRoute, "About", null))
         }
     }
     val selectedIndex = rows.indexOfFirst { it.first == selection }.coerceAtLeast(0)

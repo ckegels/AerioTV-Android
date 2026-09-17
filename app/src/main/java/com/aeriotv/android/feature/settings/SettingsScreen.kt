@@ -25,15 +25,16 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
@@ -138,6 +139,10 @@ fun SettingsScreen(
     // channel (play flavor binds a disabled no-op manager).
     val updateVm: com.aeriotv.android.feature.update.UpdateViewModel = hiltViewModel()
     val updaterEnabled = updateVm.isEnabled
+    // Root row values: Sync reads On/Off, About reads the installed version.
+    val settingsVm: SettingsViewModel = hiltViewModel()
+    val syncEnabled by settingsVm.syncMasterEnabled
+        .collectAsStateWithLifecycle(initialValue = false)
     val state by viewModel.state.collectAsStateWithLifecycle()
     val playlists by viewModel.allPlaylists.collectAsStateWithLifecycle(initialValue = emptyList())
     // LIVE from the DAO, not the UiState snapshot (Logan 2026-09-16): the
@@ -249,12 +254,23 @@ fun SettingsScreen(
                         rows = group.sections,
                         onClick = onSectionClick,
                         footer = group.footer,
+                        valueFor = { section ->
+                            when (section) {
+                                SettingsSection.Sync -> if (syncEnabled) "On" else "Off"
+                                SettingsSection.About -> versionName
+                                else -> null
+                            }
+                        },
                     )
                 }
             }
 
             // MARK: About
-            if (content != SettingsRootContent.PlaylistsOnly) item("about") {
+            //
+            // Settings phase 1: About is a PUSHED page (and a pane in the
+            // two-pane hosts), reached from the closing group's About row. It
+            // is no longer inlined at the bottom of the root list.
+            if (content == SettingsRootContent.AboutOnly) item("about") {
                 AboutSection(
                     showHeader = fullRoot,
                     onShowWhatsNew = { showWhatsNew = true },
@@ -521,10 +537,15 @@ private fun SettingsSectionGroup(
     rows: List<SettingsSection>,
     onClick: (SettingsSection) -> Unit,
     footer: String? = null,
+    valueFor: (SettingsSection) -> String? = { null },
 ) {
     Column {
-        SectionHeader(header)
-        Spacer(Modifier.height(6.dp))
+        // A blank header means the group carries no label (the closing
+        // Developer / About group).
+        if (header.isNotBlank()) {
+            SectionHeader(header)
+            Spacer(Modifier.height(6.dp))
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -533,7 +554,11 @@ private fun SettingsSectionGroup(
         ) {
             rows.forEachIndexed { index, section ->
                 if (index > 0) RowDivider()
-                SectionNavRow(section = section, onClick = { onClick(section) })
+                SectionNavRow(
+                    section = section,
+                    value = valueFor(section),
+                    onClick = { onClick(section) },
+                )
             }
         }
         footer?.let {
@@ -544,7 +569,11 @@ private fun SettingsSectionGroup(
 }
 
 @Composable
-private fun SectionNavRow(section: SettingsSection, onClick: () -> Unit) {
+private fun SectionNavRow(
+    section: SettingsSection,
+    onClick: () -> Unit,
+    value: String? = null,
+) {
     // Phase B1: delegates to the shared row so the root gets the same
     // border+scale+wash focus treatment as every subpage (the old
     // groupRowFocus was noticeably weaker on TV).
@@ -552,59 +581,9 @@ private fun SectionNavRow(section: SettingsSection, onClick: () -> Unit) {
         title = section.title,
         subtitle = section.subtitle,
         icon = section.icon,
+        value = value,
         onClick = onClick,
     )
-}
-
-@Suppress("unused")
-@Composable
-private fun LegacySectionNavRow(section: SettingsSection, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
-            .groupRowFocus(focused)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = section.icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-        Spacer(Modifier.size(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = section.title,
-                style = settingsRowTitleStyle(),
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = section.subtitle,
-                // bodySmall is ~10.8sp effective under the 0.9 TV type scale;
-                // bodyMedium keeps the subtitle readable from the couch.
-                style = settingsFootnoteStyle().subtext(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
 }
 
 // MARK: - About section
@@ -869,52 +848,62 @@ private fun openUrl(context: android.content.Context, url: String) {
  */
 enum class SettingsSection(
     val title: String,
-    val subtitle: String,
+    val subtitle: String?,
     val icon: ImageVector,
 ) {
-    Appearance(
-        title = "Appearance",
-        subtitle = "Theme, scale & category colors",
-        icon = Icons.Filled.Palette,
+    LiveTV(
+        title = "Live TV",
+        subtitle = "Guide, groups, badges, colors",
+        icon = Icons.Filled.LiveTv,
     ),
-    AppBehaviors(
-        title = "App Behaviors",
-        subtitle = "Default tab, launch & gestures",
+    Player(
+        title = "Player",
+        subtitle = "Info card, rewind, gestures, multiview",
         icon = Icons.Outlined.PlayCircle,
     ),
-    Multiview(
-        title = "Multiview",
-        subtitle = "Audio focus, tile spacing & corners",
-        icon = Icons.Filled.GridView,
+    MoviesAndTvShows(
+        title = "Movies & TV Shows",
+        subtitle = "Library refresh, posters",
+        icon = Icons.Filled.Movie,
     ),
-    Network(
-        title = "Network",
-        subtitle = "Timeout, buffer & background refresh",
-        icon = Icons.Filled.Wifi,
+    DvrSettings(
+        title = "DVR",
+        subtitle = "Recordings, buffers, storage",
+        icon = Icons.Filled.FiberManualRecord,
+    ),
+    Appearance(
+        title = "Appearance",
+        subtitle = "Theme, text size, time format",
+        icon = Icons.Filled.Palette,
+    ),
+    General(
+        title = "General",
+        subtitle = "Startup, refresh, network",
+        icon = Icons.Filled.Tune,
     ),
     RemoteControl(
         title = "Remote Control",
         subtitle = "Customize remote buttons",
         icon = Icons.Filled.SettingsRemote,
     ),
-    AppUpdates(
-        title = "App Updates",
-        subtitle = "Check for new releases",
-        icon = Icons.Filled.SystemUpdate,
-    ),
     Sync(
         title = "Sync",
         subtitle = "Sync playlists, preferences, and watch progress",
         icon = Icons.Filled.Cloud,
     ),
-    DvrSettings(
-        title = "DVR",
-        subtitle = "Recordings, buffers & storage",
-        icon = Icons.Filled.FiberManualRecord,
+    AppUpdates(
+        title = "Updates",
+        subtitle = "Check for new releases",
+        icon = Icons.Filled.SystemUpdate,
     ),
     Developer(
         title = "Developer",
         subtitle = "Debug logging & diagnostics",
         icon = Icons.Outlined.BugReport,
+    ),
+    About(
+        title = "About",
+        subtitle = null,
+        icon = Icons.Outlined.Info,
     ),
 }
