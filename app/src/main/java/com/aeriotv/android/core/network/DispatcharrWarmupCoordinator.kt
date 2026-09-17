@@ -106,14 +106,19 @@ class DispatcharrWarmupCoordinator @Inject constructor(
         // there is no server-side profile to keep in sync.
     }
 
+    /**
+     * ACTIVE PLAYLIST ONLY (Logan 2026-09-16). Warming a saved-but-inactive
+     * playlist logged this device into a server nothing was about to call,
+     * and it paired with the capability probe to make every foreground a
+     * fan-out across every server the user has ever saved. An inactive row's
+     * tokens are minted when it is made active.
+     */
     private suspend fun warmupAll() {
-        val playlists = dao.allOnce()
-        for (playlist in playlists) {
-            if (playlist.sourceType != SourceType.DispatcharrApiKey.name &&
-                playlist.sourceType != SourceType.DispatcharrUserPass.name
-            ) continue
-            warmup(playlist)
-        }
+        val playlist = dao.firstActive() ?: return
+        if (playlist.sourceType != SourceType.DispatcharrApiKey.name &&
+            playlist.sourceType != SourceType.DispatcharrUserPass.name
+        ) return
+        warmup(playlist)
     }
 
     private suspend fun warmup(playlist: PlaylistEntity) {

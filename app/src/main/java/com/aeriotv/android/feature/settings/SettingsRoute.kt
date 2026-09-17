@@ -104,36 +104,69 @@ fun visibleSettingsSections(
     updaterEnabled: Boolean,
 ): List<SettingsSectionGroupSpec> = listOf(
     SettingsSectionGroupSpec(
-        key = "app-settings",
-        header = "App Settings",
+        key = "app",
+        header = "App",
+        sections = listOf(
+            SettingsSection.LiveTV,
+            SettingsSection.Player,
+            SettingsSection.MoviesAndTvShows,
+            SettingsSection.DvrSettings,
+        ),
+    ),
+    SettingsSectionGroupSpec(
+        key = "device",
+        header = "Device",
         sections = buildList {
             add(SettingsSection.Appearance)
-            add(SettingsSection.AppBehaviors)
-            add(SettingsSection.Multiview)
-            add(SettingsSection.Network)
+            add(SettingsSection.General)
             // Remote Control initiative: TV form factors only.
             if (isTv) add(SettingsSection.RemoteControl)
+            add(SettingsSection.Sync)
             if (updaterEnabled) add(SettingsSection.AppUpdates)
         },
     ),
     SettingsSectionGroupSpec(
-        key = "sync",
-        header = "Sync",
-        sections = listOf(SettingsSection.Sync),
-        footer = "Playlists, preferences, and watch progress sync across all devices " +
-            "signed into the same Google account. Credentials stay in encrypted Android storage.",
-    ),
-    SettingsSectionGroupSpec(
-        key = "dvr",
-        header = "DVR",
-        sections = listOf(SettingsSection.DvrSettings),
-    ),
-    SettingsSectionGroupSpec(
-        key = "developer",
-        header = "Developer",
-        sections = listOf(SettingsSection.Developer),
+        key = "system",
+        // Header-less closing group (Settings phase 1): Developer and About sit
+        // together at the bottom with nothing to label them.
+        header = "",
+        sections = listOf(SettingsSection.Developer, SettingsSection.About),
     ),
 )
+
+/**
+ * Maps a `aeriotv://settings/<page>` path segment onto the route that page
+ * opens. Used by the screenshot deep link; null means "the Settings root",
+ * which is also what an unknown page resolves to.
+ *
+ * [activePlaylistId] is the active playlist's id; the two playlist pages need
+ * it, and resolve to the root when there is no active playlist yet.
+ */
+fun settingsRouteForDeepLinkPage(
+    page: String,
+    activePlaylistId: String?,
+): SettingsRoute? = when (page.trim().lowercase()) {
+    "root" -> null
+    "playlists" -> SettingsRoute.Playlists
+    "livetv" -> SettingsRoute.Section(SettingsSection.LiveTV)
+    "player" -> SettingsRoute.Section(SettingsSection.Player)
+    "movies" -> SettingsRoute.Section(SettingsSection.MoviesAndTvShows)
+    "dvr" -> SettingsRoute.Section(SettingsSection.DvrSettings)
+    "appearance" -> SettingsRoute.Section(SettingsSection.Appearance)
+    "general" -> SettingsRoute.Section(SettingsSection.General)
+    "remote" -> SettingsRoute.Section(SettingsSection.RemoteControl)
+    "sync" -> SettingsRoute.Section(SettingsSection.Sync)
+    "updates" -> SettingsRoute.Section(SettingsSection.AppUpdates)
+    "developer" -> SettingsRoute.Section(SettingsSection.Developer)
+    "about" -> SettingsRoute.About
+    "playlist-detail" -> activePlaylistId?.let { SettingsRoute.PlaylistDetail(it) }
+    "edit-playlist" -> activePlaylistId?.let { SettingsRoute.EditPlaylist(it) }
+    else -> null
+}
+
+/** True when [page] needs the active playlist id before it can be resolved. */
+fun settingsDeepLinkPageNeedsPlaylist(page: String): Boolean =
+    page.trim().lowercase() == "playlist-detail" || page.trim().lowercase() == "edit-playlist"
 
 /** Stage within the Add Playlist wizard. */
 sealed interface AddPlaylistWizardStep {

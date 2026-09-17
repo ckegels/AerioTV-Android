@@ -164,6 +164,12 @@ fun PlayerScreen(
     val settingsVm: SettingsViewModel = hiltViewModel()
     val miniPlayerVm: MiniPlayerViewModel = hiltViewModel()
     val appleTVChannelFlip by settingsVm.appleTVChannelFlip.collectAsStateWithLifecycle(initialValue = true)
+    // In-Player Gestures (touch only, all off by default).
+    val playerBrightnessGesture by settingsVm.playerBrightnessGesture.collectAsStateWithLifecycle(initialValue = false)
+    val playerVolumeGesture by settingsVm.playerVolumeGesture.collectAsStateWithLifecycle(initialValue = false)
+    val playerBrightnessEdge by settingsVm.playerBrightnessEdge.collectAsStateWithLifecycle(
+        initialValue = com.aeriotv.android.core.preferences.PLAYER_EDGE_LEFT,
+    )
     // Remote Control initiative: live button map (player context slots).
     val remoteMap by settingsVm.remoteControlMap.collectAsStateWithLifecycle(
         initialValue = com.aeriotv.android.core.remote.RemoteControlMap.DEFAULT,
@@ -1626,6 +1632,16 @@ fun PlayerScreen(
                         onVerticalDrag = { _, dy -> totalDy += dy },
                     )
                 }
+                // Vertical slide in a narrow band at one screen edge adjusts
+                // brightness, the other volume (touch only, both off by
+                // default). Narrow band + a top/bottom exclusion keep it clear
+                // of the channel flip above and the minimize swipe below.
+                .playerEdgeSlideGestures(
+                    enabled = !isTvForm,
+                    brightnessEnabled = playerBrightnessGesture,
+                    volumeEnabled = playerVolumeGesture,
+                    brightnessEdge = playerBrightnessEdge,
+                )
                 // Pinch to switch Fit <-> Fill on touch devices (no-op on TV).
                 // Lives in the SAME chain as the tap / drag handlers: a sibling
                 // overlay Box would win hit testing and swallow every tap.
@@ -1643,6 +1659,7 @@ fun PlayerScreen(
         // state lives in VideoScale.kt: this composable is register-pressure
         // sensitive.
         VideoScaleLabelOverlay(enabled = !isTvForm)
+
 
         // Dead-upstream net: the holder's no-data watchdog reconnected once and
         // still got zero bytes, so it flagged the channel unavailable + stopped.

@@ -41,18 +41,31 @@ data class LiveTvFormFactor(
     val isCompactPhone: Boolean get() = widthClass == WindowWidthSizeClass.Compact && !isTv
 
     /**
+     * Whether the List view exists at all on this form factor. TV drops it
+     * entirely (Logan 2026-09-16: unusable with a remote) unless
+     * [com.aeriotv.android.core.ui.TvListView.ENABLED] is flipped back on.
+     * Phone and tablet always have it.
+     */
+    val listAvailable: Boolean
+        get() = !isTv || com.aeriotv.android.core.ui.TvListView.ENABLED
+
+    /**
      * Whether the user can flip between List and Guide. Always true: compact
      * phones in portrait previously hid the toggle (only landscape, where the
      * width class leaves Compact, showed it), which left no way to reach the
      * Guide in portrait. The Guide is usable in portrait (it horizontally
      * scrolls), so we always offer the toggle; [defaultMode] still picks List
      * for compact phones so nothing changes for users who don't toggle.
+     *
+     * TV is the exception: with the List view removed there is nothing to
+     * toggle to, so this is false there (see [listAvailable]).
      */
-    val supportsToggle: Boolean get() = true
+    val supportsToggle: Boolean get() = listAvailable
 
     /** Default view when no user override exists. */
     val defaultMode: LiveTVViewMode
         get() = when {
+            !listAvailable -> LiveTVViewMode.Guide
             isCompactPhone -> LiveTVViewMode.List
             isTv -> LiveTVViewMode.Guide
             widthClass == WindowWidthSizeClass.Expanded -> LiveTVViewMode.Guide

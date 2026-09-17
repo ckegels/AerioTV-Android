@@ -149,6 +149,8 @@ fun SettingsTwoPaneHost(
     pushed: SettingsRoute?,
     sections: List<SettingsSectionGroupSpec>,
     activePlaylistName: String?,
+    /** Drives the Sync row's On / Off subtitle; see settingsSectionSubtitle. */
+    syncEnabled: Boolean,
     takeover: (SettingsRoute) -> Boolean,
     detail: @Composable (SettingsRoute) -> Unit,
 ) {
@@ -166,6 +168,7 @@ fun SettingsTwoPaneHost(
             onSelect = onSelect,
             sections = sections,
             activePlaylistName = activePlaylistName,
+            syncEnabled = syncEnabled,
             modifier = Modifier.width(SidebarWidth),
         )
         VerticalDivider(
@@ -202,6 +205,7 @@ private fun SettingsSidebar(
     onSelect: (SettingsRoute) -> Unit,
     sections: List<SettingsSectionGroupSpec>,
     activePlaylistName: String?,
+    syncEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -223,7 +227,8 @@ private fun SettingsSidebar(
                 modifier = Modifier.padding(start = 6.dp, top = 8.dp, bottom = 10.dp),
             )
         }
-        // Canon order: Playlists first, then the section groups, About last.
+        // Canon order: Playlists first, then the section groups (About is the
+        // last row of the closing group).
         item("playlists") {
             SettingsNavRow(
                 title = "Playlists",
@@ -236,34 +241,22 @@ private fun SettingsSidebar(
             )
         }
         sections.forEach { group ->
+            // A blank header means an unlabeled group (the closing Developer /
+            // About group); keep the spacing, drop the eyebrow.
             item("header-${group.key}") {
                 Column {
                     Spacer(Modifier.height(10.dp))
-                    SettingsSectionHeader(group.header)
+                    if (group.header.isNotBlank()) SettingsSectionHeader(group.header)
                 }
             }
             items(items = group.sections, key = { "row-${it.name}" }) { section ->
                 SettingsNavRow(
                     title = section.title,
-                    subtitle = section.subtitle,
+                    subtitle = settingsSectionSubtitle(section, syncEnabled),
                     icon = section.icon,
                     onClick = { onSelect(SettingsRoute.Section(section)) },
                     selected = selection is SettingsRoute.Section &&
                         selection.section == section,
-                    trailingChevron = false,
-                    flat = true,
-                )
-            }
-        }
-        item("about") {
-            Column {
-                Spacer(Modifier.height(10.dp))
-                SettingsNavRow(
-                    title = "About",
-                    subtitle = null,
-                    icon = Icons.Outlined.Info,
-                    onClick = { onSelect(SettingsRoute.About) },
-                    selected = selection is SettingsRoute.About,
                     trailingChevron = false,
                     flat = true,
                 )
@@ -319,11 +312,20 @@ private const val RailSelectDebounceMs = 150L
  */
 @Composable
 fun SettingsTvRailHost(
+    /**
+     * Bumped by the screenshot deep link when it changes [selection] without a
+     * push. The rail's own focus effect only fires on a push, so without this
+     * a deep-linked pane would render with focus still on the tab pill.
+     * 0 means "never", and is ignored.
+     */
+    focusPaneSignal: Int = 0,
     selection: SettingsRoute,
     onSelect: (SettingsRoute) -> Unit,
     pushed: SettingsRoute?,
     sections: List<SettingsSectionGroupSpec>,
     activePlaylistName: String?,
+    /** Drives the Sync row's On / Off subtitle; see settingsSectionSubtitle. */
+    syncEnabled: Boolean,
     takeover: (SettingsRoute) -> Boolean,
     detail: @Composable (SettingsRoute) -> Unit,
 ) {
@@ -388,6 +390,13 @@ fun SettingsTvRailHost(
         prevPushed = pushed
     }
 
+    androidx.compose.runtime.LaunchedEffect(focusPaneSignal) {
+        if (focusPaneSignal == 0) return@LaunchedEffect
+        // One frame for the new pane content to compose before aiming at it.
+        kotlinx.coroutines.delay(RailSelectDebounceMs)
+        runCatching { detailFocus.requestFocus() }
+    }
+
     // Back in the pane returns focus to the rail instead of leaving Settings.
     // Disabled while something is pushed so the nav stack's own handler pops
     // first, and while the rail already holds focus so Back reaches the tabs.
@@ -400,6 +409,7 @@ fun SettingsTvRailHost(
             selection = selection,
             sections = sections,
             activePlaylistName = activePlaylistName,
+            syncEnabled = syncEnabled,
             onFocusRoute = { pending = it },
             onClickRoute = { route ->
                 pending = route
@@ -465,22 +475,29 @@ private fun SettingsTvRail(
     selection: SettingsRoute,
     sections: List<SettingsSectionGroupSpec>,
     activePlaylistName: String?,
+    syncEnabled: Boolean,
     onFocusRoute: (SettingsRoute) -> Unit,
     onClickRoute: (SettingsRoute) -> Unit,
     railFocus: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     // Flatten to one list so the selected index (for initial scroll + focus) is
-    // a simple lookup rather than a per-section calculation.
-    val rows = remember(sections, activePlaylistName) {
+    // a simple lookup rather than a per-section calculation. About arrives from
+    // the closing section group like any other row.
+    val rows = remember(sections, activePlaylistName, syncEnabled) {
         buildList {
             add(Triple(SettingsRoute.Playlists as SettingsRoute, "Playlists", activePlaylistName))
             sections.forEach { group ->
                 group.sections.forEach { section ->
-                    add(Triple(SettingsRoute.Section(section), section.title, section.subtitle))
+                    add(
+                        Triple(
+                            SettingsRoute.Section(section),
+                            section.title,
+                            settingsSectionSubtitle(section, syncEnabled),
+                        ),
+                    )
                 }
             }
-            add(Triple(SettingsRoute.About as SettingsRoute, "About", null))
         }
     }
     val selectedIndex = rows.indexOfFirst { it.first == selection }.coerceAtLeast(0)

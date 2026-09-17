@@ -62,6 +62,12 @@ fun SettingsNavRow(
     icon: ImageVector,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Optional trailing value ("1.2.3 (45)", "On"), drawn before the chevron in
+     * the same muted style the About info rows use. Plain text only: no new
+     * border, ring or highlight is introduced by this slot.
+     */
+    value: String? = null,
     selected: Boolean = false,
     trailingChevron: Boolean = true,
     /**
@@ -210,6 +216,16 @@ fun SettingsNavRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+        if (value != null) {
+            Spacer(Modifier.size(10.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         if (trailingChevron) {
             Icon(

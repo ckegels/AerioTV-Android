@@ -42,4 +42,15 @@ sealed interface DeepLinkTarget {
      * player. The host already stopped playback before emitting this.
      */
     data object ExitPlayer : DeepLinkTarget
+
+    /**
+     * Open the Settings tab directly on one page, for automated screenshots
+     * (`aeriotv://settings/<page>`). [page] is the raw, lower-cased path
+     * segment; the mapping to a [com.aeriotv.android.feature.settings.SettingsRoute]
+     * lives in `settingsRouteForDeepLinkPage` so MainScaffold owns the
+     * selection / stack decision. An unknown page falls back to the Settings
+     * root. Kept in release builds: it opens a page the user can already
+     * reach by hand, so it grants nothing extra.
+     */
+    data class Settings(val page: String) : DeepLinkTarget
 }

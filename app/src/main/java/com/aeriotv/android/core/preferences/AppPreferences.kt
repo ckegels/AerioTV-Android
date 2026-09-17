@@ -189,6 +189,33 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * Settings > Appearance > "Rounded corners in List view". Channel logos
+     * and program artwork on the LIST and card surfaces are rounded to match
+     * the corner radius of the card they sit in; off makes them square.
+     * Movies / TV Shows / DVR poster art is a separate surface and is NOT
+     * affected. Default ON. See core/ui/ArtworkCorners.kt.
+     *
+     * MIGRATION: this deliberately keeps reading the original single-toggle
+     * key ("ui_rounded_artwork"), so whatever the user already chose carries
+     * straight over into the List toggle and nobody's setting changes.
+     */
+    val roundedArtwork: Flow<Boolean> = store.data.map { it[KEY_ROUNDED_ARTWORK] ?: true }
+    suspend fun setRoundedArtwork(value: Boolean) {
+        store.edit { it[KEY_ROUNDED_ARTWORK] = value }
+    }
+
+    /**
+     * Settings > Appearance > "Rounded corners in Guide view". Covers ONLY the
+     * guide rail logos, at the rail's own small radius. Default OFF: the rail
+     * has always drawn square logos and that stays the out-of-box look.
+     */
+    val roundedArtworkGuide: Flow<Boolean> =
+        store.data.map { it[KEY_ROUNDED_ARTWORK_GUIDE] ?: false }
+    suspend fun setRoundedArtworkGuide(value: Boolean) {
+        store.edit { it[KEY_ROUNDED_ARTWORK_GUIDE] = value }
+    }
+
+    /**
      * Settings > Appearance > Time Format: "system" (default, follows the
      * device's 24-hour setting), "12", or "24". Drive-synced as "timeFormat",
      * the same key Apple uses.
@@ -380,6 +407,38 @@ class AppPreferences @Inject constructor(
     val appleTVChannelFlip: Flow<Boolean> = store.data.map { it[KEY_APPLE_TV_CHANNEL_FLIP] ?: true }
     suspend fun setAppleTVChannelFlip(value: Boolean) {
         store.edit { it[KEY_APPLE_TV_CHANNEL_FLIP] = value }
+    }
+
+    /**
+     * In-Player Gestures (phone and tablet only): a vertical slide along one
+     * screen edge of the fullscreen player adjusts screen brightness, and the
+     * other edge adjusts media volume.
+     *
+     * Both default OFF: the player already owns the vertical axis (channel
+     * flip) and the top strip (swipe down to minimize), so these only exist
+     * for users who ask for them. Device-local (not in the sync snapshot) -
+     * brightness and volume are per-device, and a TV has neither gesture.
+     */
+    val playerBrightnessGesture: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_BRIGHTNESS_GESTURE] ?: false }
+    suspend fun setPlayerBrightnessGesture(value: Boolean) {
+        store.edit { it[KEY_PLAYER_BRIGHTNESS_GESTURE] = value }
+    }
+
+    val playerVolumeGesture: Flow<Boolean> =
+        store.data.map { it[KEY_PLAYER_VOLUME_GESTURE] ?: false }
+    suspend fun setPlayerVolumeGesture(value: Boolean) {
+        store.edit { it[KEY_PLAYER_VOLUME_GESTURE] = value }
+    }
+
+    /**
+     * Which edge brightness lives on: [PLAYER_EDGE_LEFT] or
+     * [PLAYER_EDGE_RIGHT]. Volume always takes the other edge.
+     */
+    val playerBrightnessEdge: Flow<String> =
+        store.data.map { it[KEY_PLAYER_BRIGHTNESS_EDGE] ?: PLAYER_EDGE_LEFT }
+    suspend fun setPlayerBrightnessEdge(value: String) {
+        store.edit { it[KEY_PLAYER_BRIGHTNESS_EDGE] = value }
     }
 
     /**
@@ -1901,6 +1960,8 @@ class AppPreferences @Inject constructor(
         val KEY_SHOW_CHANNEL_NUMBERS = booleanPreferencesKey("ui_show_channel_numbers")
         val KEY_SHOW_CHANNEL_NAMES = booleanPreferencesKey("ui_show_channel_names")
         val KEY_SHOW_PROGRAM_SUBTITLES = booleanPreferencesKey("ui_show_program_subtitles")
+        val KEY_ROUNDED_ARTWORK = booleanPreferencesKey("ui_rounded_artwork")
+        val KEY_ROUNDED_ARTWORK_GUIDE = booleanPreferencesKey("ui_rounded_artwork_guide")
         val KEY_TIME_FORMAT = stringPreferencesKey("ui_time_format")
         val KEY_HIDDEN_EPG_BADGES = stringPreferencesKey("ui_hidden_epg_badges")
         val KEY_SHOW_EPG_BADGES_TV = booleanPreferencesKey("ui_show_epg_badges_tv")
@@ -1913,6 +1974,9 @@ class AppPreferences @Inject constructor(
         val KEY_AUTO_ROTATE = booleanPreferencesKey("app_behaviors_auto_rotate")
         val KEY_DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
         val KEY_APPLE_TV_CHANNEL_FLIP = booleanPreferencesKey("app_behaviors_apple_tv_channel_flip")
+        val KEY_PLAYER_BRIGHTNESS_GESTURE = booleanPreferencesKey("in_player_gesture_brightness")
+        val KEY_PLAYER_VOLUME_GESTURE = booleanPreferencesKey("in_player_gesture_volume")
+        val KEY_PLAYER_BRIGHTNESS_EDGE = stringPreferencesKey("in_player_gesture_brightness_edge")
         val KEY_REMOTE_CONTROL_MAP = stringPreferencesKey("remote_control_map")
         val KEY_SYNC_REMOTE_CONTROL_MAP = booleanPreferencesKey("sync_remote_control_map")
         val KEY_GUIDE_GROUP_SELECTOR = stringPreferencesKey("guide_group_selector")
@@ -2045,3 +2109,9 @@ fun snapTextContrast(value: Float): Float {
     val v = if (value.isNaN()) 0f else value.coerceIn(0f, 1f)
     return kotlin.math.round(v * 10f) / 10f
 }
+
+/** Brightness slides on the left edge of the player; volume on the right. */
+const val PLAYER_EDGE_LEFT = "left"
+
+/** Brightness slides on the right edge of the player; volume on the left. */
+const val PLAYER_EDGE_RIGHT = "right"

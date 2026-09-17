@@ -73,9 +73,14 @@ fun LiveTVTabContent(
     // Resolved DEFAULT view. An explicit Settings choice (Settings -> App
     // Behaviors -> Default Live TV View) wins; "Automatic" (blank) falls back to
     // the form-factor default (compact phone -> List, tablet / TV -> Guide).
-    val resolvedDefault = when (stored.lowercase()) {
-        "list" -> LiveTVViewMode.List
-        "guide" -> LiveTVViewMode.Guide
+    // On TV the List view is removed entirely (Logan 2026-09-16, see
+    // core.ui.TvListView): a stored "list" default RESOLVES to Guide here
+    // without the stored value being rewritten, so re-enabling the flag hands
+    // the user their List choice back untouched.
+    val resolvedDefault = when {
+        !formFactor.listAvailable -> LiveTVViewMode.Guide
+        stored.equals("list", ignoreCase = true) -> LiveTVViewMode.List
+        stored.equals("guide", ignoreCase = true) -> LiveTVViewMode.Guide
         else -> formFactor.defaultMode
     }
     // The List / Guide switch is offered on every form factor (parity with tvOS,
@@ -88,8 +93,17 @@ fun LiveTVTabContent(
     var mode by rememberSaveable(resolvedDefault) { mutableStateOf(resolvedDefault) }
     val canToggle = formFactor.supportsToggle
     val toggleMode: () -> Unit = {
-        mode = if (mode == LiveTVViewMode.List) LiveTVViewMode.Guide else LiveTVViewMode.List
+        if (canToggle) {
+            mode = if (mode == LiveTVViewMode.List) LiveTVViewMode.Guide else LiveTVViewMode.List
+        }
     }
+
+    // Safety net for every other path into this tab (return from the player,
+    // tab switch, PiP restore, a restored back-stack / saved instance state):
+    // the rememberSaveable above can carry a stale List mode across a flag
+    // flip or a form-factor change, so a TV without the List view is snapped
+    // to the Guide before anything renders.
+    val effectiveMode = if (formFactor.listAvailable) mode else LiveTVViewMode.Guide
 
     // EPG-search / aeriotv://guide deep-link jump: force the SESSION view to Guide
     // so the target programme's cell exists for GuideScreen to scroll/focus (it
@@ -120,13 +134,13 @@ fun LiveTVTabContent(
             com.aeriotv.android.core.ui.GuideRailPrefs(showChannelLogos, showChannelNumbers, showChannelNames),
         com.aeriotv.android.core.ui.LocalHiddenEpgBadges provides hiddenEpgBadges,
     ) {
-    when (mode) {
+    when (effectiveMode) {
         LiveTVViewMode.List -> WithDisplayScale(scale = scale) {
             ChannelListScreen(
                 onChannelClick = onChannelClick,
                 viewModel = viewModel,
                 modifierWrap = modifier,
-                viewMode = mode,
+                viewMode = effectiveMode,
                 canToggleViewMode = canToggle,
                 onToggleViewMode = toggleMode,
                 onOpenSearch = onOpenSearch,
@@ -137,7 +151,7 @@ fun LiveTVTabContent(
             onChannelClick = onChannelClick,
             viewModel = viewModel,
             modifier = modifier,
-            viewMode = mode,
+            viewMode = effectiveMode,
             canToggleViewMode = canToggle,
             onToggleViewMode = toggleMode,
             onLaunchMultiview = onLaunchMultiview,

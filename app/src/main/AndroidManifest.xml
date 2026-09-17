@@ -104,6 +104,15 @@
                 <data android:host="vod" />
                 <!-- Audit #47 Watch Next: resume VOD playback directly. -->
                 <data android:host="vodplay" />
+                <!--
+                    Screenshot automation: aeriotv://settings/<page> opens the
+                    Settings tab directly on one page (root, playlists, livetv,
+                    player, movies, dvr, appearance, general, remote, sync,
+                    updates, developer, about, playlist-detail, edit-playlist).
+                    An unknown page lands on the Settings root. Kept in release
+                    builds: it only opens a page the user can already reach.
+                -->
+                <data android:host="settings" />
             </intent-filter>
 
             <!--

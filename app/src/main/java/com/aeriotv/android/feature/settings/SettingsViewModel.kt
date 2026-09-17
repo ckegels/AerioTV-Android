@@ -99,6 +99,20 @@ class SettingsViewModel @Inject constructor(
     fun setShowProgramSubtitles(value: Boolean) {
         viewModelScope.launch { prefs.setShowProgramSubtitles(value) }
     }
+
+    /** Appearance > Rounded corners in List view (default ON). */
+    val roundedArtwork: StateFlow<Boolean> = prefs.roundedArtwork
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    fun setRoundedArtwork(value: Boolean) {
+        viewModelScope.launch { prefs.setRoundedArtwork(value) }
+    }
+
+    /** Appearance > Rounded corners in Guide view (default OFF). */
+    val roundedArtworkGuide: StateFlow<Boolean> = prefs.roundedArtworkGuide
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    fun setRoundedArtworkGuide(value: Boolean) {
+        viewModelScope.launch { prefs.setRoundedArtworkGuide(value) }
+    }
     fun setShowChannelNumbers(value: Boolean) {
         viewModelScope.launch { prefs.setShowChannelNumbers(value) }
     }
@@ -316,6 +330,10 @@ class SettingsViewModel @Inject constructor(
     }
 
     /** TV guide group-selector style: "pills" (top row) or "sidebar". */
+    /** Read-only mirror of the Drive sync master switch, for the Settings root
+     *  row value. Writing still belongs to SyncSettingsViewModel. */
+    val syncMasterEnabled: kotlinx.coroutines.flow.Flow<Boolean> = prefs.syncMasterEnabled
+
     val guideGroupSelector: StateFlow<String> = prefs.guideGroupSelector
         .stateIn(viewModelScope, SharingStarted.Eagerly, "pills")
     fun setGuideGroupSelector(mode: String) {
@@ -370,6 +388,22 @@ class SettingsViewModel @Inject constructor(
     }
     fun setAppleTVChannelFlip(value: Boolean) {
         viewModelScope.launch { prefs.setAppleTVChannelFlip(value) }
+    }
+
+    /** In-Player Gestures (phone and tablet). All default off. */
+    val playerBrightnessGesture: Flow<Boolean> = prefs.playerBrightnessGesture
+    fun setPlayerBrightnessGesture(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerBrightnessGesture(value) }
+    }
+
+    val playerVolumeGesture: Flow<Boolean> = prefs.playerVolumeGesture
+    fun setPlayerVolumeGesture(value: Boolean) {
+        viewModelScope.launch { prefs.setPlayerVolumeGesture(value) }
+    }
+
+    val playerBrightnessEdge: Flow<String> = prefs.playerBrightnessEdge
+    fun setPlayerBrightnessEdge(value: String) {
+        viewModelScope.launch { prefs.setPlayerBrightnessEdge(value) }
     }
 
     // iOS appBehaviorsAutoRecoverFrozenStreams (#37). Default true; device-local.

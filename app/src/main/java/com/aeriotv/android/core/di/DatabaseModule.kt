@@ -441,11 +441,47 @@ object DatabaseModule {
     }
 
     /**
-     * v34: native-HLS capability. -1 = never measured, which reads as "use the
+     * Persisted VOD catalog (GH #109): the Movies / TV Shows library moves
+     * out of memory and the snapshot JSON into these tables, so a 100k+ title
+     * account no longer hits a row cap or runs a TV box out of heap. New
+     * tables only; the first launch imports the old snapshot file (see
+     * OnDemandViewModel.startInitialLoads). The SQL mirrors what Room
+     * generates for VodCatalogEntities.kt exactly, or schema validation fails.
+     */
+    private val MIGRATION_33_34 = object : Migration(33, 34) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `vod_title` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`playlistKey` TEXT NOT NULL, `kind` TEXT NOT NULL, `itemKey` TEXT NOT NULL, `title` TEXT NOT NULL, " +
+                    "`sortKey` TEXT NOT NULL, `bucket` TEXT NOT NULL, `year` INTEGER, `rating` TEXT, `ratingValue` REAL, " +
+                    "`posterUrl` TEXT, `category` TEXT, `tmdbId` TEXT, `normTitle` TEXT NOT NULL, `cleanTitle` TEXT NOT NULL, " +
+                    "`artKey` TEXT NOT NULL, `payload` TEXT NOT NULL, `generation` INTEGER NOT NULL)"
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_vod_title_playlistKey_kind_itemKey` ON `vod_title` (`playlistKey`, `kind`, `itemKey`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_vod_title_playlistKey_kind_sortKey` ON `vod_title` (`playlistKey`, `kind`, `sortKey`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_vod_title_playlistKey_kind_generation` ON `vod_title` (`playlistKey`, `kind`, `generation`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_vod_title_playlistKey_kind_tmdbId` ON `vod_title` (`playlistKey`, `kind`, `tmdbId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_vod_title_playlistKey_kind_normTitle` ON `vod_title` (`playlistKey`, `kind`, `normTitle`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_vod_title_playlistKey_kind_cleanTitle` ON `vod_title` (`playlistKey`, `kind`, `cleanTitle`)")
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `vod_sweep_state` (`playlistKey` TEXT NOT NULL, `kind` TEXT NOT NULL, " +
+                    "`generation` INTEGER NOT NULL, `open` INTEGER NOT NULL, `startedAtMs` INTEGER NOT NULL, " +
+                    "`completedAtMs` INTEGER NOT NULL, PRIMARY KEY(`playlistKey`, `kind`))"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `vod_sweep_lane` (`playlistKey` TEXT NOT NULL, `kind` TEXT NOT NULL, " +
+                    "`lane` TEXT NOT NULL, `generation` INTEGER NOT NULL, `nextQuery` TEXT, `failures` INTEGER NOT NULL, " +
+                    "`hasContent` INTEGER NOT NULL, PRIMARY KEY(`playlistKey`, `kind`, `lane`))"
+            )
+        }
+    }
+
+    /**
+     * v35: native-HLS capability. -1 = never measured, which reads as "use the
      * TS path", so every existing row keeps playing exactly as it does today
      * until the next capability probe measures the server.
      */
-    private val MIGRATION_33_34 = object : Migration(33, 34) {
+    private val MIGRATION_34_35 = object : Migration(34, 35) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL("ALTER TABLE `playlists` ADD COLUMN `dispatcharrNativeHls` INTEGER NOT NULL DEFAULT -1")
         }
@@ -459,7 +495,7 @@ object DatabaseModule {
             // exists. Destructive fallback is scoped to ONLY pre-v10 dev builds
             // so an unmapped future migration can never silently wipe a real
             // user's saved servers and credentials in the field.
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34)
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35)
             .fallbackToDestructiveMigrationFrom(true, 1, 2, 3, 4, 5, 6, 7, 8, 9)
             .build()
 

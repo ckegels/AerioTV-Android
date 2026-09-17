@@ -8,6 +8,8 @@ import com.aeriotv.android.core.app.BackgroundSweep
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.VodLearnedStream
 import com.aeriotv.android.core.data.repository.PlaylistRepository
+import com.aeriotv.android.core.data.vod.VodCatalogStore
+import com.aeriotv.android.core.network.DispatcharrError
 import com.aeriotv.android.core.debug.VodResetBus
 import com.aeriotv.android.core.network.DispatcharrAuthBroker
 import com.aeriotv.android.core.network.DispatcharrClient
@@ -64,7 +66,6 @@ import com.aeriotv.android.feature.movies.cleanArtTitle
 import com.aeriotv.android.feature.movies.displayTitle
 import com.aeriotv.android.feature.movies.tmdbArtKey
 import com.aeriotv.android.feature.movies.toMediaItem
-import com.aeriotv.android.feature.movies.sortedBy as sortedByMediaOrder
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -92,12 +93,30 @@ class OnDemandViewModel @Inject constructor(
     private val tmdbArtCache: TmdbArtCache,
     private val hiddenTitlesStore: com.aeriotv.android.core.preferences.HiddenTitlesStore,
     private val settleGate: AppSettleGate,
+    private val catalogStore: VodCatalogStore,
 ) : ViewModel() {
 
     data class UiState(
         val isLoading: Boolean = false,
+        /**
+         * A catalog SWEEP is walking the server right now (Logan 2026-09-16).
+         * Separate from [isLoading], which drops as soon as the first page has
+         * painted: the Movies / TV Shows "Updating" indicator is driven from
+         * THIS, so it stays up for as long as the sweep is actually running on
+         * both the phone and TV.
+         */
+        val sweepingMovies: Boolean = false,
+        val sweepingSeries: Boolean = false,
         val error: String? = null,
+        // ALWAYS EMPTY since GH #109: the library lives in the Room catalog
+        // (VodCatalogStore) and the grids read it through [library]. Kept only
+        // for the legacy OnDemandTabContent, which splitVod never reaches.
+        // Look titles up with movieByUuid / seriesById instead.
         val movies: List<DispatcharrVODMovie> = emptyList(),
+        // Catalog rows the detail screens, Continue Watching and the Watchlist
+        // asked for by key, read from Room on demand (bounded, newest kept).
+        val catalogMovies: Map<String, DispatcharrVODMovie> = emptyMap(),
+        val catalogSeries: Map<Int, DispatcharrVODSeries> = emptyMap(),
         // Titles opened from Continue Watching / Watchlist that the library
         // walk never loaded (row cap, disabled group, provider gone), fetched
         // on demand so the detail screen opens instead of "not found".
@@ -143,6 +162,7 @@ class OnDemandViewModel @Inject constructor(
         // loading flow is independent. Both share the same playlist context.
         val isLoadingSeries: Boolean = false,
         val seriesError: String? = null,
+        // Always empty since GH #109; see [movies].
         val series: List<DispatcharrVODSeries> = emptyList(),
         val seriesTotalCount: Int = 0,
         val seriesSearchQuery: String = "",
@@ -233,33 +253,32 @@ class OnDemandViewModel @Inject constructor(
     // ---- Derived library cache (Logan 2026-09-11: "the libraries for any of
     // the three tabs are not being cached so they appear to be reloading every
     // time they're opened"). tvOS never rebuilds on a tab return
-    // (tvos_movies_spec 1.3), so the derived list lives HERE, not in a
+    // (tvos_movies_spec 1.3), so the built list lives HERE, not in a
     // composable that is only reached when the tab is first opened.
     //
-    // Measured on the Streamer before this moved (release build, 40k movies /
-    // 11k series): the first open of Movies spent 5703 ms building the list
-    // and TV Shows 2121 ms, because the build only STARTED when the tab was
-    // opened. Running it from the view model means the answer is already there
-    // on the first open, and a re-open with an unchanged key costs nothing.
+    // Since GH #109 the list is a window over the Room catalog: the query
+    // sorts and filters in SQL and keeps only the row ids and rail buckets in
+    // memory, and rows are read a window at a time as the grid scrolls. The
+    // 40k MediaItem list this replaced was ~80 MB on its own at 130k titles.
     data class MediaLibrary(
         val items: List<com.aeriotv.android.feature.movies.MediaItem> = emptyList(),
         val letters: Set<Char> = emptySet(),
+        /** First grid index for a rail letter, without reading rows. */
+        val indexOfLetter: (Char) -> Int = { -1 },
+        /** Grid index of a MediaItem key (the TV return-from-detail restore). */
+        val indexOfKey: (Any) -> Int = { -1 },
     )
 
-    /** The inputs a built library depends on. The source list is compared by
-     *  IDENTITY: the sweep republishes an equal list often and a deep equals
-     *  over 40k rows would cost more than the rebuild it avoids. */
+    /** The inputs a built library depends on. [version] moves when the
+     *  catalog behind [catalogKey] changes (a sweep page, a finished sweep). */
     private data class LibrarySpec(
-        val source: List<Any>,
+        val catalogKey: String?,
+        val version: Int,
         val hidden: Set<String>,
         val hiddenTitles: Set<String>,
         val genre: String?,
         val sort: com.aeriotv.android.feature.movies.MediaSortOrder,
-    ) {
-        fun sameAs(other: LibrarySpec?): Boolean = other != null &&
-            source === other.source && hidden == other.hidden && hiddenTitles == other.hiddenTitles &&
-            genre == other.genre && sort == other.sort
-    }
+    )
 
     private val moviesGenre = MutableStateFlow<String?>(null)
     private val seriesGenre = MutableStateFlow<String?>(null)
@@ -284,39 +303,85 @@ class OnDemandViewModel @Inject constructor(
         if (isMovie) moviesGenre.value = genre else seriesGenre.value = genre
     }
 
-    // The MediaItem mapping (title cleanup regexes over every row) is the
-    // expensive half and depends ONLY on the source list, so it is cached
-    // separately: changing a genre pill or the sort order then re-filters and
-    // re-sorts an already-mapped list instead of re-parsing 40k titles.
-    private var movieItemsSource: List<DispatcharrVODMovie>? = null
-    private var movieItems: List<com.aeriotv.android.feature.movies.MediaItem> = emptyList()
-    private var seriesItemsSource: List<DispatcharrVODSeries>? = null
-    private var seriesItems: List<com.aeriotv.android.feature.movies.MediaItem> = emptyList()
     private var lastMoviesSpec: LibrarySpec? = null
     private var lastSeriesSpec: LibrarySpec? = null
 
-    // Continue Watching and Watchlist used to find their rows with
-    // state.movies.firstOrNull { ... } per entry, an O(entries x library) scan
-    // that cost 185 ms + 140 ms on the main thread at every Movies open.
-    private var movieIndexSource: List<DispatcharrVODMovie>? = null
-    private var movieIndex: Map<String, DispatcharrVODMovie> = emptyMap()
-    private var seriesIndexSource: List<DispatcharrVODSeries>? = null
-    private var seriesIndex: Map<Int, DispatcharrVODSeries> = emptyMap()
+    // ---- Catalog identity and change signal (GH #109). The key is the
+    // active playlist's snapshot identity while that kind is enabled and
+    // supported, null otherwise (the grid is then empty). The version is
+    // bumped, throttled, as sweep pages land so the grid fills progressively
+    // without a rebuild per page, and once more when a sweep ends.
+    private val movieCatalogKey = MutableStateFlow<String?>(null)
+    private val seriesCatalogKey = MutableStateFlow<String?>(null)
+    private val movieCatalogVersion = MutableStateFlow(0)
+    private val seriesCatalogVersion = MutableStateFlow(0)
+    @Volatile private var lastMovieCatalogBumpAt = 0L
+    @Volatile private var lastSeriesCatalogBumpAt = 0L
 
-    /** The browse-list movie with this uuid, off an index rebuilt only when
-     *  the list changes; null when the uuid is not in the browse list. */
-    private fun indexedMovie(uuid: String): DispatcharrVODMovie? {
-        val src = _state.value.movies
-        if (src !== movieIndexSource) { movieIndex = src.associateBy { it.uuid }; movieIndexSource = src }
-        return movieIndex[uuid]
+    private fun catalogKeyFlow(isMovie: Boolean) = if (isMovie) movieCatalogKey else seriesCatalogKey
+
+    private fun kindOf(isMovie: Boolean) = if (isMovie) VodCatalogStore.KIND_MOVIE else VodCatalogStore.KIND_SERIES
+
+    /**
+     * The catalog behind a tab changed. Throttled to one rebuild per
+     * [CATALOG_PUBLISH_THROTTLE_MS] unless [force] (the end of a sweep): a
+     * rebuild re-runs the sorted id query, which is cheap next to the
+     * per-page full-list copies it replaces but not free on an Onn box.
+     */
+    private fun catalogChanged(isMovie: Boolean, force: Boolean) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val last = if (isMovie) lastMovieCatalogBumpAt else lastSeriesCatalogBumpAt
+        if (!force && now - last < CATALOG_PUBLISH_THROTTLE_MS) return
+        if (isMovie) lastMovieCatalogBumpAt = now else lastSeriesCatalogBumpAt = now
+        (if (isMovie) movieCatalogVersion else seriesCatalogVersion).update { it + 1 }
+        viewModelScope.launch {
+            catalogMisses.clear()
+            publishCatalogCount(isMovie)
+        }
     }
 
-    /** The browse-list series with this id, off the same kind of index. */
-    private fun indexedSeries(id: Int): DispatcharrVODSeries? {
-        val src = _state.value.series
-        if (src !== seriesIndexSource) { seriesIndex = src.associateBy { it.id }; seriesIndexSource = src }
-        return seriesIndex[id]
+    /** Header counts and tab presence read the stored title count. */
+    private suspend fun publishCatalogCount(isMovie: Boolean) {
+        val key = catalogKeyFlow(isMovie).value
+        val n = if (key == null) 0 else catalogStore.count(key, kindOf(isMovie))
+        _state.update { if (isMovie) it.copy(totalCount = n) else it.copy(seriesTotalCount = n) }
     }
+
+    // On-demand single-title reads for movieByUuid / seriesById. A key is
+    // looked up once per catalog change: a miss is remembered so a
+    // recomposition that asks again does not re-query. Main-thread confined.
+    private val catalogLookups = HashSet<String>()
+    private val catalogMisses = HashSet<String>()
+
+    private fun requestCatalogMovie(uuid: String) {
+        val key = movieCatalogKey.value ?: return
+        val tag = "m:$uuid"
+        if (tag in catalogMisses || !catalogLookups.add(tag)) return
+        viewModelScope.launch {
+            try {
+                val m = catalogStore.movie(key, uuid)
+                if (m == null) catalogMisses += tag
+                else _state.update { it.copy(catalogMovies = (it.catalogMovies + (uuid to m)).newest(CATALOG_LOOKUP_CACHE)) }
+            } finally { catalogLookups.remove(tag) }
+        }
+    }
+
+    private fun requestCatalogSeries(id: Int) {
+        val key = seriesCatalogKey.value ?: return
+        val tag = "s:$id"
+        if (tag in catalogMisses || !catalogLookups.add(tag)) return
+        viewModelScope.launch {
+            try {
+                val s = catalogStore.series(key, id)
+                if (s == null) catalogMisses += tag
+                else _state.update { it.copy(catalogSeries = (it.catalogSeries + (id to s)).newest(CATALOG_LOOKUP_CACHE)) }
+            } finally { catalogLookups.remove(tag) }
+        }
+    }
+
+    /** The last [n] entries of an insertion-ordered map. */
+    private fun <K, V> Map<K, V>.newest(n: Int): Map<K, V> =
+        if (size <= n) this else entries.drop(size - n).associate { it.toPair() }
 
     // Resolved hero backdrops, kept here so a tab that is torn down and shown
     // again does not re-resolve every card (tvOS holds them for the session).
@@ -383,47 +448,44 @@ class OnDemandViewModel @Inject constructor(
     private fun startLibraryPipeline(isMovie: Boolean) {
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(
-                _state.map { st -> if (isMovie) st.movies as List<Any> else st.series as List<Any> },
+                kotlinx.coroutines.flow.combine(catalogKeyFlow(isMovie), if (isMovie) movieCatalogVersion else seriesCatalogVersion) { k, v -> k to v },
                 if (isMovie) appPreferences.hiddenMovieGroups else appPreferences.hiddenSeriesGroups,
                 if (isMovie) appPreferences.moviesSortOrder else appPreferences.seriesSortOrder,
                 if (isMovie) moviesGenre else seriesGenre,
                 hiddenTitles,
-            ) { source, hidden, sortWire, genre, hiddenKeys ->
-                @Suppress("UNCHECKED_CAST")
+            ) { catalog, hidden, sortWire, genre, hiddenKeys ->
                 LibrarySpec(
-                    source as List<Any>, hidden as Set<String>, hiddenKeys as Set<String>, genre as String?,
-                    com.aeriotv.android.feature.movies.MediaSortOrder.fromWire(sortWire as String?),
+                    catalog.first, catalog.second, hidden, hiddenKeys, genre,
+                    com.aeriotv.android.feature.movies.MediaSortOrder.fromWire(sortWire),
                 )
             }.collectLatest { spec ->
-                if (spec.sameAs(if (isMovie) lastMoviesSpec else lastSeriesSpec)) return@collectLatest
+                if (spec == (if (isMovie) lastMoviesSpec else lastSeriesSpec)) return@collectLatest
                 val pending = if (isMovie) _moviesLibraryPending else _seriesLibraryPending
                 pending.value = true
-                val built = withContext(Dispatchers.Default) { buildLibrary(isMovie, spec) }
-                if (isMovie) { lastMoviesSpec = spec; _moviesLibrary.value = built }
-                else { lastSeriesSpec = spec; _seriesLibrary.value = built }
+                val built = runCatching { buildLibrary(isMovie, spec) }
+                    .onFailure { warnUnlessCancelled("VOD library query failed", it) }
+                    .getOrNull()
+                if (built != null) {
+                    if (isMovie) { lastMoviesSpec = spec; _moviesLibrary.value = built }
+                    else { lastSeriesSpec = spec; _seriesLibrary.value = built }
+                }
                 pending.value = false
             }
         }
     }
 
-    private fun buildLibrary(isMovie: Boolean, spec: LibrarySpec): MediaLibrary {
-        val all = if (isMovie) {
-            @Suppress("UNCHECKED_CAST") val src = spec.source as List<DispatcharrVODMovie>
-            if (src !== movieItemsSource) { movieItems = src.map { it.toMediaItem() }; movieItemsSource = src }
-            movieItems
-        } else {
-            @Suppress("UNCHECKED_CAST") val src = spec.source as List<DispatcharrVODSeries>
-            if (src !== seriesItemsSource) { seriesItems = src.map { it.toMediaItem() }; seriesItemsSource = src }
-            seriesItems
-        }
-        val onlyHidden = spec.genre == HIDDEN_CATEGORY
-        val list = all.asSequence()
-            .filter { if (onlyHidden) it.key in spec.hiddenTitles else it.key !in spec.hiddenTitles }
-            .filter { it.category == null || it.category !in spec.hidden }
-            .filter { onlyHidden || spec.genre == null || it.category == spec.genre }
-            .toList()
-            .sortedByMediaOrder(spec.sort)
-        return MediaLibrary(list, list.mapTo(HashSet()) { it.bucket })
+    /** Runs the catalog query on the IO pool; nothing here touches main. */
+    private suspend fun buildLibrary(isMovie: Boolean, spec: LibrarySpec): MediaLibrary {
+        val key = spec.catalogKey ?: return MediaLibrary()
+        val list = catalogStore.buildLibrary(
+            VodCatalogStore.LibraryQuery(
+                playlistKey = key, kind = kindOf(isMovie), hiddenGroups = spec.hidden,
+                hiddenTitleKeys = spec.hiddenTitles, genre = spec.genre, onlyHiddenToken = HIDDEN_CATEGORY,
+                sort = spec.sort,
+            ),
+        )
+        val letters = withContext(Dispatchers.Default) { list.letters }
+        return MediaLibrary(list, letters, list::indexOfLetter, list::indexOfKey)
     }
 
     // Debounced server-side search jobs, cancelled + restarted per keystroke so
@@ -456,124 +518,150 @@ class OnDemandViewModel @Inject constructor(
         deferredStart?.cancel()
         deferredStart = null
         viewModelScope.launch {
-            // Open from the saved library at once; re-sweep the provider only
-            // when the snapshot is older than the user's cadence (tester ask,
-            // Freyguy1975 2026-09-07: a large XC library was re-pulled on every
-            // open). Playlist switches, Refresh Everything and pull to refresh
-            // still sweep unconditionally through refresh()/refreshSeries().
+            // Open from the stored catalog at once; re-sweep the provider only
+            // when a kind's last finished sweep is older than the user's cadence
+            // (tester ask, Freyguy1975 2026-09-07: a large XC library was
+            // re-pulled on every open). Playlist switches, Refresh Everything
+            // and pull to refresh still sweep through refresh()/refreshSeries().
             val playlist = playlistRepository.activePlaylist()
+            val identity = playlist?.let { snapshotStore.identity(it) }
             val decodeStartedAt = android.os.SystemClock.elapsedRealtime()
-            val snap = playlist?.let { snapshotStore.load(snapshotStore.identity(it)) }
+            val meta = identity?.let { loadSnapshotMetadata(it) }
             val decodeMs = android.os.SystemClock.elapsedRealtime() - decodeStartedAt
-            // Per-half permission verdict, applied BEFORE the cache is restored:
-            // a half the server has denied must not resurface from the saved
-            // library (rails, search, Continue Watching, multiview add all read
-            // the same lists), and the flags must be right on the first frame
-            // because a fresh snapshot means no sweep runs to set them.
+            // Per-half permission verdict, applied BEFORE the catalog is
+            // attached: a half the server has denied must not resurface from
+            // the stored catalog (rails, search, Continue Watching, multiview
+            // add all read the same lists), and the flags must be right on the
+            // first frame because a fresh install means no sweep runs to set
+            // them.
             val moviesDenied = playlist != null &&
                 (!playlist.vodEnabled || !playlist.dispatcharrCanViewVod())
             val seriesDenied = playlist != null &&
                 (!playlist.vodEnabled || !playlist.dispatcharrCanViewSeries())
             _state.update { it.copy(moviesDenied = moviesDenied, seriesDenied = seriesDenied) }
-            if (snap != null) {
-                // Denied halves are shelved, not discarded: the rows stay off
-                // screen but are written back by the next save, so the user's
-                // real library survives a block and a later unblock does not
-                // pay for a full re-sweep (see [shelveMovies]).
-                if (moviesDenied && snap.movies.isNotEmpty()) {
-                    shelvedMovies = snap.movies
-                    shelvedMovieGroupNames = snap.movieGroupNames
-                }
-                if (seriesDenied && snap.series.isNotEmpty()) {
-                    shelvedSeries = snap.series
-                    shelvedSeriesGroupNames = snap.seriesGroupNames
-                }
-                val restoredMovies = if (moviesDenied) emptyList() else snap.movies
-                val restoredSeries = if (seriesDenied) emptyList() else snap.series
-                _state.update {
-                    it.copy(
-                        movies = restoredMovies, totalCount = restoredMovies.size,
-                        series = restoredSeries, seriesTotalCount = restoredSeries.size,
-                        movieGroupNames = if (moviesDenied) emptyList()
-                            else snap.movieGroupNames.ifEmpty { it.movieGroupNames },
-                        seriesGroupNames = if (seriesDenied) emptyList()
-                            else snap.seriesGroupNames.ifEmpty { it.seriesGroupNames },
-                        unsupportedSource = false, isLoading = false, isLoadingSeries = false,
-                    )
-                }
-                val now = System.currentTimeMillis()
-                val ageMs = now - snap.savedAtMs
-                val limitMs = appPreferences.vodLibraryRefreshHours.first() * 3_600_000L
-                Log.i(
-                    TAG,
-                    "[VOD-CACHE] restored ${snap.movies.size} movies, ${snap.series.size} series " +
-                        "from ${ageMs / 60_000} min ago (decode ${decodeMs}ms)",
-                )
-                com.aeriotv.android.core.app.AppLaunchTrace.noteVodRestored(decodeMs)
-                // Gate each kind on ITS OWN completion stamp: the movie sweep
-                // saves the file while the series sweep is still walking, so
-                // a series sweep killed mid-walk (app update, force stop) left
-                // a fresh file with a partial series list that the age check
-                // alone would have served for the whole cadence window.
-                moviesCompletedAtMs = snap.moviesCompletedAtMs
-                seriesCompletedAtMs = snap.seriesCompletedAtMs
-                val fresh = { at: Long -> limitMs > 0 && (now - at) in 0 until limitMs }
-                // A half written while it was DENIED, or written by a build
-                // that predates the denied markers, is never "fresh": it may be
-                // the emptied library a blocked capability left behind, and
-                // trusting it is exactly what kept Movies hidden after the user
-                // re-enabled it on the server (phone 2026-09-15). Force that
-                // half's sweep, cadence and change-probe gates ignored.
-                val legacySnapshot = snap.schema < VodLibrarySnapshotStore.SCHEMA
-                // The LATCH is armed from the file alone, never from the
-                // current capability: at this point the capability probe may
-                // not have landed yet (phone 2026-09-15 restored at :31 and
-                // probed at :32), so a verdict read here would be the stale,
-                // still-denied one. Whoever sees the allowed verdict first,
-                // this launch's gate below or the capability collector when the
-                // probe lands, disarms the latch by running the full sweep.
-                if (snap.moviesDenied || legacySnapshot) pendingMoviesRecovery = true
-                if (snap.seriesDenied || legacySnapshot) pendingSeriesRecovery = true
-                val forceMovies = !moviesDenied && pendingMoviesRecovery
-                val forceSeries = !seriesDenied && pendingSeriesRecovery
-                Log.i(
-                    TAG,
-                    "[VOD-CACHE] written-under-denial latch: movies=$pendingMoviesRecovery " +
-                        "series=$pendingSeriesRecovery (legacy=$legacySnapshot); " +
-                        "forcing now movies=$forceMovies series=$forceSeries",
-                )
-                // A denied half is not swept at all; the sweep's own gate would
-                // return immediately anyway, and asking for it only logs noise.
-                val moviesFresh = moviesDenied || (!forceMovies && fresh(snap.moviesCompletedAtMs))
-                val seriesFresh = seriesDenied || (!forceSeries && fresh(snap.seriesCompletedAtMs))
-                // Change-probe baseline travels with the snapshot.
-                moviesProbeCount = snap.moviesProbeCount
-                moviesProbeNewest = snap.moviesProbeNewest
-                seriesProbeCount = snap.seriesProbeCount
-                seriesProbeNewest = snap.seriesProbeNewest
-                restoredFromSnapshot = true
-                // The restored library is on screen NOW and is what the art
-                // pass works from (Apple enriches on restore too). Nothing
-                // sweeps on the foreground launch path any more (Logan
-                // 2026-09-12): the refresh is a quiet background sweep that
-                // starts only once the app has settled.
-                enrichArt(isMovie = true)
-                enrichArt(isMovie = false)
-                Log.i(TAG, "[VOD-CACHE] launch cadence: movies=${if (moviesFresh) "fresh" else "stale"} series=${if (seriesFresh) "fresh" else "stale"}")
+            if (playlist == null || identity == null) {
                 launchRestoreDone.complete(Unit)
-                scheduleBackgroundSweep(
-                    moviesStale = !moviesFresh,
-                    seriesStale = !seriesFresh,
-                    forced = forceMovies || forceSeries,
-                )
+                refresh()
+                refreshSeries()
                 return@launch
             }
-            // No snapshot: there is nothing to show instantly, so this one
-            // sweep stays on the launch path.
+            runCatching { catalogStore.pruneIdentities(playlistRepository.allOnce().mapTo(HashSet()) { it.id }, identity) }
+                .onFailure { warnUnlessCancelled("VOD catalog prune failed", it) }
+            val movieCount = catalogStore.count(identity, VodCatalogStore.KIND_MOVIE)
+            val seriesCount = catalogStore.count(identity, VodCatalogStore.KIND_SERIES)
+            if (movieCount == 0 && seriesCount == 0) {
+                // Nothing stored: there is nothing to show instantly, so this
+                // one sweep stays on the launch path.
+                launchRestoreDone.complete(Unit)
+                refresh()
+                refreshSeries()
+                return@launch
+            }
+            // A denied half is simply not attached to its catalog. The rows
+            // stay in Room untouched, so a later grant reattaches instantly
+            // (the Room-era replacement for shelving the JSON lists).
+            if (!moviesDenied) movieCatalogKey.value = identity
+            if (!seriesDenied) seriesCatalogKey.value = identity
+            val movieGroups = if (moviesDenied) emptyList() else meta?.movieGroupNames.orEmpty()
+                .ifEmpty { catalogStore.distinctCategories(identity, VodCatalogStore.KIND_MOVIE) }
+            val seriesGroups = if (seriesDenied) emptyList() else meta?.seriesGroupNames.orEmpty()
+                .ifEmpty { catalogStore.distinctCategories(identity, VodCatalogStore.KIND_SERIES) }
+            _state.update {
+                it.copy(
+                    totalCount = if (moviesDenied) 0 else movieCount,
+                    seriesTotalCount = if (seriesDenied) 0 else seriesCount,
+                    movieGroupNames = if (moviesDenied) emptyList() else movieGroups.ifEmpty { it.movieGroupNames },
+                    seriesGroupNames = if (seriesDenied) emptyList() else seriesGroups.ifEmpty { it.seriesGroupNames },
+                    unsupportedSource = false, isLoading = false, isLoadingSeries = false,
+                )
+            }
+            val now = System.currentTimeMillis()
+            val limitMs = appPreferences.vodLibraryRefreshHours.first() * 3_600_000L
+            Log.i(TAG, "[VOD-CACHE] restored $movieCount movies, $seriesCount series from the catalog (metadata ${decodeMs}ms)")
+            com.aeriotv.android.core.app.AppLaunchTrace.noteVodRestored(decodeMs)
+            // Gate each kind on ITS OWN finished sweep. A sweep still OPEN
+            // (killed mid-walk by an app update or a force stop, or stopped by
+            // a failed page) is stale however recent its last completion: the
+            // background sweep then RESUMES it from the saved lane positions.
+            val movieSweep = catalogStore.state(identity, VodCatalogStore.KIND_MOVIE)
+            val seriesSweep = catalogStore.state(identity, VodCatalogStore.KIND_SERIES)
+            moviesCompletedAtMs = movieSweep?.takeIf { !it.open }?.completedAtMs ?: 0L
+            seriesCompletedAtMs = seriesSweep?.takeIf { !it.open }?.completedAtMs ?: 0L
+            val fresh = { at: Long -> at > 0L && limitMs > 0 && (now - at) in 0 until limitMs }
+            // A half written while it was DENIED, or written by a build that
+            // predates the denied markers, is never "fresh": it may be the
+            // emptied library a blocked capability left behind, and trusting it
+            // is exactly what kept Movies hidden after the user re-enabled it
+            // on the server (phone 2026-09-15). Force that half's sweep,
+            // cadence and change-probe gates ignored.
+            val legacySnapshot = (meta?.schema ?: 0) < VodLibrarySnapshotStore.SCHEMA
+            // The LATCH is armed from the stored metadata alone, never from the
+            // current capability: at this point the capability probe may not
+            // have landed yet (phone 2026-09-15 restored at :31 and probed at
+            // :32), so a verdict read here would be the stale, still-denied
+            // one. Whoever sees the allowed verdict first, this launch's gate
+            // below or the capability collector when the probe lands, disarms
+            // the latch by running the full sweep.
+            if (meta?.moviesDenied == true || legacySnapshot) pendingMoviesRecovery = true
+            if (meta?.seriesDenied == true || legacySnapshot) pendingSeriesRecovery = true
+            val forceMovies = !moviesDenied && pendingMoviesRecovery
+            val forceSeries = !seriesDenied && pendingSeriesRecovery
+            Log.i(
+                TAG,
+                "[VOD-CACHE] written-under-denial latch: movies=$pendingMoviesRecovery " +
+                    "series=$pendingSeriesRecovery (legacy=$legacySnapshot); " +
+                    "forcing now movies=$forceMovies series=$forceSeries",
+            )
+            // A denied half is not swept at all; the sweep's own gate would
+            // return immediately anyway, and asking for it only logs noise.
+            val moviesFresh = moviesDenied || (!forceMovies && fresh(moviesCompletedAtMs))
+            val seriesFresh = seriesDenied || (!forceSeries && fresh(seriesCompletedAtMs))
+            // Change-probe baseline travels with the snapshot metadata.
+            meta?.let {
+                moviesProbeCount = it.moviesProbeCount
+                moviesProbeNewest = it.moviesProbeNewest
+                seriesProbeCount = it.seriesProbeCount
+                seriesProbeNewest = it.seriesProbeNewest
+            }
+            restoredFromSnapshot = true
+            // The restored library is on screen NOW and is what the art
+            // pass works from (Apple enriches on restore too). Nothing
+            // sweeps on the foreground launch path any more (Logan
+            // 2026-09-12): the refresh is a quiet background sweep that
+            // starts only once the app has settled.
+            enrichArt(isMovie = true)
+            enrichArt(isMovie = false)
+            Log.i(TAG, "[VOD-CACHE] launch cadence: movies=${if (moviesFresh) "fresh" else "stale"} series=${if (seriesFresh) "fresh" else "stale"}")
             launchRestoreDone.complete(Unit)
-            refresh()
-            refreshSeries()
+            scheduleBackgroundSweep(
+                moviesStale = !moviesFresh,
+                seriesStale = !seriesFresh,
+                forced = forceMovies || forceSeries,
+            )
         }
+    }
+
+    /**
+     * The snapshot file's metadata (group names, probe baseline). A pre-Room
+     * file that still carries the title lists is imported into the catalog
+     * ONCE here and rewritten without them, so an upgrade opens with the
+     * library it had and never decodes the 30 MB file again. The decoded
+     * lists stay local to this function so they are collectable as soon as
+     * the import returns. Watch progress, the Watchlist and hidden titles are
+     * keyed "m:uuid" / "s:id", exactly the catalog's keys, so nothing they
+     * reference changes.
+     */
+    private suspend fun loadSnapshotMetadata(identity: String): VodLibrarySnapshotStore.Snapshot? {
+        val snap = snapshotStore.load(identity) ?: return null
+        if (snap.movies.isEmpty() && snap.series.isEmpty()) return snap
+        runCatching {
+            catalogStore.importLegacy(identity, snap.movies, snap.series, snap.moviesCompletedAtMs, snap.seriesCompletedAtMs)
+        }.onFailure { warnUnlessCancelled("legacy VOD snapshot import failed", it) }.onSuccess {
+            Log.i(TAG, "[VOD-DB] imported legacy snapshot: ${snap.movies.size} movies, ${snap.series.size} series")
+        }
+        val meta = snap.copy(movies = emptyList(), series = emptyList())
+        snapshotStore.save(meta)
+        return meta
     }
 
     /**
@@ -730,17 +818,17 @@ class OnDemandViewModel @Inject constructor(
      * (art key, title) pairs; everything else follows in library order.
      */
     fun enrichArt(priorityKeys: List<Pair<String, String>> = emptyList(), isMovie: Boolean) {
-        viewModelScope.launch {
-            val st = _state.value
-            val items = withContext(Dispatchers.Default) {
-                if (isMovie) {
-                    st.movies.map { m -> val t = displayTitle(m.displayName, m.year); tmdbArtKey(t, true) to t }
-                } else {
-                    st.series.map { sr -> val t = displayTitle(sr.displayName, sr.year); tmdbArtKey(t, false) to t }
-                }
-            }
-            if (items.isEmpty() && priorityKeys.isEmpty()) return@launch
-            tmdbArtCache.enrich(items, isMovie, priorityKeys)
+        // The library is read from the catalog a page at a time (GH #109), so
+        // the pass never holds the whole title list; the keys are the stored
+        // artKey / title columns, the same tmdbArtKey(displayTitle) pairs the
+        // in-memory mapping produced.
+        val key = catalogKeyFlow(isMovie).value
+        if (key == null && priorityKeys.isEmpty()) return
+        val kind = kindOf(isMovie)
+        tmdbArtCache.enrichPaged(isMovie, priorityKeys) { cursor ->
+            if (key == null) return@enrichPaged null
+            val rows = catalogStore.artPage(key, kind, cursor, ART_PAGE_SIZE)
+            if (rows.isEmpty()) null else rows.last().id to rows.map { it.artKey to it.title }
         }
     }
 
@@ -775,7 +863,7 @@ class OnDemandViewModel @Inject constructor(
     }
 
     /**
-     * Write the current lists as the playlist's library snapshot.
+     * Write the playlist's library metadata (group names, probe baseline).
      * [completed] names the kind whose sweep just finished; its stamp is
      * refreshed, the other kind keeps whatever it had.
      */
@@ -804,23 +892,19 @@ class OnDemandViewModel @Inject constructor(
         viewModelScope.launch {
             val playlist = playlistRepository.activePlaylist() ?: return@launch
             val st = _state.value
-            // Write the SHELVED rows for a denied half so the other half's save
-            // cannot erase a library the user still owns: re-granting the
-            // capability then restores it instantly instead of paying for a
-            // full re-sweep of data that was still valid.
-            val movies = if (st.moviesDenied) (shelvedMovies ?: emptyList()) else st.movies
-            val series = if (st.seriesDenied) (shelvedSeries ?: emptyList()) else st.series
-            val movieGroups =
-                if (st.moviesDenied) shelvedMovieGroupNames else st.movieGroupNames
-            val seriesGroups =
-                if (st.seriesDenied) shelvedSeriesGroupNames else st.seriesGroupNames
-            if (movies.isEmpty() && series.isEmpty()) return@launch
+            // Metadata only: the titles live in the Room catalog (GH #109),
+            // so a denied half's rows are never at risk from the other half's
+            // save (the shelving this replaces existed only to protect them in
+            // the JSON file). What still MUST be recorded is the denial itself
+            // and the zeroed freshness markers, or the next launch reads the
+            // denied half as fresh and never re-sweeps it once it is allowed
+            // again (phone 2026-09-15).
             snapshotStore.save(
                 VodLibrarySnapshotStore.Snapshot(
                     identity = snapshotStore.identity(playlist),
                     savedAtMs = now,
-                    movies = movies, series = series,
-                    movieGroupNames = movieGroups, seriesGroupNames = seriesGroups,
+                    movieGroupNames = if (st.moviesDenied) shelvedMovieGroupNames else st.movieGroupNames,
+                    seriesGroupNames = if (st.seriesDenied) shelvedSeriesGroupNames else st.seriesGroupNames,
                     // Freshness is never inferable for a denied half.
                     moviesCompletedAtMs = if (st.moviesDenied) 0L else moviesCompletedAtMs,
                     seriesCompletedAtMs = if (st.seriesDenied) 0L else seriesCompletedAtMs,
@@ -830,6 +914,11 @@ class OnDemandViewModel @Inject constructor(
                     seriesProbeNewest = if (st.seriesDenied) "" else seriesProbeNewest,
                     moviesDenied = st.moviesDenied,
                     seriesDenied = st.seriesDenied,
+                    // Stamp the CURRENT schema. Without this every file decoded
+                    // as schema 0 and `legacySnapshot` was permanently true, so
+                    // both halves force-swept on every single launch and the
+                    // cadence gate never applied.
+                    schema = VodLibrarySnapshotStore.SCHEMA,
                 ),
             )
         }
@@ -873,9 +962,15 @@ class OnDemandViewModel @Inject constructor(
                 .drop(1)
                 .collect {
                     resetVodState()
-                    initialLoadsStarted = true
-                    refresh()
-                    refreshSeries()
+                    // Go back through the STORED-CATALOG path, not straight to
+                    // a sweep (Logan 2026-09-16): every playlist keeps its own
+                    // vod_title / vod_sweep_state rows, so the newly active
+                    // playlist opens from Room instantly and only re-sweeps
+                    // when its own cadence gate says it is due. A deleted
+                    // playlist's rows are gone by now, so this correctly falls
+                    // through to a fresh sweep for whatever became active.
+                    initialLoadsStarted = false
+                    startInitialLoads()
                 }
         }
         // Per-half capability changes on the SAME playlist (a re-probe after the
@@ -921,9 +1016,33 @@ class OnDemandViewModel @Inject constructor(
         // "Refresh Everything" (PlaylistViewModel.refreshEverything): the active
         // id is UNCHANGED, so the observeActiveId().drop(1) collector above never
         // fires. The VodResetBus bridges that gap and runs the same nuclear reset.
+        //
+        // Unlike a playlist switch, this one is destructive on purpose (Logan
+        // 2026-09-16): the ACTIVE playlist's stored catalog is deleted (its
+        // vod_title / vod_sweep_state / vod_sweep_lane rows across every
+        // identity it owns, plus its snapshot metadata) and rebuilt from
+        // scratch, so nothing stale can paint. Only the active playlist is
+        // touched; every other playlist keeps its catalog. The forced sweep is
+        // the ordinary foreground one, so a kind whose capability is denied
+        // stays empty instead of being walked.
         viewModelScope.launch {
             vodResetBus.resets.collect {
                 resetVodState()
+                val active = playlistRepository.activePlaylist()
+                if (active != null) {
+                    runCatching {
+                        catalogStore.deleteForPlaylistId(active.id)
+                        snapshotStore.delete(snapshotStore.identity(active))
+                        catalogStore.clearRowCache()
+                    }.onFailure {
+                        Log.w(TAG, "[VOD-CAT] refresh everything: catalog wipe failed", it)
+                    }
+                    Log.i(
+                        TAG,
+                        "[VOD-CAT] refresh everything: catalog cleared for playlist=${active.id}, " +
+                            "full sweep starting",
+                    )
+                }
                 initialLoadsStarted = true
                 refresh()
                 refreshSeries()
@@ -979,10 +1098,10 @@ class OnDemandViewModel @Inject constructor(
         personSeriesJob = null
         providerNamesJob?.cancel()
         providerNamesJob = null
-        movieItemsSource = null; movieItems = emptyList()
-        seriesItemsSource = null; seriesItems = emptyList()
-        movieIndexSource = null; movieIndex = emptyMap()
-        seriesIndexSource = null; seriesIndex = emptyMap()
+        // The old playlist's catalog stays in Room (switching back opens it
+        // at once); the grids detach from it until the new source's key is set.
+        movieCatalogKey.value = null; seriesCatalogKey.value = null
+        catalogLookups.clear(); catalogMisses.clear()
         lastMoviesSpec = null; lastSeriesSpec = null
         _moviesLibrary.value = MediaLibrary(); _seriesLibrary.value = MediaLibrary()
         _heroBackdrops.value = emptyMap()
@@ -1050,11 +1169,12 @@ class OnDemandViewModel @Inject constructor(
             val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
                     sourceType == SourceType.DispatcharrUserPass
             if (playlist == null || !isDispatcharr || playlist.apiKey.isNullOrBlank()) {
+                // No server search: match the stored catalog (GH #109: the
+                // library is no longer held in memory to filter).
+                val hits = movieCatalogKey.value?.let { catalogStore.searchMovies(it, q) }.orEmpty()
+                if (_state.value.searchQuery.trim() != q) return@launch
                 _state.update { st ->
-                    st.copy(
-                        searchResults = rankSearch(st.movies.filter { it.displayName.contains(q, ignoreCase = true) }, q) { it.displayName },
-                        isSearching = false,
-                    )
+                    st.copy(searchResults = rankSearch(hits, q) { it.displayName }, isSearching = false)
                 }
                 return@launch
             }
@@ -1103,11 +1223,10 @@ class OnDemandViewModel @Inject constructor(
             val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
                     sourceType == SourceType.DispatcharrUserPass
             if (playlist == null || !isDispatcharr || playlist.apiKey.isNullOrBlank()) {
+                val hits = seriesCatalogKey.value?.let { catalogStore.searchSeries(it, q) }.orEmpty()
+                if (_state.value.seriesSearchQuery.trim() != q) return@launch
                 _state.update { st ->
-                    st.copy(
-                        seriesSearchResults = rankSearch(st.series.filter { it.displayName.contains(q, ignoreCase = true) }, q) { it.displayName },
-                        isSearchingSeries = false,
-                    )
+                    st.copy(seriesSearchResults = rankSearch(hits, q) { it.displayName }, isSearchingSeries = false)
                 }
                 return@launch
             }
@@ -1209,17 +1328,24 @@ class OnDemandViewModel @Inject constructor(
         var bestMovies: List<DispatcharrVODMovie> = emptyList()
         var bestSeries: List<DispatcharrVODSeries> = emptyList()
         withContext(Dispatchers.Default) {
+            // The pool is the stored catalog (queried per person for just the
+            // credited ids and titles, GH #109) plus the search results and
+            // resolved titles, catalog rows first as the library came first.
             if (isMovie) {
-                val library = snapshot.movies + snapshot.searchResults + snapshot.resolvedMovies.values
-                val byTmdb = HashMap<String, DispatcharrVODMovie>()
-                val byTitle = HashMap<String, DispatcharrVODMovie>()
-                for (m in library) {
-                    val t = m.tmdbId
-                    if (!t.isNullOrBlank()) byTmdb.putIfAbsent(t, m)
-                    else byTitle.putIfAbsent(normalizeVodTitle(m.displayName), m)
-                }
+                val catalogKey = movieCatalogKey.value
                 for (person in people) {
                     val credits = tmdbService.personCredits(person.id, isMovie = true, rawKey = key)
+                    val titles = credits.map { normalizeVodTitle(it.title) }
+                    val stored = if (catalogKey == null) emptyList() else
+                        catalogStore.moviesByTmdbIds(catalogKey, credits.map { it.id }) +
+                            catalogStore.moviesByNormTitlesWithoutTmdb(catalogKey, titles)
+                    val byTmdb = HashMap<String, DispatcharrVODMovie>()
+                    val byTitle = HashMap<String, DispatcharrVODMovie>()
+                    for (m in stored + snapshot.searchResults + snapshot.resolvedMovies.values) {
+                        val t = m.tmdbId
+                        if (!t.isNullOrBlank()) byTmdb.putIfAbsent(t, m)
+                        else byTitle.putIfAbsent(normalizeVodTitle(m.displayName), m)
+                    }
                     val seen = HashSet<String>()
                     val hits = ArrayList<DispatcharrVODMovie>()
                     for (c in credits) {
@@ -1229,16 +1355,20 @@ class OnDemandViewModel @Inject constructor(
                     if (hits.size > bestMovies.size) { bestName = person.name; bestMovies = hits }
                 }
             } else {
-                val library = snapshot.series + snapshot.seriesSearchResults + snapshot.resolvedSeries.values
-                val byTmdb = HashMap<String, DispatcharrVODSeries>()
-                val byTitle = HashMap<String, DispatcharrVODSeries>()
-                for (sr in library) {
-                    val t = sr.tmdbId
-                    if (!t.isNullOrBlank()) byTmdb.putIfAbsent(t, sr)
-                    else byTitle.putIfAbsent(normalizeVodTitle(sr.displayName), sr)
-                }
+                val catalogKey = seriesCatalogKey.value
                 for (person in people) {
                     val credits = tmdbService.personCredits(person.id, isMovie = false, rawKey = key)
+                    val titles = credits.map { normalizeVodTitle(it.title) }
+                    val stored = if (catalogKey == null) emptyList() else
+                        catalogStore.seriesByTmdbIds(catalogKey, credits.map { it.id }) +
+                            catalogStore.seriesByNormTitlesWithoutTmdb(catalogKey, titles)
+                    val byTmdb = HashMap<String, DispatcharrVODSeries>()
+                    val byTitle = HashMap<String, DispatcharrVODSeries>()
+                    for (sr in stored + snapshot.seriesSearchResults + snapshot.resolvedSeries.values) {
+                        val t = sr.tmdbId
+                        if (!t.isNullOrBlank()) byTmdb.putIfAbsent(t, sr)
+                        else byTitle.putIfAbsent(normalizeVodTitle(sr.displayName), sr)
+                    }
                     val seen = HashSet<Int>()
                     val hits = ArrayList<DispatcharrVODSeries>()
                     for (c in credits) {
@@ -1368,6 +1498,12 @@ class OnDemandViewModel @Inject constructor(
             movieSweepJob?.cancel()
         }
         movieSweepIsBackground = background
+        // The "Updating" indicator on Movies / TV Shows is driven from this
+        // flag, so it stays up for exactly as long as a sweep is walking the
+        // server, rather than dropping with isLoading at the first painted
+        // page (Logan 2026-09-16). Cleared by job identity below, so the
+        // completion of a job this call preempted cannot clear the new one.
+        _state.update { it.copy(sweepingMovies = true) }
         movieSweepJob = viewModelScope.launch(sweepContext(background)) {
             // Opportunistic capability probe on entering On Demand with a
             // stale / unprobed snapshot, so a just-granted VOD permission takes
@@ -1398,6 +1534,11 @@ class OnDemandViewModel @Inject constructor(
             // TV Shows tab. Denying both halves is what hides the combined On
             // Demand tab, and MainScaffold composes that from the two.
             if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrCanViewVod())) {
+                // Detaching the grid from the catalog key IS the shelving in
+                // the Room world (GH #109): the stored rows survive untouched,
+                // so re-granting the capability puts the tab back instantly
+                // instead of paying for a full re-sweep.
+                movieCatalogKey.value = null
                 shelveMovies()
                 _state.update {
                     it.copy(
@@ -1438,13 +1579,16 @@ class OnDemandViewModel @Inject constructor(
                 }
                 shelvedMovies = null
                 shelvedMovieGroupNames = emptyList()
+                // Reattach the grid to the stored catalog at once; the forced
+                // sweep below then rebuilds it honestly in the background.
+                playlist?.takeIf { it.vodEnabled }?.let { movieCatalogKey.value = snapshotStore.identity(it) }
                 moviesCompletedAtMs = 0L
                 moviesProbeCount = 0
                 moviesProbeNewest = ""
                 Log.i(
                     TAG,
-                    "[VOD] movies capability restored: un-shelved ${unshelved?.size ?: 0}, " +
-                        "visible=${_state.value.visible.size}; forcing a full sweep",
+                    "[VOD] movies capability restored: reattached the stored catalog " +
+                        "(shelved ${unshelved?.size ?: 0}); forcing a full sweep",
                 )
             }
             if (playlist != null && sourceType == SourceType.XtreamCodes) {
@@ -1452,7 +1596,8 @@ class OnDemandViewModel @Inject constructor(
                 return@launch
             }
             if (playlist == null || !isDispatcharr || playlist.apiKey.isNullOrBlank()) {
-                _state.update { it.copy(unsupportedSource = true, movies = emptyList(), isLoading = false, error = null) }
+                movieCatalogKey.value = null
+                _state.update { it.copy(unsupportedSource = true, totalCount = 0, isLoading = false, error = null) }
                 return@launch
             }
             _state.update { it.copy(isLoading = true, error = null, unsupportedSource = false) }
@@ -1460,188 +1605,13 @@ class OnDemandViewModel @Inject constructor(
             // edits become visible without an app restart). Series refresh,
             // pagination, and search all reuse this fetch's maps.
             ensureDispatcharrCategories(playlist, invalidate = true)
-            val cats = dispatcharrEnabledMovieCats
-            if (cats.isEmpty()) {
-                // No category endpoint / nothing enabled: keep the legacy
-                // unfiltered cursor walk as the fallback.
-                loadDispatcharrMoviesUnfiltered(playlist)
-                return@launch
-            }
-            // Per-category sweep. The movie LIST endpoint omits category_id on
-            // this server, so the only way to learn a movie's real group (and
-            // make the Manage Groups filter work) is to query each enabled
-            // category endpoint and stamp the result directly. Mirrors iOS
-            // StreamingAPIs.swift per-category VOD load. A failing category is
-            // logged and skipped; one bad group never aborts the sweep.
-            val totalCap = VOD_TOTAL_CAP
-            // Walk every category to the end (Apple parity). The old "fair
-            // share" of the row cap rounded down to a single page per category
-            // on accounts with 150+ categories: 2,250 of 5,044 movies
-            // (Logan 2026-09-08). The total cap alone bounds memory.
-            val perCatCap = VOD_PER_CATEGORY_CAP
-            val base = playlistRepository.effectiveBaseUrl(playlist)
-            val merged = mutableListOf<DispatcharrVODMovie>()
-            val seen = HashSet<String>()
-            // First fill paints progressively so an empty tab shows rows at
-            // once. A RE-sweep over a populated tab keeps the old list on
-            // screen (with the refresh spinner) until the walk completes:
-            // publishing the growing list emptied the grid to "No Movies"
-            // and regrew it, and the header count ran up from 0 again.
-            // A background sweep NEVER paints progressively: the restored
-            // library is already on screen, and a per-page publish would
-            // recompose the grid dozens of times behind the user.
-            val progressive = _state.value.movies.isEmpty() && !background
-            // Categories that have >=1 movie for THIS account are the real
-            // groups for this playlist; Manage Groups is published from here.
-            // Presence is recorded from the category's OWN first-page response
-            // (count/results), NOT from whether a row survived the merged-list
-            // de-dup or made it under the row cap. Two regressions this guards:
-            //   (1) row-cap: once `merged` hits totalCap we stop APPENDING rows
-            //       and skip the cursor walk, but we still do the cheap one-page
-            //       probe for every remaining enabled category so a real,
-            //       content-bearing category past the cap is still offered (with
-            //       many categories, 5000 rows is exhausted after ~50 of them).
-            //   (2) overlap: Dispatcharr categories are many-to-many over items,
-            //       so a category whose items were all added by an earlier
-            //       category adds nothing to `seen`; presence keys off the
-            //       category response being non-empty, not seen.add() succeeding.
-            val groupsWithContent = LinkedHashSet<String>()
-            var firstPainted = false
-            for (catName in cats) {
-                pace(background)
-                val capped = merged.size >= totalCap
-                var nextUrl: String? = null
-                var fetchedForCat = 0
-                // First page for this category. Doubles as the presence probe:
-                // a single page_size=100 GET we already make per category, so
-                // marking presence here adds no extra requests beyond running
-                // it for the categories past the row cap too.
-                val firstPage = runCatching {
-                    dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                        dispatcharrClient.getVODMoviesByCategory(base, key, catName)
-                    }
-                }.onFailure { warnUnlessCancelled("VOD movies cat='$catName' failed; continuing", it) }.getOrNull()
-                if (firstPage != null) {
-                    // Presence is the category's own signal, independent of the
-                    // row cap and the shared `seen` de-dup set.
-                    if (firstPage.count > 0 || firstPage.results.isNotEmpty()) groupsWithContent += catName
-                    // Stop appending rows once the cap is hit, but keep probing
-                    // the remaining categories above for presence.
-                    if (!capped) {
-                        firstPage.results.forEach { m ->
-                            if (seen.add(m.uuid)) { merged += m.copy(categoryName = catName); fetchedForCat++ }
-                        }
-                        nextUrl = firstPage.next
-                        if (!progressive) {
-                            // keep the old list; final publish below
-                        } else if (!firstPainted) {
-                            firstPainted = true
-                            _state.update { it.copy(isLoading = false, movies = merged.toList(), totalCount = merged.size, moviesNextCursor = null, error = null) }
-                        } else {
-                            _state.update { it.copy(movies = merged.toList(), totalCount = merged.size, moviesNextCursor = null) }
-                        }
-                    }
-                }
-                // Walk this category's cursor up to its fair share (skipped once
-                // capped: nextUrl stays null above).
-                while (nextUrl != null && fetchedForCat < perCatCap && merged.size < totalCap) {
-                    pace(background)
-                    val captured = nextUrl
-                    val p = runCatching {
-                        dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                            dispatcharrClient.getVODMoviesPage(captured, key)
-                        }
-                    }.onFailure { warnUnlessCancelled("VOD movies cat='$catName' next-page failed; stopping cat", it) }.getOrNull()
-                    if (p == null) break
-                    p.results.forEach { m ->
-                        if (seen.add(m.uuid)) { merged += m.copy(categoryName = catName); fetchedForCat++ }
-                    }
-                    nextUrl = p.next
-                    if (progressive) _state.update { it.copy(movies = merged.toList(), totalCount = merged.size, moviesNextCursor = null) }
-                }
-            }
-            // Ensure the spinner clears even if every category returned empty.
-            // Publish ONLY names that carried content for this account so
-            // Manage Groups never offers an empty category like "Apple TV".
-            // Skip when the sweep produced nothing so a transient all-empty
-            // refresh doesn't wipe a previously-good list.
-            _state.update {
-                it.copy(
-                    isLoading = false,
-                    movies = merged.toList(),
-                    totalCount = if (merged.isEmpty()) it.totalCount else merged.size,
-                    moviesNextCursor = null,
-                    movieGroupNames = if (groupsWithContent.isEmpty()) it.movieGroupNames
-                        else groupsWithContent.toList().sorted(),
-                )
-            }
-            if (merged.isNotEmpty()) { persistSnapshot(MediaSweep.Movies); enrichArt(isMovie = true) }
+            sweepDispatcharrCatalog(playlist, isMovie = true, background = background)
         }
-    }
-
-    /**
-     * Legacy unfiltered movie load: first-page paint + a capped `next`-cursor
-     * walk (Audit task #42). Used as the fallback when the category endpoint
-     * returned nothing, so per-category fetch is impossible. Stamps via
-     * stampMovieGroup (a no-op/Uncategorized when there are no categories).
-     */
-    private suspend fun loadDispatcharrMoviesUnfiltered(playlist: PlaylistEntity) {
-        val base = playlistRepository.effectiveBaseUrl(playlist)
-        runCatching {
-            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                dispatcharrClient.getVODMoviesFirstPage(base, key)
+        movieSweepJob?.let { job ->
+            job.invokeOnCompletion {
+                if (movieSweepJob === job) _state.update { st -> st.copy(sweepingMovies = false) }
             }
-        }.fold(
-            onSuccess = { page ->
-                _state.update {
-                    it.copy(
-                        isLoading = false,
-                        movies = page.results.map(::stampMovieGroup),
-                        totalCount = page.count,
-                        moviesNextCursor = page.next,
-                        error = null,
-                    )
-                }
-                // Walk the `next` cursor in the background so the user gets the
-                // full library appended progressively instead of just the first
-                // 100. First-page paint already landed above so the grid is
-                // interactive; subsequent pages append as they arrive. De-dup on
-                // uuid in case two pages share a row.
-                var nextUrl = page.next
-                var pagesLoaded = 1
-                while (nextUrl != null && pagesLoaded < MAX_EAGER_VOD_PAGES) {
-                    val captured = nextUrl
-                    val nextResult = runCatching {
-                        dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                            dispatcharrClient.getVODMoviesPage(captured, key)
-                        }
-                    }
-                    nextUrl = nextResult.getOrNull()?.next
-                    pagesLoaded++
-                    nextResult.getOrNull()?.let { p ->
-                        _state.update { st ->
-                            val merged = st.movies.toMutableList()
-                            val seen = merged.mapTo(HashSet()) { it.uuid }
-                            p.results.forEach { m ->
-                                if (m.uuid !in seen) {
-                                    merged += stampMovieGroup(m)
-                                    seen += m.uuid
-                                }
-                            }
-                            st.copy(movies = merged, totalCount = p.count, moviesNextCursor = p.next)
-                        }
-                    }
-                    nextResult.exceptionOrNull()?.let { t ->
-                        warnUnlessCancelled("VOD movies next-page fetch failed; stopping", t)
-                        nextUrl = null
-                    }
-                }
-            },
-            onFailure = { t ->
-                warnUnlessCancelled("getVODMovies failed", t)
-                _state.update { it.copy(isLoading = false, error = t.message ?: t::class.simpleName) }
-            },
-        )
+        }
     }
 
     /** Foreground series sweep; see [refresh]. */
@@ -1657,6 +1627,12 @@ class OnDemandViewModel @Inject constructor(
             seriesSweepJob?.cancel()
         }
         seriesSweepIsBackground = background
+        // The "Updating" indicator on Movies / TV Shows is driven from this
+        // flag, so it stays up for exactly as long as a sweep is walking the
+        // server, rather than dropping with isLoading at the first painted
+        // page (Logan 2026-09-16). Cleared by job identity below, so the
+        // completion of a job this call preempted cannot clear the new one.
+        _state.update { it.copy(sweepingSeries = true) }
         seriesSweepJob = viewModelScope.launch(sweepContext(background)) {
             val playlist = playlistRepository.activePlaylist()
             val sourceType = playlist?.sourceType?.let { SourceType.entries.firstOrNull { st -> st.name == it } }
@@ -1666,8 +1642,10 @@ class OnDemandViewModel @Inject constructor(
             // the longer comment there. Belt-and-suspenders with MainScaffold's
             // hasVodContent.
             // Capability.CanViewSeries; same server semantics as movies above.
-            // Mirror of the movies half above: this retires SERIES only.
+            // Mirror of the movies half above: this retires SERIES only, and
+            // detaching the catalog key leaves the stored rows intact.
             if (playlist != null && (!playlist.vodEnabled || !playlist.dispatcharrCanViewSeries())) {
+                seriesCatalogKey.value = null
                 shelveSeries()
                 _state.update {
                     it.copy(
@@ -1698,13 +1676,14 @@ class OnDemandViewModel @Inject constructor(
                 }
                 shelvedSeries = null
                 shelvedSeriesGroupNames = emptyList()
+                playlist?.takeIf { it.vodEnabled }?.let { seriesCatalogKey.value = snapshotStore.identity(it) }
                 seriesCompletedAtMs = 0L
                 seriesProbeCount = 0
                 seriesProbeNewest = ""
                 Log.i(
                     TAG,
-                    "[VOD] series capability restored: un-shelved ${unshelved?.size ?: 0}, " +
-                        "visible=${_state.value.visibleSeries.size}; forcing a full sweep",
+                    "[VOD] series capability restored: reattached the stored catalog " +
+                        "(shelved ${unshelved?.size ?: 0}); forcing a full sweep",
                 )
             }
             if (playlist != null && sourceType == SourceType.XtreamCodes) {
@@ -1712,149 +1691,288 @@ class OnDemandViewModel @Inject constructor(
                 return@launch
             }
             if (playlist == null || !isDispatcharr || playlist.apiKey.isNullOrBlank()) {
-                _state.update { it.copy(unsupportedSource = true, series = emptyList(), isLoadingSeries = false, seriesError = null) }
+                seriesCatalogKey.value = null
+                _state.update { it.copy(unsupportedSource = true, seriesTotalCount = 0, isLoadingSeries = false, seriesError = null) }
                 return@launch
             }
             _state.update { it.copy(isLoadingSeries = true, seriesError = null) }
             // Piggybacks on refresh()'s category fetch when both run in the
             // same cycle (the usual case); only starts one if none exists.
             ensureDispatcharrCategories(playlist)
-            val cats = dispatcharrEnabledSeriesCats
-            if (cats.isEmpty()) {
-                loadDispatcharrSeriesUnfiltered(playlist)
-                return@launch
+            sweepDispatcharrCatalog(playlist, isMovie = false, background = background)
+        }
+        seriesSweepJob?.let { job ->
+            job.invokeOnCompletion {
+                if (seriesSweepJob === job) _state.update { st -> st.copy(sweepingSeries = false) }
             }
-            // Per-category sweep, mirror of refresh()'s movie path. Series dedup
-            // by id (Int) to match the rest of the codebase (loadMoreSeries,
-            // seriesById). A failing category is logged and skipped.
-            val totalCap = VOD_TOTAL_CAP
-            // Walk every category to the end (Apple parity). The old "fair
-            // share" of the row cap rounded down to a single page per category
-            // on accounts with 150+ categories: 2,250 of 5,044 movies
-            // (Logan 2026-09-08). The total cap alone bounds memory.
-            val perCatCap = VOD_PER_CATEGORY_CAP
-            val base = playlistRepository.effectiveBaseUrl(playlist)
-            val merged = mutableListOf<DispatcharrVODSeries>()
-            // See the movie sweep: background sweeps publish once, at the end.
-            val progressive = _state.value.series.isEmpty() && !background
-            val seen = HashSet<Int>()
-            // Presence is recorded from each category's own first-page response,
-            // independent of the row cap and the shared `seen` de-dup set. See
-            // the longer note in refresh()'s movie sweep for the two regressions
-            // this guards (row-cap reached before the loop, and fully-overlapping
-            // many-to-many categories).
-            val groupsWithContent = LinkedHashSet<String>()
-            var firstPainted = false
-            for (catName in cats) {
-                pace(background)
-                val capped = merged.size >= totalCap
-                var nextUrl: String? = null
-                var fetchedForCat = 0
-                val firstPage = runCatching {
-                    dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                        dispatcharrClient.getVODSeriesByCategory(base, key, catName)
-                    }
-                }.onFailure { warnUnlessCancelled("VOD series cat='$catName' failed; continuing", it) }.getOrNull()
-                if (firstPage != null) {
-                    if (firstPage.count > 0 || firstPage.results.isNotEmpty()) groupsWithContent += catName
-                    if (!capped) {
-                        firstPage.results.forEach { s ->
-                            if (seen.add(s.id)) { merged += s.copy(categoryName = catName); fetchedForCat++ }
-                        }
-                        nextUrl = firstPage.next
-                        if (!progressive) {
-                            // keep the old list; final publish below
-                        } else if (!firstPainted) {
-                            firstPainted = true
-                            _state.update { it.copy(isLoadingSeries = false, series = merged.toList(), seriesTotalCount = merged.size, seriesNextCursor = null, seriesError = null) }
-                        } else {
-                            _state.update { it.copy(series = merged.toList(), seriesTotalCount = merged.size, seriesNextCursor = null) }
-                        }
-                    }
-                }
-                while (nextUrl != null && fetchedForCat < perCatCap && merged.size < totalCap) {
-                    pace(background)
-                    val captured = nextUrl
-                    val p = runCatching {
-                        dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                            dispatcharrClient.getVODSeriesPage(captured, key)
-                        }
-                    }.onFailure { warnUnlessCancelled("VOD series cat='$catName' next-page failed; stopping cat", it) }.getOrNull()
-                    if (p == null) break
-                    p.results.forEach { s ->
-                        if (seen.add(s.id)) { merged += s.copy(categoryName = catName); fetchedForCat++ }
-                    }
-                    nextUrl = p.next
-                    if (progressive) _state.update { it.copy(series = merged.toList(), seriesTotalCount = merged.size, seriesNextCursor = null) }
-                }
-            }
-            _state.update {
-                it.copy(
-                    isLoadingSeries = false,
-                    series = merged.toList(),
-                    seriesTotalCount = if (merged.isEmpty()) it.seriesTotalCount else merged.size,
-                    seriesNextCursor = null,
-                    seriesGroupNames = if (groupsWithContent.isEmpty()) it.seriesGroupNames
-                        else groupsWithContent.toList().sorted(),
-                )
-            }
-            if (merged.isNotEmpty()) { persistSnapshot(MediaSweep.Series); enrichArt(isMovie = false) }
         }
     }
 
-    /** Series counterpart of [loadDispatcharrMoviesUnfiltered]; dedup by id. */
-    private suspend fun loadDispatcharrSeriesUnfiltered(playlist: PlaylistEntity) {
+    /** One fetched + stored page of a lane walk. */
+    private class LanePage(val count: Int, val nonEmpty: Boolean, val nextQuery: String?, val written: Int)
+
+    /**
+     * The Dispatcharr Movies or TV Shows sweep (GH #109), writing straight
+     * into the Room catalog.
+     *
+     * The movie LIST endpoint omits category_id on this server, so the only
+     * way to learn a title's real group (and make the Manage Groups filter
+     * work) is to query each enabled category and stamp the result directly
+     * (iOS StreamingAPIs.swift per-category VOD load). With no category
+     * endpoint, or nothing enabled, one unfiltered lane walks the whole list
+     * and stamps from custom_properties instead.
+     *
+     * What changed from the in-memory walk:
+     *  - No row caps. VOD_TOTAL_CAP (40,000) bounded memory, and nothing is
+     *    held in memory any more; VOD_PER_CATEGORY_CAP (5,000) kept one giant
+     *    early category from starving the rest, which the ROUND-ROBIN walk
+     *    below now does instead: every lane gets one page per round, so a
+     *    category with 30,000 titles no longer delays a later one.
+     *  - Every page is written as it arrives, tagged with the sweep's
+     *    generation. Rows older generations wrote are deleted only when every
+     *    lane finished; an interrupted or failed sweep deletes nothing.
+     *  - A failed page is retried [PAGE_RETRY_ATTEMPTS] times with backoff.
+     *    If it still fails the lane keeps its position, the sweep stays open,
+     *    and the NEXT sweep resumes that lane from the failed page instead of
+     *    skipping the category until a full re-sweep. A lane that fails
+     *    [LANE_MAX_FAILURES] sweeps running is given up for that generation;
+     *    its stored titles are kept rather than deleted.
+     *  - The grid fills progressively from the catalog (throttled rebuilds),
+     *    and a re-sweep over a populated tab never empties it first. A
+     *    background sweep still publishes only at the end.
+     *
+     * Group presence (Manage Groups) is each lane's own signal (its pages
+     * report content), independent of which lane first stored a title:
+     * Dispatcharr categories are many-to-many over items, so a category whose
+     * titles were all stored by an earlier lane still has content.
+     */
+    private suspend fun sweepDispatcharrCatalog(playlist: PlaylistEntity, isMovie: Boolean, background: Boolean) {
+        val label = if (isMovie) "movies" else "series"
+        val identity = snapshotStore.identity(playlist)
+        val kind = kindOf(isMovie)
+        catalogKeyFlow(isMovie).value = identity
+        // What a previous sweep or the legacy import stored paints at once.
+        // Over a populated tab the refresh spinner stays up until the sweep
+        // ends (as before); an empty tab drops it at the first stored page.
+        publishCatalogCount(isMovie)
+        val startedEmpty = (if (isMovie) _state.value.totalCount else _state.value.seriesTotalCount) == 0
+        val cats = if (isMovie) dispatcharrEnabledMovieCats else dispatcharrEnabledSeriesCats
+        val laneNames = cats.ifEmpty { listOf(UNFILTERED_LANE) }
+        val plan = catalogStore.beginSweep(identity, kind, laneNames) { dispatcharrClient.vodCategoryQuery(isMovie, it) }
         val base = playlistRepository.effectiveBaseUrl(playlist)
-        runCatching {
-            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                dispatcharrClient.getVODSeriesFirstPage(base, key)
-            }
-        }.fold(
-            onSuccess = { page ->
-                _state.update {
-                    it.copy(
-                        isLoadingSeries = false,
-                        series = page.results.map(::stampSeriesGroup),
-                        seriesTotalCount = page.count,
-                        seriesNextCursor = page.next,
-                        seriesError = null,
-                    )
-                }
-                var nextUrl = page.next
-                var pagesLoaded = 1
-                while (nextUrl != null && pagesLoaded < MAX_EAGER_VOD_PAGES) {
-                    val captured = nextUrl
-                    val nextResult = runCatching {
-                        dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                            dispatcharrClient.getVODSeriesPage(captured, key)
-                        }
-                    }
-                    nextUrl = nextResult.getOrNull()?.next
-                    pagesLoaded++
-                    nextResult.getOrNull()?.let { p ->
-                        _state.update { st ->
-                            val merged = st.series.toMutableList()
-                            val seen = merged.mapTo(HashSet()) { it.id }
-                            p.results.forEach { s ->
-                                if (s.id !in seen) {
-                                    merged += stampSeriesGroup(s)
-                                    seen += s.id
-                                }
-                            }
-                            st.copy(series = merged, seriesTotalCount = p.count, seriesNextCursor = p.next)
-                        }
-                    }
-                    nextResult.exceptionOrNull()?.let { t ->
-                        warnUnlessCancelled("VOD series next-page fetch failed; stopping", t)
-                        nextUrl = null
-                    }
-                }
-            },
-            onFailure = { t ->
-                warnUnlessCancelled("getVODSeries failed", t)
-                _state.update { it.copy(isLoadingSeries = false, seriesError = t.message ?: t::class.simpleName) }
-            },
+        val active = ArrayDeque(plan.lanes.filter { it.nextQuery != null })
+        Log.i(
+            TAG,
+            "[VOD] $label sweep: generation ${plan.generation} (${if (plan.resumed) "resumed" else "new"}), " +
+                "${laneNames.size} lanes, ${active.size} to walk, background=$background",
         )
+        // ---- [VOD-CAT] verification trace (GH #109). A handful of lines per
+        // sweep, never one per title: enough to confirm from a device log
+        // alone that the sweep started, resumed where it left off, wrote its
+        // pages, finished, and applied NO total cap.
+        Log.i(
+            TAG,
+            "[VOD-CAT] sweep start kind=$label playlist=${playlist.id} generation=${plan.generation} " +
+                "lanes=${laneNames.size} toWalk=${active.size} background=$background",
+        )
+        Log.i(TAG, "[VOD-CAT] no total cap applied: every page the server offers is stored (VOD_TOTAL_CAP removed)")
+        if (plan.resumed) {
+            val resumedLanes = plan.lanes.count { it.nextQuery != null }
+            Log.i(
+                TAG,
+                "[VOD-CAT] resumed from saved positions: $resumedLanes of ${plan.lanes.size} lanes still open, " +
+                    "${catalogStore.count(identity, kind)} titles already stored",
+            )
+        }
+        val pagesThisRun = HashMap<String, Int>()
+        var written = 0
+        var aborted = false
+        var firstPainted = false
+        while (active.isNotEmpty()) {
+            // FAST MODE (Logan 2026-09-16): a foreground sweep with the Movies
+            // or TV Shows page actually on screen is the user waiting for the
+            // grid, so it runs with NO artificial pause and up to
+            // SWEEP_FOREGROUND_LANES pages in flight (never more than three
+            // concurrent requests, page_size stays 100). Anything else - a
+            // quiet background sweep, or a foreground sweep whose tab the user
+            // has left - keeps the paced, strictly one-at-a-time walk.
+            val fast = !background && aLibraryIsOnScreen()
+            val batch = buildList {
+                while (size < (if (fast) SWEEP_FOREGROUND_LANES else 1) && active.isNotEmpty()) {
+                    val candidate = active.removeFirst()
+                    if (candidate.nextQuery != null) add(candidate)
+                }
+            }
+            if (batch.isEmpty()) continue
+            if (!fast) pace(background)
+            val results = coroutineScope {
+                batch.map { lane ->
+                    async {
+                        val url = dispatcharrClient.vodListUrl(base, isMovie, lane.nextQuery!!)
+                        var failure: Throwable? = null
+                        val fetched = try {
+                            fetchPageWithRetry("VOD $label lane='${lane.lane}'") {
+                                fetchAndStoreLanePage(playlist, identity, isMovie, plan.generation, lane.lane, url)
+                            }
+                        } catch (u: DispatcharrError.Unauthorized) {
+                            failure = u
+                            null
+                        }
+                        Triple(lane, fetched, failure)
+                    }
+                }.awaitAll()
+            }
+            for ((lane, page, failure) in results) {
+                if (failure != null) {
+                    // The broker already tried to recover the key; every other
+                    // lane would 401 too. Stop, keep every position for next
+                    // time.
+                    warnUnlessCancelled("VOD $label sweep: unauthorized; stopping (positions kept)", failure)
+                    aborted = true
+                    continue
+                }
+                if (page == null) {
+                    // Retries exhausted: keep the lane on this page for the
+                    // next sweep and move on to the other lanes.
+                    catalogStore.saveLane(lane.copy(failures = lane.failures + 1))
+                    continue
+                }
+                written += page.written
+                val pages = (pagesThisRun[lane.lane] ?: 0) + 1
+                pagesThisRun[lane.lane] = pages
+                Log.i(
+                    TAG,
+                    "[VOD-CAT] page written kind=$label lane='${lane.lane}' page=$pages " +
+                        "rows=${page.written} runningTotal=$written serverCount=${page.count}",
+                )
+                // A server whose `next` never ends must not walk forever.
+                val next = page.nextQuery?.takeIf { pages < LANE_PAGE_SAFETY }
+                val updated = lane.copy(
+                    nextQuery = next, failures = 0,
+                    hasContent = lane.hasContent || page.count > 0 || page.nonEmpty,
+                )
+                catalogStore.saveLane(updated)
+                if (next != null && !aborted) active.addLast(updated)
+                if (!background && page.written > 0) {
+                    if (!firstPainted) {
+                        firstPainted = true
+                        if (startedEmpty) {
+                            _state.update { if (isMovie) it.copy(isLoading = false, error = null) else it.copy(isLoadingSeries = false, seriesError = null) }
+                        }
+                        catalogChanged(isMovie, force = true)
+                    } else {
+                        catalogChanged(isMovie, force = false)
+                    }
+                }
+            }
+            if (aborted) break
+        }
+        val lanes = catalogStore.lanes(identity, kind)
+        val unfinished = lanes.filter { it.nextQuery != null }
+        val givenUp = unfinished.filter { it.failures >= LANE_MAX_FAILURES }
+        val complete = !aborted && unfinished.size == givenUp.size
+        // Publish ONLY names that carried content for this account so Manage
+        // Groups never offers an empty category like "Apple TV". The
+        // unfiltered lane has no name: its groups come from the stamped rows.
+        val groups = if (cats.isEmpty()) catalogStore.distinctCategories(identity, kind)
+            else lanes.filter { it.hasContent }.map { it.lane }.sorted()
+        var closed = false
+        if (complete) {
+            val deleted = catalogStore.finishSweep(identity, kind, plan.generation, givenUp.map { it.lane })
+            if (deleted < 0) {
+                // Every lane walked but nothing arrived: keep the stored library
+                // (a transient all-empty answer must not wipe it) and close.
+                catalogStore.abandonSweep(identity, kind)
+                Log.w(TAG, "[VOD] $label sweep: generation ${plan.generation} stored nothing; library kept")
+            } else {
+                closed = true
+                Log.i(
+                    TAG,
+                    "[VOD] $label sweep: generation ${plan.generation} complete, $written rows written this run, " +
+                        "$deleted stale removed, ${givenUp.size} lanes given up",
+                )
+                Log.i(
+                    TAG,
+                    "[VOD-CAT] sweep complete kind=$label playlist=${playlist.id} written=$written " +
+                        "stored movies=${catalogStore.count(identity, VodCatalogStore.KIND_MOVIE)} " +
+                        "series=${catalogStore.count(identity, VodCatalogStore.KIND_SERIES)} " +
+                        "staleRemoved=$deleted lanesGivenUp=${givenUp.size}",
+                )
+            }
+        } else {
+            Log.w(
+                TAG,
+                "[VOD] $label sweep: generation ${plan.generation} left open (${unfinished.size} lanes unfinished, " +
+                    "aborted=$aborted); the next sweep resumes them",
+            )
+            Log.w(
+                TAG,
+                "[VOD-CAT] sweep incomplete kind=$label written=$written openLanes=${unfinished.size} " +
+                    "stored=${catalogStore.count(identity, kind)}; positions saved for resume",
+            )
+        }
+        // Nothing stored and the walk did not finish: say so instead of an
+        // empty "No Movies" grid (the old first-page failure path did too).
+        val failure = if (!complete && catalogStore.count(identity, kind) == 0) {
+            if (aborted) "Dispatcharr rejected the API key." else "Couldn't load $label from Dispatcharr."
+        } else null
+        _state.update {
+            if (isMovie) it.copy(isLoading = false, error = failure, moviesNextCursor = null, movieGroupNames = groups.ifEmpty { it.movieGroupNames })
+            else it.copy(isLoadingSeries = false, seriesError = failure, seriesNextCursor = null, seriesGroupNames = groups.ifEmpty { it.seriesGroupNames })
+        }
+        catalogChanged(isMovie, force = true)
+        if (closed) persistSnapshot(if (isMovie) MediaSweep.Movies else MediaSweep.Series) else persistSnapshot()
+        if (written > 0 || closed) enrichArt(isMovie = isMovie)
+    }
+
+    /** GET one lane page, stamp its group, store it. Throws on any failure. */
+    private suspend fun fetchAndStoreLanePage(
+        playlist: PlaylistEntity,
+        identity: String,
+        isMovie: Boolean,
+        generation: Long,
+        lane: String,
+        url: String,
+    ): LanePage {
+        if (isMovie) {
+            val p = dispatcharrAuth.withApiKeyRetry(playlist.id) { key -> dispatcharrClient.getVODMoviesPage(url, key) }
+            val stamped = p.results.map { m -> if (lane == UNFILTERED_LANE) stampMovieGroup(m) else m.copy(categoryName = lane) }
+            return LanePage(p.count, p.results.isNotEmpty(), nextQueryOf(p.next), catalogStore.writeMovies(identity, generation, stamped))
+        }
+        val p = dispatcharrAuth.withApiKeyRetry(playlist.id) { key -> dispatcharrClient.getVODSeriesPage(url, key) }
+        val stamped = p.results.map { s -> if (lane == UNFILTERED_LANE) stampSeriesGroup(s) else s.copy(categoryName = lane) }
+        return LanePage(p.count, p.results.isNotEmpty(), nextQueryOf(p.next), catalogStore.writeSeries(identity, generation, stamped))
+    }
+
+    /** The host-free query of a `next` cursor (already pinned to the request's
+     *  origin by DispatcharrClient), or null when the walk is done. */
+    private fun nextQueryOf(next: String?): String? =
+        next?.let { runCatching { java.net.URI(it).rawQuery }.getOrNull() }?.takeIf { it.isNotBlank() }
+
+    /**
+     * Run [block] up to [PAGE_RETRY_ATTEMPTS] times, waiting
+     * [PAGE_RETRY_BASE_MS] then three times as long between attempts. Returns
+     * null when every attempt failed. Cancellation and a 401 the auth broker
+     * could not recover propagate.
+     */
+    private suspend fun <T> fetchPageWithRetry(label: String, block: suspend () -> T): T? {
+        var backoff = PAGE_RETRY_BASE_MS
+        for (attempt in 1..PAGE_RETRY_ATTEMPTS) {
+            try {
+                return block()
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
+            } catch (u: DispatcharrError.Unauthorized) {
+                throw u
+            } catch (t: Throwable) {
+                warnUnlessCancelled("$label page failed (attempt $attempt of $PAGE_RETRY_ATTEMPTS)", t)
+                if (attempt < PAGE_RETRY_ATTEMPTS) {
+                    kotlinx.coroutines.delay(backoff)
+                    backoff *= 3
+                }
+            }
+        }
+        return null
     }
 
     // ──────────────────── Dispatcharr VOD categories ────────────────────
@@ -1949,19 +2067,26 @@ class OnDemandViewModel @Inject constructor(
     // the search-results list, whose rows may never have paged into the
     // browse list -- so both lookups must check both lists or a search hit
     // opens to "not found".
+    //
+    // Since GH #109 the browse library is in Room, so a title not already in
+    // one of the in-memory maps is read from the catalog in the background:
+    // the call returns null now and the state update that lands the row
+    // recomposes the caller (screens key on catalogMovies / catalogSeries).
     fun seriesById(id: Int): DispatcharrVODSeries? =
-        indexedSeries(id)
+        _state.value.catalogSeries[id]
             ?: _state.value.seriesSearchResults.firstOrNull { it.id == id }
             ?: _state.value.resolvedSeries[id]
+            ?: run { requestCatalogSeries(id); null }
 
     fun movieById(id: Int): DispatcharrVODMovie? =
-        _state.value.movies.firstOrNull { it.id == id }
+        _state.value.catalogMovies.values.firstOrNull { it.id == id }
             ?: _state.value.resolvedMovies.values.firstOrNull { it.id == id }
 
     fun movieByUuid(uuid: String): DispatcharrVODMovie? =
-        indexedMovie(uuid)
+        _state.value.catalogMovies[uuid]
             ?: _state.value.searchResults.firstOrNull { it.uuid == uuid }
             ?: _state.value.resolvedMovies[uuid]
+            ?: run { requestCatalogMovie(uuid); null }
 
     /** True while [resolveMovie] / [resolveSeries] is fetching this key. */
     fun isResolving(key: String): Boolean = key in _state.value.resolvingKeys
@@ -1983,7 +2108,10 @@ class OnDemandViewModel @Inject constructor(
         val key = "m:$uuid"
         if (key in _state.value.resolvingKeys) return
         val hint = (titleHint ?: movieTitleHints[uuid])?.trim().orEmpty()
-        if (hint.isEmpty()) return
+        // No hint means no name search, but the stored catalog can still hold
+        // the title (GH #109); the resolving flag keeps "not found" off screen
+        // while that read runs.
+        if (hint.isEmpty() && movieCatalogKey.value == null) return
         _state.update { it.copy(resolvingKeys = it.resolvingKeys + key) }
         viewModelScope.launch {
             try { resolveMovieNow(uuid, hint) } finally {
@@ -1996,6 +2124,13 @@ class OnDemandViewModel @Inject constructor(
      *  so a deck Resume on a reassigned uuid plays without opening Details. */
     private suspend fun resolveMovieNow(uuid: String, hint: String): DispatcharrVODMovie? {
         movieByUuid(uuid)?.let { return it }
+        // The stored catalog first: the in-memory lookup above only kicked
+        // off a background read, and a stored title needs no server search.
+        movieCatalogKey.value?.let { key -> catalogStore.movie(key, uuid) }?.let { m ->
+            _state.update { it.copy(catalogMovies = (it.catalogMovies + (uuid to m)).newest(CATALOG_LOOKUP_CACHE)) }
+            return m
+        }
+        if (hint.isEmpty()) return null
         run {
                 val playlist = playlistRepository.activePlaylist() ?: return null
                 if (playlist.apiKey.isNullOrBlank()) return null
@@ -2041,6 +2176,10 @@ class OnDemandViewModel @Inject constructor(
         _state.update { it.copy(resolvingKeys = it.resolvingKeys + key) }
         viewModelScope.launch {
             try {
+                seriesCatalogKey.value?.let { k -> catalogStore.series(k, id) }?.let { stored ->
+                    _state.update { it.copy(catalogSeries = (it.catalogSeries + (id to stored)).newest(CATALOG_LOOKUP_CACHE)) }
+                    return@launch
+                }
                 val playlist = playlistRepository.activePlaylist() ?: return@launch
                 if (playlist.apiKey.isNullOrBlank()) return@launch
                 ensureDispatcharrCategories(playlist)
@@ -2066,22 +2205,9 @@ class OnDemandViewModel @Inject constructor(
         data class Series(val id: Int) : KnownForTarget
     }
 
-    /** Trailing "(YYYY)" suffix many playlists append to VOD display names.
-     *  Same shape TMDBService.splitTitleYear strips; re-implemented here
-     *  because that helper is private to the service. */
-    private val knownForTrailingYear = Regex("""\(((?:19|20)\d{2})\)\s*$""")
-
-    /** Fold a display name for loose matching: trim, drop a trailing
-     *  "(YYYY)" year suffix, lowercase. A name that is ONLY "(2010)" keeps
-     *  its original text, mirroring splitTitleYear's empty-query guard. */
-    private fun normalizeVodTitle(raw: String): String {
-        val trimmed = raw.trim()
-        val cleaned = knownForTrailingYear.find(trimmed)
-            ?.let { trimmed.removeRange(it.range).trim() }
-            ?.ifEmpty { trimmed }
-            ?: trimmed
-        return cleaned.lowercase()
-    }
+    /** Fold a display name for loose matching; shared with the catalog's
+     *  normTitle column (see [com.aeriotv.android.core.data.vod.normalizeVodTitle]). */
+    private fun normalizeVodTitle(raw: String): String = com.aeriotv.android.core.data.vod.normalizeVodTitle(raw)
 
     /**
      * Find the library entity behind a "Known For" tile so the bio sheet can
@@ -2098,9 +2224,14 @@ class OnDemandViewModel @Inject constructor(
      */
     suspend fun resolveKnownForTarget(item: TmdbKnownForItem): KnownForTarget? {
         val wantTitle = normalizeVodTitle(item.title)
+        // The stored catalog stands in for the old in-memory browse list
+        // (GH #109): an indexed tmdb id lookup, then the normalized title.
         if (item.isMovie) {
-            val loaded = _state.value.movies + _state.value.searchResults
-            val match = loaded.firstOrNull { !it.tmdbId.isNullOrBlank() && it.tmdbId == item.id }
+            val key = movieCatalogKey.value
+            val loaded = _state.value.searchResults
+            val match = key?.let { catalogStore.moviesByTmdbIds(it, listOf(item.id)).firstOrNull() }
+                ?: loaded.firstOrNull { !it.tmdbId.isNullOrBlank() && it.tmdbId == item.id }
+                ?: key?.let { catalogStore.moviesByNormTitlesWithoutTmdb(it, listOf(wantTitle)).firstOrNull() }
                 ?: loaded.firstOrNull {
                     it.tmdbId.isNullOrBlank() && normalizeVodTitle(it.displayName) == wantTitle
                 }
@@ -2108,8 +2239,11 @@ class OnDemandViewModel @Inject constructor(
                 ?: return null
             return KnownForTarget.Movie(match.uuid)
         }
-        val loaded = _state.value.series + _state.value.seriesSearchResults
-        val match = loaded.firstOrNull { !it.tmdbId.isNullOrBlank() && it.tmdbId == item.id }
+        val key = seriesCatalogKey.value
+        val loaded = _state.value.seriesSearchResults
+        val match = key?.let { catalogStore.seriesByTmdbIds(it, listOf(item.id)).firstOrNull() }
+            ?: loaded.firstOrNull { !it.tmdbId.isNullOrBlank() && it.tmdbId == item.id }
+            ?: key?.let { catalogStore.seriesByNormTitlesWithoutTmdb(it, listOf(wantTitle)).firstOrNull() }
             ?: loaded.firstOrNull {
                 it.tmdbId.isNullOrBlank() && normalizeVodTitle(it.displayName) == wantTitle
             }
@@ -2144,6 +2278,15 @@ class OnDemandViewModel @Inject constructor(
         val recs = tmdbService.recommendations(id, isMovie, key)
         if (recs.isEmpty()) return emptyList()
         val snapshot = _state.value
+        // Only the recommended ids and titles are read from the catalog.
+        val recIds = recs.map { it.id }
+        val recTitles = recs.map { cleanArtTitle(it.title) }
+        val storedMovies = if (!isMovie) emptyList() else movieCatalogKey.value?.let {
+            catalogStore.moviesByTmdbIds(it, recIds) + catalogStore.moviesByCleanTitles(it, recTitles)
+        }.orEmpty()
+        val storedSeries = if (isMovie) emptyList() else seriesCatalogKey.value?.let {
+            catalogStore.seriesByTmdbIds(it, recIds) + catalogStore.seriesByCleanTitles(it, recTitles)
+        }.orEmpty()
         return withContext(Dispatchers.Default) {
             val seen = mutableSetOf(selfKey)
             val out = mutableListOf<com.aeriotv.android.feature.movies.MediaItem>()
@@ -2156,7 +2299,7 @@ class OnDemandViewModel @Inject constructor(
             // first and the title second, with no per-rec media-type filter:
             // the pool is already type-scoped.
             if (isMovie) {
-                val library = snapshot.movies + snapshot.searchResults
+                val library = storedMovies + snapshot.searchResults
                 val byTmdb = HashMap<String, DispatcharrVODMovie>()
                 val byTitle = HashMap<String, DispatcharrVODMovie>()
                 for (m in library) {
@@ -2171,7 +2314,7 @@ class OnDemandViewModel @Inject constructor(
                     if (out.size >= 12) break
                 }
             } else {
-                val library = snapshot.series + snapshot.seriesSearchResults
+                val library = storedSeries + snapshot.seriesSearchResults
                 val byTmdb = HashMap<String, DispatcharrVODSeries>()
                 val byTitle = HashMap<String, DispatcharrVODSeries>()
                 for (s in library) {
@@ -2229,12 +2372,8 @@ class OnDemandViewModel @Inject constructor(
             ?: results.firstOrNull { normalizeVodTitle(it.displayName) == wantTitle }
             ?: return null
         val stamped = stampMovieGroup(match)
-        // Merge (uuid is the movies de-dup key everywhere else) so the
-        // pushed detail screen's movieByUuid lookup can resolve it.
-        _state.update { st ->
-            if (st.movies.any { it.uuid == stamped.uuid }) st
-            else st.copy(movies = st.movies + stamped)
-        }
+        // Remember it so the pushed detail screen's movieByUuid resolves it.
+        _state.update { st -> st.copy(resolvedMovies = st.resolvedMovies + (stamped.uuid to stamped)) }
         return stamped
     }
 
@@ -2260,10 +2399,7 @@ class OnDemandViewModel @Inject constructor(
             ?: results.firstOrNull { normalizeVodTitle(it.displayName) == wantTitle }
             ?: return null
         val stamped = stampSeriesGroup(match)
-        _state.update { st ->
-            if (st.series.any { it.id == stamped.id }) st
-            else st.copy(series = st.series + stamped)
-        }
+        _state.update { st -> st.copy(resolvedSeries = st.resolvedSeries + (stamped.id to stamped)) }
         return stamped
     }
 
@@ -2865,7 +3001,10 @@ class OnDemandViewModel @Inject constructor(
         }
         // A row that carried a reassigned uuid was mapped to the live movie by
         // resolveMovie; play through the live uuid, not the stale one.
+        // movieByUuid only STARTS a catalog read on a miss (GH #109), so a
+        // stored title is read here directly before the name search fallback.
         val movie = movieByUuid(movieUuid)
+            ?: movieCatalogKey.value?.let { key -> catalogStore.movie(key, movieUuid) }
             ?: movieTitleHints[movieUuid]?.let { hint -> resolveMovieNow(movieUuid, hint) }
         val liveUuid = movie?.uuid ?: movieUuid
         // Version pinning: a picked provider copy replaces the firstStreamId
@@ -2993,10 +3132,12 @@ class OnDemandViewModel @Inject constructor(
         val pass = playlist.password
         val base = playlistRepository.effectiveBaseUrl(playlist)
         if (user.isNullOrBlank() || pass == null) {
+            movieCatalogKey.value = null
+            seriesCatalogKey.value = null
             _state.update {
                 it.copy(
                     unsupportedSource = true,
-                    movies = emptyList(), series = emptyList(),
+                    totalCount = 0, seriesTotalCount = 0,
                     isLoading = false, isLoadingSeries = false,
                     hasDeferredXtreamContent = false,
                 )
@@ -3027,13 +3168,25 @@ class OnDemandViewModel @Inject constructor(
             .onFailure { warnUnlessCancelled("XC getSeriesCategories failed", it) }.getOrDefault(emptyList())
         movieCategoryNames = movieCats.associate { it.id to it.name }
         seriesCategoryNames = seriesCats.associate { it.id to it.name }
+        // The catalog is the library for Xtream too (GH #109): the panel's
+        // one-shot answer is stored in chunks as a complete generation, and
+        // the grids read it back like any Dispatcharr sweep.
+        val identity = snapshotStore.identity(playlist)
+        if (playlist.vodEnabled && playlist.dispatcharrCanViewVod()) movieCatalogKey.value = identity
+        if (playlist.vodEnabled && playlist.dispatcharrCanViewSeries()) seriesCatalogKey.value = identity
         if (movieFast.isNotEmpty()) {
-            val movies = movieFast.map { it.toMovie(movieCategoryNames) }
-            _state.update { it.copy(movies = movies, totalCount = movies.size) }
+            storeWholeXtreamCatalog(identity, isMovie = true) { gen ->
+                movieFast.chunked(XC_WRITE_CHUNK).forEach { chunk ->
+                    catalogStore.writeMovies(identity, gen, chunk.map { it.toMovie(movieCategoryNames) })
+                }
+            }
         }
         if (seriesFast.isNotEmpty()) {
-            val series = seriesFast.map { it.toSeries(seriesCategoryNames) }
-            _state.update { it.copy(series = series, seriesTotalCount = series.size) }
+            storeWholeXtreamCatalog(identity, isMovie = false) { gen ->
+                seriesFast.chunked(XC_WRITE_CHUNK).forEach { chunk ->
+                    catalogStore.writeSeries(identity, gen, chunk.map { it.toSeries(seriesCategoryNames) })
+                }
+            }
         }
         pendingMovieCats = if (movieFast.isEmpty()) movieCats.map { it.id } else emptyList()
         pendingSeriesCats = if (seriesFast.isEmpty()) seriesCats.map { it.id } else emptyList()
@@ -3049,6 +3202,28 @@ class OnDemandViewModel @Inject constructor(
             )
         }
         if (xtreamItemsLoaded) { persistSnapshot(MediaSweep.Both); enrichArt(isMovie = true); enrichArt(isMovie = false) }
+    }
+
+    /**
+     * Store an Xtream library answered in one response as a complete catalog
+     * generation: open a generation, let [write] store every chunk, then
+     * close it, which removes titles the panel no longer lists. A write that
+     * throws leaves the generation open and deletes nothing.
+     */
+    private suspend fun storeWholeXtreamCatalog(identity: String, isMovie: Boolean, write: suspend (generation: Long) -> Unit) {
+        val kind = kindOf(isMovie)
+        val plan = catalogStore.beginSweep(identity, kind, emptyList()) { "" }
+        runCatching { write(plan.generation) }
+            .onFailure { warnUnlessCancelled("XC catalog write failed", it); return }
+        if (catalogStore.finishSweep(identity, kind, plan.generation) < 0) catalogStore.abandonSweep(identity, kind)
+        publishXtreamGroups(identity, isMovie)
+    }
+
+    /** Header count, group names and a grid rebuild after an Xtream write. */
+    private suspend fun publishXtreamGroups(identity: String, isMovie: Boolean) {
+        val groups = catalogStore.distinctCategories(identity, kindOf(isMovie))
+        _state.update { if (isMovie) it.copy(movieGroupNames = groups) else it.copy(seriesGroupNames = groups) }
+        catalogChanged(isMovie, force = true)
     }
 
     /**
@@ -3079,38 +3254,56 @@ class OnDemandViewModel @Inject constructor(
                 if (mi < movieCats.size) work += XcKind.MOVIE to movieCats[mi++]
                 if (si < seriesCats.size) work += XcKind.SERIES to seriesCats[si++]
             }
-            val movieAcc = LinkedHashMap<Int, DispatcharrVODMovie>()
-            val seriesAcc = LinkedHashMap<Int, DispatcharrVODSeries>()
-            // Push both lists at most every STATE_FLUSH_EVERY categories.
-            // Rebuilding the full lists on every one of hundreds of categories is
-            // O(n^2) work plus a grid recomposition each time -- the source of
-            // the On Demand lag / crash on large libraries.
-            fun flush() = _state.update {
-                it.copy(
-                    movies = movieAcc.values.toList(), totalCount = movieAcc.size,
-                    series = seriesAcc.values.toList(), seriesTotalCount = seriesAcc.size,
-                )
-            }
-            var done = 0
+            // Each category's answer is stored as it lands (GH #109) instead
+            // of accumulating both libraries in memory; the grids rebuild
+            // from the catalog at most every CATALOG_PUBLISH_THROTTLE_MS.
+            val identity = snapshotStore.identity(playlist)
+            if (movieCats.isNotEmpty()) movieCatalogKey.value = identity
+            if (seriesCats.isNotEmpty()) seriesCatalogKey.value = identity
+            val moviePlan = if (movieCats.isNotEmpty()) catalogStore.beginSweep(identity, VodCatalogStore.KIND_MOVIE, emptyList()) { "" } else null
+            val seriesPlan = if (seriesCats.isNotEmpty()) catalogStore.beginSweep(identity, VodCatalogStore.KIND_SERIES, emptyList()) { "" } else null
+            var movieFailures = 0
+            var seriesFailures = 0
             coroutineScope {
                 work.forEach { (kind, cat) ->
                     launch {
                         when (kind) {
                             XcKind.MOVIE -> {
-                                val items = runCatching { xtreamApi.getVodStreams(base, user, pass, cat) }.getOrDefault(emptyList())
-                                items.forEach { movieAcc[it.streamId] = it.toMovie(movieCategoryNames) }
+                                val gen = moviePlan?.generation ?: return@launch
+                                val items = runCatching { xtreamApi.getVodStreams(base, user, pass, cat) }
+                                    .onFailure { movieFailures++; warnUnlessCancelled("XC movies category $cat failed", it) }
+                                    .getOrDefault(emptyList())
+                                runCatching { catalogStore.writeMovies(identity, gen, items.map { it.toMovie(movieCategoryNames) }) }
+                                    .onFailure { movieFailures++; warnUnlessCancelled("XC movies category $cat store failed", it) }
+                                catalogChanged(isMovie = true, force = false)
                             }
                             XcKind.SERIES -> {
-                                val items = runCatching { xtreamApi.getSeries(base, user, pass, cat) }.getOrDefault(emptyList())
-                                items.forEach { seriesAcc[it.seriesId] = it.toSeries(seriesCategoryNames) }
+                                val gen = seriesPlan?.generation ?: return@launch
+                                val items = runCatching { xtreamApi.getSeries(base, user, pass, cat) }
+                                    .onFailure { seriesFailures++; warnUnlessCancelled("XC series category $cat failed", it) }
+                                    .getOrDefault(emptyList())
+                                runCatching { catalogStore.writeSeries(identity, gen, items.map { it.toSeries(seriesCategoryNames) }) }
+                                    .onFailure { seriesFailures++; warnUnlessCancelled("XC series category $cat store failed", it) }
+                                catalogChanged(isMovie = false, force = false)
                             }
                         }
-                        done++
-                        if (done % STATE_FLUSH_EVERY == 0) flush()
                     }
                 }
             }
-            flush()
+            // A generation with a failed category stays open (nothing deleted)
+            // and the next walk resumes it; a clean one removes dropped titles.
+            moviePlan?.let {
+                if (movieFailures == 0 && catalogStore.finishSweep(identity, VodCatalogStore.KIND_MOVIE, it.generation) < 0) {
+                    catalogStore.abandonSweep(identity, VodCatalogStore.KIND_MOVIE)
+                }
+                publishXtreamGroups(identity, isMovie = true)
+            }
+            seriesPlan?.let {
+                if (seriesFailures == 0 && catalogStore.finishSweep(identity, VodCatalogStore.KIND_SERIES, it.generation) < 0) {
+                    catalogStore.abandonSweep(identity, VodCatalogStore.KIND_SERIES)
+                }
+                publishXtreamGroups(identity, isMovie = false)
+            }
             _state.update { it.copy(isLoading = false, isLoadingSeries = false) }
             xtreamItemsLoaded = true
             persistSnapshot(MediaSweep.Both)
@@ -3189,6 +3382,26 @@ class OnDemandViewModel @Inject constructor(
      * quiet refresh, the ViewModel's own (main) context for a user-triggered
      * one, where the page-by-page paint is the point.
      */
+    /**
+     * How many Movies / TV Shows libraries are on screen right now.
+     *
+     * A FOREGROUND sweep with a library on screen is the user waiting for the
+     * grid to fill, so it runs unpaced and with a small number of pages in
+     * flight (Logan 2026-09-16). With nothing on screen there is no one
+     * waiting, so it falls back to the paced walk that keeps the box free for
+     * playback. A counter rather than a boolean: the two tabs can overlap
+     * while one is being swapped for the other.
+     */
+    private val visibleLibraries = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** Called by the Movies / TV Shows pages as they enter and leave. */
+    fun setLibraryVisible(visible: Boolean) {
+        if (visible) visibleLibraries.incrementAndGet()
+        else visibleLibraries.updateAndGet { (it - 1).coerceAtLeast(0) }
+    }
+
+    private fun aLibraryIsOnScreen(): Boolean = visibleLibraries.get() > 0
+
     private fun sweepContext(background: Boolean) =
         if (background) BackgroundSweep.dispatcher else kotlin.coroutines.EmptyCoroutineContext
 
@@ -3218,45 +3431,56 @@ class OnDemandViewModel @Inject constructor(
         const val TAG = "OnDemandViewModel"
         const val XC_MOVIE_PREFIX = "xc-movie-"
         const val XC_EP_PREFIX = "xc-ep-"
-        // Batch size for XC enumeration state flushes (see loadXtreamItemsIfNeeded).
-        const val STATE_FLUSH_EVERY = 16
 
         // In-flight cap for the per-copy measurement fetches (see
         // loadMovieProviderMedia). Each uncached copy can cost the server an
         // upstream fetch, so a wide fan-out would hammer the provider.
         const val PROVIDER_MEDIA_CONCURRENCY = 3
 
-        /**
-         * Size of the eagerly-walked head of the VOD library. A large Dispatcharr
-         * provider can expose 30k+ movies (340+ pages) plus thousands of series;
-         * walking the whole library on load fired ~420 back-to-back requests,
-         * ballooned the Dalvik heap past 90MB, and starved the EPG + UI for
-         * minutes (Z Fold 5 field report: page 90/344 after 2 min, EPG never
-         * painting). We now load this browsable head eagerly and fetch the rest
-         * lazily on scroll via loadMoreMovies()/loadMoreSeries(); search reaches
-         * the full library server-side regardless. 100 rows/page, so ~1,000
-         * movies + ~1,000 series up front.
-         */
-        const val MAX_EAGER_VOD_PAGES = 10
+        // VOD_TOTAL_CAP (40,000), VOD_PER_CATEGORY_CAP (5,000) and
+        // MAX_EAGER_VOD_PAGES are gone (GH #109): the catalog is stored in
+        // Room page by page, so nothing bounds memory by row count any more,
+        // and the round-robin lane walk provides the fairness the per
+        // category cap did. Apple still caps at 5,000 per kind (HomeView
+        // totalCap) and needs the same change.
+
+        /** Attempts per page before a lane is left for the next sweep. */
+        const val PAGE_RETRY_ATTEMPTS = 3
+
+        /** First retry wait; each later one is three times longer. */
+        const val PAGE_RETRY_BASE_MS = 1_000L
+
+        /** Sweeps running a lane may fail before its titles are kept as-is
+         *  and the generation is allowed to close without it. */
+        const val LANE_MAX_FAILURES = 3
+
+        /** Pages one lane may walk in one sweep (1,000,000 rows at 100 per
+         *  page): only a server whose `next` never ends reaches it. */
+        const val LANE_PAGE_SAFETY = 10_000
+
+        /** The lane name for the unfiltered walk (no category endpoint). */
+        const val UNFILTERED_LANE = ""
+
+        /** Minimum gap between progressive grid rebuilds during a sweep. */
+        const val CATALOG_PUBLISH_THROTTLE_MS = 2_000L
 
         /**
-         * Total VOD rows loaded up front in the per-category fetch path, shared
-         * across all enabled categories (each category gets a page-aligned fair
-         * share). Mirrors iOS StreamingAPIs totalCap = 5000. The legacy
-         * unfiltered fallback still uses MAX_EAGER_VOD_PAGES.
+         * Catalog pages in flight while a library is on screen (Logan
+         * 2026-09-16). Small on purpose: NEVER more than three concurrent
+         * requests against the server, which is the same in-flight cap the
+         * per-copy provider fetches use. The paced background walk stays
+         * strictly one at a time.
          */
-        // Raised from 5000 (2026-09-08): a real account holds 5,044 movies and
-        // the cap cut the last of them. Raised again 2026-09-09: with a
-        // provider re-enabled the same account holds 10k+ of each kind, and
-        // an alphabetical walk that fills the cap on its first categories
-        // ("AL: ..." held 10,000 series alone) hides every later group. Per
-        // category the walk stops at VOD_PER_CATEGORY_CAP (Apple parity:
-        // StreamingAPIs.vodPaginationItemCap = 5,000 per call); the total
-        // only bounds memory. Rows are small; JSON decode is off-main.
-        const val VOD_TOTAL_CAP = 40_000
+        const val SWEEP_FOREGROUND_LANES = 3
 
-        /** Rows walked per category before moving on (Apple: 5,000 per call). */
-        const val VOD_PER_CATEGORY_CAP = 5_000
+        /** Titles kept in UiState.catalogMovies / catalogSeries. */
+        const val CATALOG_LOOKUP_CACHE = 200
+
+        /** Catalog rows per page of the background TMDB art pass. */
+        const val ART_PAGE_SIZE = 1_000
+
+        /** Xtream titles per catalog write transaction. */
+        const val XC_WRITE_CHUNK = 500
 
         /** Debounce before a keystroke fires a server-side VOD search. */
         const val SEARCH_DEBOUNCE_MS = 300L

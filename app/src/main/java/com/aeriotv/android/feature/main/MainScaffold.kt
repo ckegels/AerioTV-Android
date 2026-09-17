@@ -115,12 +115,13 @@ import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.playlist.nowPlaying
 import com.aeriotv.android.feature.settings.AddMoreCategoriesScreen
 import com.aeriotv.android.feature.settings.AddPlaylistWizardStep
-import com.aeriotv.android.feature.settings.AppBehaviorsSettingsScreen
 import com.aeriotv.android.feature.settings.AppearanceSettingsScreen
 import com.aeriotv.android.feature.settings.DeveloperSettingsScreen
 import com.aeriotv.android.feature.settings.DvrSettingsScreen
-import com.aeriotv.android.feature.settings.MultiviewSettingsScreen
-import com.aeriotv.android.feature.settings.NetworkSettingsScreen
+import com.aeriotv.android.feature.settings.GeneralSettingsScreen
+import com.aeriotv.android.feature.settings.LiveTvSettingsScreen
+import com.aeriotv.android.feature.settings.MoviesAndTvShowsSettingsScreen
+import com.aeriotv.android.feature.settings.PlayerSettingsScreen
 import com.aeriotv.android.feature.settings.SettingsRootContent
 import com.aeriotv.android.feature.settings.DefaultSettingsPaneSelection
 import com.aeriotv.android.feature.settings.SettingsRoute
@@ -137,6 +138,9 @@ import com.aeriotv.android.feature.settings.SettingsTvRailHost
 import com.aeriotv.android.feature.settings.SettingsTwoPaneHost
 import com.aeriotv.android.feature.settings.rememberSettingsNavState
 import com.aeriotv.android.feature.settings.rememberSettingsPaneSelection
+import com.aeriotv.android.feature.settings.isPaneBaseline
+import com.aeriotv.android.feature.settings.settingsDeepLinkPageNeedsPlaylist
+import com.aeriotv.android.feature.settings.settingsRouteForDeepLinkPage
 import com.aeriotv.android.feature.settings.visibleSettingsSections
 import com.aeriotv.android.ui.tv.tvFocusScale
 
@@ -598,6 +602,20 @@ fun MainScaffold(
     LaunchedEffect(Unit) {
         viewModel.liveTvTabRequests.collect {
             selectedTab = AppTab.LiveTV
+            initialTabApplied = true
+        }
+    }
+
+    // Screenshot deep link (aeriotv://settings/<page>). Select the Settings
+    // tab so SettingsTabContent composes; that composable then reads the same
+    // pending request and applies the route (it cannot be applied from here --
+    // the nav stack and pane selection live inside it). The request is a
+    // StateFlow, so it is still readable on the frame after this switch and on
+    // a cold launch where Settings had never been composed.
+    val pendingSettingsPage by viewModel.settingsPageRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingSettingsPage) {
+        if (pendingSettingsPage != null) {
+            selectedTab = AppTab.Settings
             initialTabApplied = true
         }
     }
@@ -2288,6 +2306,10 @@ private fun SettingsTabContent(
     val inPane = twoPane && route == null
     val updaterEnabled = hiltViewModel<com.aeriotv.android.feature.update.UpdateViewModel>()
         .isEnabled
+    // Sidebar / rail Sync row reads On or Off rather than a description.
+    val syncEnabled by hiltViewModel<com.aeriotv.android.feature.settings.SettingsViewModel>()
+        .syncMasterEnabled
+        .collectAsStateWithLifecycle(initialValue = false)
     val addPlaylistStep: AddPlaylistStep = when (val r = route) {
         is SettingsRoute.AddPlaylist -> when (val st = r.step) {
             is AddPlaylistWizardStep.ChooseType -> AddPlaylistStep.ChooseType
@@ -2297,6 +2319,44 @@ private fun SettingsTabContent(
     }
     val playlistVm = playlistViewModel
     val playlistState by playlistVm.state.collectAsStateWithLifecycle()
+
+    // Screenshot deep link (aeriotv://settings/<page>). MainScaffold has already
+    // selected the Settings tab, which is what composed us; translate the page
+    // into this host's own terms. In a two-pane host a pane-baseline page is the
+    // SELECTION and everything else is a push above Playlists, matching what the
+    // user would have produced by hand; the stacked phone layout just pushes.
+    // The playlist pages wait for an active playlist, which is why the request
+    // is a StateFlow and this effect is keyed on the playlist id as well.
+    val pendingSettingsPage by playlistVm.settingsPageRequest.collectAsStateWithLifecycle()
+    // Bumped when a deep link changes the rail's selection: the rail only pulls
+    // focus into the pane on a PUSH, so a plain selection change would leave
+    // focus wherever it was (the tab pill on a cold launch).
+    var deepLinkPaneFocus by remember { mutableIntStateOf(0) }
+    LaunchedEffect(pendingSettingsPage, twoPane, tvRail, playlistState.playlist?.id) {
+        val page = pendingSettingsPage ?: return@LaunchedEffect
+        val activeId = playlistState.playlist?.id
+        // No playlist yet: leave the request pending and retry when one lands.
+        if (activeId == null && settingsDeepLinkPageNeedsPlaylist(page)) return@LaunchedEffect
+        val target = settingsRouteForDeepLinkPage(page, activeId)
+        nav.popToRoot()
+        if (twoPane) {
+            when {
+                target == null ->
+                    selection = if (tvRail) SettingsRoute.Root else DefaultSettingsPaneSelection
+                target.isPaneBaseline -> selection = target
+                else -> {
+                    // Playlist detail / edit are pushes; baseline them on the
+                    // Playlists pane so Back walks out the way it normally would.
+                    selection = SettingsRoute.Playlists
+                    nav.push(target)
+                }
+            }
+            deepLinkPaneFocus++
+        } else if (target != null) {
+            nav.push(target)
+        }
+        playlistVm.consumeSettingsPage()
+    }
     // Watch for a playlist id flip while we're inside the Add Playlist flow;
     // that means the user's onboarding Save succeeded and the new row was
     // promoted active. Close the embedded flow.
@@ -2370,6 +2430,7 @@ private fun SettingsTabContent(
         )
         is SettingsRoute.About -> SettingsScreen(
             onSectionClick = { nav.push(SettingsRoute.Section(it)) },
+            onBack = { nav.pop() },
             onOpenLicenses = { nav.push(SettingsRoute.Licenses) },
             viewModel = playlistVm,
             content = SettingsRootContent.AboutOnly,
@@ -2454,13 +2515,15 @@ private fun SettingsTabContent(
             onBack = { nav.pop() },
         )
         is SettingsRoute.Section -> when (r.section) {
-            SettingsSection.Appearance -> AppearanceSettingsScreen(
+            SettingsSection.LiveTV -> LiveTvSettingsScreen(
                 onBack = { nav.pop() },
                 onOpenAddMoreCategories = { nav.push(SettingsRoute.AddMoreCategories) },
             )
-            SettingsSection.AppBehaviors -> AppBehaviorsSettingsScreen(onBack = { nav.pop() })
-            SettingsSection.Multiview -> MultiviewSettingsScreen(onBack = { nav.pop() })
-            SettingsSection.Network -> NetworkSettingsScreen(onBack = { nav.pop() })
+            SettingsSection.Player -> PlayerSettingsScreen(onBack = { nav.pop() })
+            SettingsSection.MoviesAndTvShows ->
+                MoviesAndTvShowsSettingsScreen(onBack = { nav.pop() })
+            SettingsSection.Appearance -> AppearanceSettingsScreen(onBack = { nav.pop() })
+            SettingsSection.General -> GeneralSettingsScreen(onBack = { nav.pop() })
             SettingsSection.RemoteControl ->
                 com.aeriotv.android.feature.settings.RemoteControlSettingsScreen(
                     onBack = { nav.pop() },
@@ -2475,6 +2538,15 @@ private fun SettingsTabContent(
                 onBack = { nav.pop() },
                 onOpenLogViewer = { nav.push(SettingsRoute.LogViewer) },
             )
+            // The About page is the root's About block rendered on its own,
+            // so the copy cannot drift from what the pane hosts already show.
+            SettingsSection.About -> SettingsScreen(
+                onSectionClick = { nav.push(SettingsRoute.Section(it)) },
+                onBack = { nav.pop() },
+                onOpenLicenses = { nav.push(SettingsRoute.Licenses) },
+                viewModel = playlistVm,
+                content = SettingsRootContent.AboutOnly,
+            )
         }
     }
     }
@@ -2482,6 +2554,7 @@ private fun SettingsTabContent(
     Box(modifier = Modifier.focusRequester(settingsContentFocus).focusGroup()) {
         if (tvRail) {
             SettingsTvRailHost(
+                focusPaneSignal = deepLinkPaneFocus,
                 selection = selection,
                 onSelect = { picked ->
                     nav.popToRoot()
@@ -2493,6 +2566,7 @@ private fun SettingsTabContent(
                     updaterEnabled = updaterEnabled,
                 ),
                 activePlaylistName = playlistState.playlist?.name,
+                syncEnabled = syncEnabled,
                 // Plan B2: the TV takeover set. These keep the whole screen so
                 // their keyboard / IME plumbing is untouched.
                 takeover = ::isSettingsTakeover,
@@ -2515,6 +2589,7 @@ private fun SettingsTabContent(
                     updaterEnabled = updaterEnabled,
                 ),
                 activePlaylistName = playlistState.playlist?.name,
+                syncEnabled = syncEnabled,
                 // Log lines want the whole width; everything else fits a pane.
                 takeover = { it is SettingsRoute.LogViewer || it is SettingsRoute.Licenses },
                 detail = { renderRoute(it) },
@@ -2597,8 +2672,9 @@ private data class VodPresence(
     companion object {
         fun from(s: com.aeriotv.android.feature.ondemand.OnDemandViewModel.UiState) = VodPresence(
             unsupportedSource = s.unsupportedSource,
-            hasMovies = s.movies.isNotEmpty(),
-            hasSeries = s.series.isNotEmpty(),
+            // Stored catalog counts (GH #109: the lists are no longer in memory).
+            hasMovies = s.totalCount > 0,
+            hasSeries = s.seriesTotalCount > 0,
             isLoading = s.isLoading,
             isLoadingSeries = s.isLoadingSeries,
             hasDeferredXtreamContent = s.hasDeferredXtreamContent,

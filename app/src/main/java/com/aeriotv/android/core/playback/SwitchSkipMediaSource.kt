@@ -2,6 +2,7 @@ package com.aeriotv.android.core.playback
 
 import android.os.Handler
 import android.os.SystemClock
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.StreamKey
@@ -96,10 +97,12 @@ class SwitchSkipMediaSource(inner: MediaSource) : WrappingMediaSource(inner) {
 internal class SwitchSkipMediaPeriod(val inner: MediaPeriod) : MediaPeriod, MediaPeriod.Callback {
 
     private companion object {
-        /** How long skip attempts are retried once new data is queued. */
-        const val ACTIVE_TIMEOUT_MS = 5_000L
+        const val TAG = "AerioExoPlayer"
         /** How far into the new data the video keyframe skip may look. */
         const val LOOKAHEAD_US = 2_000_000L
+        /** Non-keyframe video samples dropped in one read call before the
+         *  renderer is handed back control (it retries immediately). */
+        const val MAX_DROPS_PER_READ = 64
     }
 
     private var callback: MediaPeriod.Callback? = null
@@ -116,6 +119,13 @@ internal class SwitchSkipMediaPeriod(val inner: MediaPeriod) : MediaPeriod, Medi
     private var timeoutMs = 0L
     private var targetUs = C.TIME_UNSET
     private var firstDroppedUs = C.TIME_UNSET
+    /** Highest buffered position seen while armed; its growth IS "new bytes". */
+    private var lastBufferedUs = C.TIME_UNSET
+    private var firstNewDataAtMs = 0L
+    /** While true, no video sample at or past the boundary reaches the decoder
+     *  until an IDR (H.264) / IRAP (HEVC) keyframe does. */
+    private var awaitVideoKeyframe = false
+    private var keyframeLogged = false
     private var resultSink: ((SwitchSkipMediaSource.Result) -> Unit)? = null
 
     fun arm(minNewDataUs: Long, timeoutMs: Long, sink: (SwitchSkipMediaSource.Result) -> Unit) {
@@ -131,6 +141,10 @@ internal class SwitchSkipMediaPeriod(val inner: MediaPeriod) : MediaPeriod, Medi
         armedAtMs = SystemClock.elapsedRealtime()
         targetUs = C.TIME_UNSET
         firstDroppedUs = C.TIME_UNSET
+        lastBufferedUs = buffered
+        firstNewDataAtMs = 0L
+        awaitVideoKeyframe = true
+        keyframeLogged = false
         wrappers.forEach { it?.done = false }
         resultSink = sink
         armed = true
@@ -148,6 +162,7 @@ internal class SwitchSkipMediaPeriod(val inner: MediaPeriod) : MediaPeriod, Medi
     private fun finish(result: SwitchSkipMediaSource.Result) {
         armed = false
         active = false
+        awaitVideoKeyframe = false
         val sink = resultSink
         resultSink = null
         sink?.invoke(result)
@@ -155,22 +170,39 @@ internal class SwitchSkipMediaPeriod(val inner: MediaPeriod) : MediaPeriod, Medi
 
     private fun hasVideo(): Boolean = wrappers.any { it?.trackType == C.TRACK_TYPE_VIDEO }
 
-    /** Arm -> active once the first post-switch data is loaded; enforce the timeouts. */
+    /**
+     * Arm -> active once the first post-switch data is loaded, bounded only by
+     * the switch window ([timeoutMs], 30 s).
+     *
+     * AMD 2026-09-16: the old rule gave up 5 s after activation. With an 8 to
+     * 10 s first byte the new stream had not produced a usable keyframe yet, so
+     * the skip fell back to "play it out" and the mid-GOP burst that followed
+     * reached the decoder uncut (audio fine, picture frozen). The pending skip
+     * now stays armed while nothing has arrived, and the first new bytes after
+     * a dry spell are the boundary candidate.
+     */
     private fun maybeActivate(): Boolean {
         if (!armed) return false
         val now = SystemClock.elapsedRealtime()
-        if (!active && now - armedAtMs > timeoutMs) {
-            abandon("no new data in ${timeoutMs}ms")
+        if (now - armedAtMs > timeoutMs) {
+            abandon(
+                if (active) "no keyframe past the boundary in ${timeoutMs}ms"
+                else "no new data in ${timeoutMs}ms",
+            )
             return false
         }
-        if (active && now - activatedAtMs > ACTIVE_TIMEOUT_MS) {
-            // Reads are never withheld, so this only ends the retries.
-            abandon("no keyframe past the boundary in ${ACTIVE_TIMEOUT_MS}ms")
-            return false
-        }
-        if (!active) {
-            val buffered = inner.bufferedPositionUs
-            if (buffered != C.TIME_END_OF_SOURCE && buffered >= boundaryUs + minNewDataUs) {
+        val buffered = inner.bufferedPositionUs
+        if (buffered != C.TIME_UNSET && buffered != C.TIME_END_OF_SOURCE) {
+            if (buffered > lastBufferedUs) lastBufferedUs = buffered
+            if (firstNewDataAtMs == 0L && buffered > boundaryUs) {
+                firstNewDataAtMs = now
+                Log.i(
+                    TAG,
+                    "[SWITCH] first new bytes ${(buffered - boundaryUs) / 1000}ms past the " +
+                        "boundary after ${now - armedAtMs}ms",
+                )
+            }
+            if (!active && buffered >= boundaryUs + minNewDataUs) {
                 active = true
                 activatedAtMs = now
             }
@@ -191,7 +223,12 @@ internal class SwitchSkipMediaPeriod(val inner: MediaPeriod) : MediaPeriod, Medi
             val formatResult = trySkip(w, formatHolder)
             if (formatResult != null) return formatResult
         }
-        // Always a normal read: the skip never withholds samples, so the old
+        if (awaitVideoKeyframe && w.trackType == C.TRACK_TYPE_VIDEO &&
+            (readFlags and SampleStream.FLAG_PEEK) == 0
+        ) {
+            return readVideoFromKeyframe(w, formatHolder, buffer, readFlags)
+        }
+        // Otherwise a normal read: the skip never withholds samples, so the old
         // buffer keeps playing until (and unless) the jump happens.
         return w.inner.readData(formatHolder, buffer, readFlags)
     }
@@ -207,6 +244,64 @@ internal class SwitchSkipMediaPeriod(val inner: MediaPeriod) : MediaPeriod, Medi
         if (r == C.RESULT_FORMAT_READ) { formatOut[0] = r; return C.TIME_UNSET }
         if (r != C.RESULT_BUFFER_READ || scratch.isEndOfStream) return C.TIME_UNSET
         return scratch.timeUs
+    }
+
+    /**
+     * The new stream must start the video decoder on a keyframe.
+     *
+     * The queue's keyframe skip alone is not enough: when the old buffer has
+     * already run dry (AMD 2026-09-16, slow provider) the playhead is past the
+     * boundary before any new byte lands, so there is nothing left to skip, and
+     * Dispatcharr hands over mid-GOP. An Amlogic decoder fed non-IDR/non-IRAP
+     * slices with no reference frames simply outputs nothing while audio keeps
+     * playing: the frozen picture.
+     *
+     * So every video sample at or past the boundary is dropped until the first
+     * keyframe (ExoPlayer's H.264 / H.265 sample readers flag IDR and IRAP
+     * access units). The decoder therefore never sees data that depends on
+     * references it does not have, which is what a flush would have been for,
+     * without the renderer reset that painted green/purple in 2026-09-15. A
+     * real container change (PID / codec) still arrives as a format read, which
+     * MediaCodecRenderer handles as a format change on its own.
+     *
+     * Old-buffer samples (before the boundary) pass through untouched.
+     */
+    private fun readVideoFromKeyframe(
+        w: SkipStream,
+        formatHolder: FormatHolder,
+        buffer: DecoderInputBuffer,
+        readFlags: Int,
+    ): Int {
+        var dropped = 0
+        while (true) {
+            val r = w.inner.readData(formatHolder, buffer, readFlags)
+            if (r != C.RESULT_BUFFER_READ || buffer.isEndOfStream) return r
+            if (buffer.timeUs < boundaryUs) return r
+            if (buffer.isKeyFrame) {
+                onVideoKeyframe(buffer.timeUs, dropped)
+                return r
+            }
+            buffer.clear()
+            if (++dropped >= MAX_DROPS_PER_READ) return C.RESULT_NOTHING_READ
+        }
+    }
+
+    /** First keyframe of the new stream reached the decoder: the gate is done. */
+    private fun onVideoKeyframe(timeUs: Long, dropped: Int) {
+        awaitVideoKeyframe = false
+        if (!keyframeLogged) {
+            keyframeLogged = true
+            Log.i(
+                TAG,
+                "[SWITCH] keyframe found at +${(timeUs - boundaryUs) / 1000}ms past the boundary " +
+                    "(dropped $dropped partial-GOP video samples)",
+            )
+        }
+        if (armed) {
+            if (targetUs == C.TIME_UNSET) targetUs = timeUs
+            wrappers.forEach { if (it?.trackType == C.TRACK_TYPE_VIDEO) it.done = true }
+            maybeFinish()
+        }
     }
 
     /**
@@ -229,7 +324,9 @@ internal class SwitchSkipMediaPeriod(val inner: MediaPeriod) : MediaPeriod, Medi
         val video = hasVideo()
         if (!isVideo && video && targetUs == C.TIME_UNSET) return null
         if (first >= boundaryUs && (isVideo || !video)) {
-            // Already playing past the boundary: nothing (more) to drop.
+            // Already playing past the boundary: nothing (more) to drop. Video
+            // still waits for the keyframe gate to pass a real IDR / IRAP.
+            if (isVideo && awaitVideoKeyframe) return null
             w.done = true
             if (targetUs == C.TIME_UNSET) targetUs = first
             maybeFinish()
@@ -255,6 +352,8 @@ internal class SwitchSkipMediaPeriod(val inner: MediaPeriod) : MediaPeriod, Medi
             }
             targetUs = landed
         }
+        // The video gate stays closed until a keyframe is actually delivered.
+        if (isVideo && awaitVideoKeyframe) return null
         w.done = true
         maybeFinish()
         return null

@@ -19,21 +19,23 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
@@ -41,6 +43,7 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -69,7 +72,9 @@ import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 import com.aeriotv.android.ui.settings.SettingsNavRow
 import com.aeriotv.android.feature.whatsnew.WhatsNewSheetOnDemand
+import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
+import com.aeriotv.android.ui.settings.settingsShowsBackArrow
 import com.aeriotv.android.ui.settings.settingsPaneWidth
 import com.aeriotv.android.ui.settings.settingsEyebrowStyle
 import com.aeriotv.android.ui.settings.settingsFootnoteStyle
@@ -121,6 +126,8 @@ enum class SettingsRootContent(val title: String) {
 @Composable
 fun SettingsScreen(
     onSectionClick: (SettingsSection) -> Unit,
+    /** Back affordance for the pushed About page; unused by the root list. */
+    onBack: () -> Unit = {},
     onOpenPlaylistDetail: (String) -> Unit = {},
     onOpenPlaylists: () -> Unit = {},
     onAddPlaylist: () -> Unit = {},
@@ -138,9 +145,17 @@ fun SettingsScreen(
     // channel (play flavor binds a disabled no-op manager).
     val updateVm: com.aeriotv.android.feature.update.UpdateViewModel = hiltViewModel()
     val updaterEnabled = updateVm.isEnabled
+    // Root row values: Sync reads On/Off, About reads the installed version.
+    val settingsVm: SettingsViewModel = hiltViewModel()
+    val syncEnabled by settingsVm.syncMasterEnabled
+        .collectAsStateWithLifecycle(initialValue = false)
     val state by viewModel.state.collectAsStateWithLifecycle()
     val playlists by viewModel.allPlaylists.collectAsStateWithLifecycle(initialValue = emptyList())
-    val activeId = state.playlist?.id
+    // LIVE from the DAO, not the UiState snapshot (Logan 2026-09-16): the
+    // radio button must fill in on the new row as soon as the switch commits.
+    val activeIdLive by viewModel.activeIdLive
+        .collectAsStateWithLifecycle(initialValue = state.playlist?.id)
+    val activeId = activeIdLive
 
 
     val packageInfo = remember {
@@ -170,6 +185,20 @@ fun SettingsScreen(
                     fontWeight = FontWeight.Bold,
                 )
             },
+            navigationIcon = {
+                // About is a pushed page like any other sub-screen, so it gets
+                // the same back arrow (TV and pane hosts suppress it, as there
+                // the remote's BACK or the rail beside it does the popping).
+                if (content == SettingsRootContent.AboutOnly && settingsShowsBackArrow()) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
                 titleContentColor = MaterialTheme.colorScheme.onBackground,
@@ -195,8 +224,10 @@ fun SettingsScreen(
                 start = 16.dp,
                 end = 16.dp,
                 top = 12.dp,
-                // TV: keep the last About row above the ~5% bottom overscan band.
-                bottom = if (rememberIsTvDevice()) 28.dp else 12.dp,
+                // TV: keep the last row above the ~5% bottom overscan band.
+                // Phones reserve the floating tab pill / cast controls the same
+                // way every other scrolling surface does.
+                bottom = if (rememberIsTvDevice()) 28.dp else LocalTabBarBottomInset.current,
             ),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
@@ -245,12 +276,20 @@ fun SettingsScreen(
                         rows = group.sections,
                         onClick = onSectionClick,
                         footer = group.footer,
+                        valueFor = { section ->
+                            if (section == SettingsSection.About) versionName else null
+                        },
+                        syncEnabled = syncEnabled,
                     )
                 }
             }
 
             // MARK: About
-            if (content != SettingsRootContent.PlaylistsOnly) item("about") {
+            //
+            // Settings phase 1: About is a PUSHED page (and a pane in the
+            // two-pane hosts), reached from the closing group's About row. It
+            // is no longer inlined at the bottom of the root list.
+            if (content == SettingsRootContent.AboutOnly) item("about") {
                 AboutSection(
                     showHeader = fullRoot,
                     onShowWhatsNew = { showWhatsNew = true },
@@ -517,10 +556,16 @@ private fun SettingsSectionGroup(
     rows: List<SettingsSection>,
     onClick: (SettingsSection) -> Unit,
     footer: String? = null,
+    valueFor: (SettingsSection) -> String? = { null },
+    syncEnabled: Boolean = false,
 ) {
     Column {
-        SectionHeader(header)
-        Spacer(Modifier.height(6.dp))
+        // A blank header means the group carries no label (the closing
+        // Developer / About group).
+        if (header.isNotBlank()) {
+            SectionHeader(header)
+            Spacer(Modifier.height(6.dp))
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -529,7 +574,12 @@ private fun SettingsSectionGroup(
         ) {
             rows.forEachIndexed { index, section ->
                 if (index > 0) RowDivider()
-                SectionNavRow(section = section, onClick = { onClick(section) })
+                SectionNavRow(
+                    section = section,
+                    value = valueFor(section),
+                    syncEnabled = syncEnabled,
+                    onClick = { onClick(section) },
+                )
             }
         }
         footer?.let {
@@ -540,67 +590,22 @@ private fun SettingsSectionGroup(
 }
 
 @Composable
-private fun SectionNavRow(section: SettingsSection, onClick: () -> Unit) {
+private fun SectionNavRow(
+    section: SettingsSection,
+    onClick: () -> Unit,
+    value: String? = null,
+    syncEnabled: Boolean = false,
+) {
     // Phase B1: delegates to the shared row so the root gets the same
     // border+scale+wash focus treatment as every subpage (the old
     // groupRowFocus was noticeably weaker on TV).
     SettingsNavRow(
         title = section.title,
-        subtitle = section.subtitle,
+        subtitle = settingsSectionSubtitle(section, syncEnabled),
         icon = section.icon,
+        value = value,
         onClick = onClick,
     )
-}
-
-@Suppress("unused")
-@Composable
-private fun LegacySectionNavRow(section: SettingsSection, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
-            .groupRowFocus(focused)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = section.icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-        Spacer(Modifier.size(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = section.title,
-                style = settingsRowTitleStyle(),
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = section.subtitle,
-                // bodySmall is ~10.8sp effective under the 0.9 TV type scale;
-                // bodyMedium keeps the subtitle readable from the couch.
-                style = settingsFootnoteStyle().subtext(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
 }
 
 // MARK: - About section
@@ -629,7 +634,7 @@ private fun AboutSection(
                 .clip(RoundedCornerShape(14.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)),
         ) {
-            AboutInfoRow("Device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim())
+            AboutInfoRow("Device", deviceDisplayName())
             RowDivider()
             AboutInfoRow("System", "Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
             RowDivider()
@@ -827,6 +832,22 @@ private fun RowDivider() {
     )
 }
 
+/**
+ * Marketing name for this device. Several makers already prefix the model with
+ * the brand ("Google TV Streamer" on a Google box), so blindly joining the two
+ * printed "Google Google TV Streamer" in the About panel.
+ */
+private fun deviceDisplayName(): String {
+    val manufacturer = android.os.Build.MANUFACTURER.orEmpty().trim()
+    val model = android.os.Build.MODEL.orEmpty().trim()
+    return when {
+        model.isEmpty() -> manufacturer
+        manufacturer.isEmpty() -> model
+        model.startsWith(manufacturer, ignoreCase = true) -> model
+        else -> "$manufacturer $model"
+    }
+}
+
 private fun formatInstallTime(ms: Long): String {
     if (ms <= 0L) return "Unknown"
     return DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(ms))
@@ -839,7 +860,7 @@ private fun buildAboutClipboard(
     updatedAt: Long,
 ): String = buildString {
     appendLine("AerioTV diagnostics")
-    appendLine("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim())
+    appendLine("Device: ${deviceDisplayName()}")
     appendLine("System: Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
     appendLine("App Version: $versionName ($versionCode)")
     appendLine("First Installed: ${formatInstallTime(installedAt)}")
@@ -865,52 +886,78 @@ private fun openUrl(context: android.content.Context, url: String) {
  */
 enum class SettingsSection(
     val title: String,
-    val subtitle: String,
+    val subtitle: String?,
     val icon: ImageVector,
 ) {
-    Appearance(
-        title = "Appearance",
-        subtitle = "Theme, scale & category colors",
-        icon = Icons.Filled.Palette,
+    LiveTV(
+        title = "Live TV",
+        subtitle = "Guide, groups, badges, colors",
+        icon = Icons.Filled.LiveTv,
     ),
-    AppBehaviors(
-        title = "App Behaviors",
-        subtitle = "Default tab, launch & gestures",
+    Player(
+        title = "Player",
+        subtitle = "Info card, rewind, gestures, multiview",
         icon = Icons.Outlined.PlayCircle,
     ),
-    Multiview(
-        title = "Multiview",
-        subtitle = "Audio focus, tile spacing & corners",
-        icon = Icons.Filled.GridView,
+    MoviesAndTvShows(
+        title = "Movies & TV Shows",
+        subtitle = "Library refresh, posters",
+        icon = Icons.Filled.Movie,
     ),
-    Network(
-        title = "Network",
-        subtitle = "Timeout, buffer & background refresh",
-        icon = Icons.Filled.Wifi,
+    DvrSettings(
+        title = "DVR",
+        subtitle = "Recordings, buffers, storage",
+        icon = Icons.Filled.FiberManualRecord,
+    ),
+    Appearance(
+        title = "Appearance",
+        subtitle = "Theme, text size, time format",
+        icon = Icons.Filled.Palette,
+    ),
+    General(
+        title = "General",
+        subtitle = "Startup, refresh, network",
+        icon = Icons.Filled.Tune,
     ),
     RemoteControl(
         title = "Remote Control",
         subtitle = "Customize remote buttons",
         icon = Icons.Filled.SettingsRemote,
     ),
-    AppUpdates(
-        title = "App Updates",
-        subtitle = "Check for new releases",
-        icon = Icons.Filled.SystemUpdate,
-    ),
     Sync(
+        // Subtitle comes from [settingsSectionSubtitle]: the row reads the live
+        // On / Off state instead of a description. Apple does the same, and the
+        // long string truncated on the Android TV rail. The description lives on
+        // the Sync page's own Drive Sync footer.
         title = "Sync",
-        subtitle = "Sync playlists, preferences, and watch progress",
+        subtitle = null,
         icon = Icons.Filled.Cloud,
     ),
-    DvrSettings(
-        title = "DVR",
-        subtitle = "Recordings, buffers & storage",
-        icon = Icons.Filled.FiberManualRecord,
+    AppUpdates(
+        title = "Updates",
+        subtitle = "Check for new releases",
+        icon = Icons.Filled.SystemUpdate,
     ),
     Developer(
         title = "Developer",
         subtitle = "Debug logging & diagnostics",
         icon = Icons.Outlined.BugReport,
     ),
+    About(
+        title = "About",
+        subtitle = null,
+        icon = Icons.Outlined.Info,
+    ),
 }
+
+/**
+ * Subtitle for a section row in the root list, the tablet sidebar and the TV
+ * rail. Everything but Sync uses its static enum subtitle; Sync reports whether
+ * Drive sync is currently on.
+ */
+fun settingsSectionSubtitle(section: SettingsSection, syncEnabled: Boolean): String? =
+    if (section == SettingsSection.Sync) {
+        if (syncEnabled) "On" else "Off"
+    } else {
+        section.subtitle
+    }

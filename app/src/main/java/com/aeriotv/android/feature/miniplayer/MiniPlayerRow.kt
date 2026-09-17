@@ -65,7 +65,9 @@ fun MiniPlayerRow(
         Box(
             modifier = Modifier
                 .size(40.dp)
-                .clip(RoundedCornerShape(6.dp))
+                // Keeps its own tile corners; square when the user turns
+                // Appearance > Rounded corners off.
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = channel.tvgLogo))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -133,3 +135,7 @@ fun MiniPlayerRow(
         }
     }
 }
+
+/** The logo tile's own corner radius. The tile and the art inside it read this
+ *  one value, so they cannot drift. */
+private val LOGO_TILE_CORNER = 6.dp

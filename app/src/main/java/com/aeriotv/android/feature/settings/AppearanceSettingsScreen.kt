@@ -112,7 +112,7 @@ private val TwoUpMinPaneWidth = 560.dp
  * tablet, so TV stays single-column.
  */
 @Composable
-private fun twoUpInPane(paneWidth: Dp): Boolean =
+internal fun twoUpInPane(paneWidth: Dp): Boolean =
     LocalSettingsInPane.current &&
         !rememberIsTvDevice() &&
         paneWidth >= TwoUpMinPaneWidth
@@ -121,26 +121,17 @@ private fun twoUpInPane(paneWidth: Dp): Boolean =
 @Composable
 fun AppearanceSettingsScreen(
     onBack: () -> Unit,
-    onOpenAddMoreCategories: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val currentTheme by viewModel.selectedTheme.collectAsStateWithLifecycle(initialValue = AppTheme.Aerio)
     val appearanceMode by viewModel.appearanceMode.collectAsStateWithLifecycle(initialValue = AppearanceMode.Dark)
-    val palette by viewModel.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
-    val scaleMovies by viewModel.displayScaleMovies.collectAsStateWithLifecycle(initialValue = 1.0f)
-    val scaleLiveTV by viewModel.displayScaleLiveTV.collectAsStateWithLifecycle(initialValue = 1.0f)
     val textScale by viewModel.textScale.collectAsStateWithLifecycle(initialValue = 1.0f)
     val subtextScale by viewModel.subtextScale.collectAsStateWithLifecycle(initialValue = 1.0f)
     val textContrast by viewModel.textContrast.collectAsStateWithLifecycle(initialValue = 0f)
     val useCustomAccent by viewModel.useCustomAccent.collectAsStateWithLifecycle(initialValue = false)
     val customAccentHex by viewModel.customAccentHex.collectAsStateWithLifecycle(initialValue = "")
-    val showChannelLogos by viewModel.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
-    val showChannelNumbers by viewModel.showChannelNumbers.collectAsStateWithLifecycle(initialValue = true)
-    val showChannelNames by viewModel.showChannelNames.collectAsStateWithLifecycle(initialValue = true)
-    val showProgramSubtitles by viewModel.showProgramSubtitles.collectAsStateWithLifecycle(initialValue = true)
     val timeFormat by viewModel.timeFormat.collectAsStateWithLifecycle(initialValue = "system")
 
-    var pickerTarget by remember { mutableStateOf<ProgramCategory?>(null) }
     var accentPickerOpen by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -293,37 +284,6 @@ fun AppearanceSettingsScreen(
                     )
                 }
 
-                // DISPLAY SCALE card — independent sliders for the two
-                // density-tunable surfaces (Movies & Series, Live TV List).
-                settingsCard(
-                    header = "Display Scale",
-                    footer = "Independent scale for Movies & Series and Live TV List. 100% matches the default; 85-175% lets you trade density for readability (150%+ shows fewer, larger items - handy on a TV across the room). Changes apply live.",
-                ) {
-                    // Plan B5 also asks for these two side by side once the
-                    // pane clears 560dp. MEASURED AND REJECTED (2026-08-05):
-                    // these are not thin sliders, they are inline percentage
-                    // segment pickers (85/100/125/150/175), and the pane's
-                    // content is capped at Viewport.formMaxWidth = 700dp no
-                    // matter how wide the window gets. Half of that is ~330dp,
-                    // which is not enough for a label plus five segments: the
-                    // label collapsed to one character per line on a 1280dp
-                    // tablet. The plan's threshold measured PANE width when
-                    // the real constraint is PER-SLIDER width. Side by side
-                    // would need the form cap raised, which is a canon change
-                    // affecting every settings screen, so they stay stacked.
-                    ScaleSliderRow(
-                        label = "Movies & Series",
-                        value = scaleMovies,
-                        onValueChange = viewModel::setDisplayScaleMovies,
-                    )
-                    DividerRow()
-                    ScaleSliderRow(
-                        label = "Live TV List",
-                        value = scaleLiveTV,
-                        onValueChange = viewModel::setDisplayScaleLiveTV,
-                    )
-                }
-
                 // TIME FORMAT card: every clock in the app (guide header,
                 // cell ranges, program info, DVR) follows this.
                 settingsCard(
@@ -340,155 +300,8 @@ fun AppearanceSettingsScreen(
                     }
                 }
 
-                // CATEGORY COLORS card — master toggle that gates the
-                // palette card below. iOS keeps these as separate sections
-                // for the same reason: the master toggle is binary and gets
-                // its own footer, the palette grid is browse-and-tweak.
-                settingsCard(
-                    header = "Channel List",
-                    footer = "Turn logos or numbers off to give long channel names more row width. Applies to the Live TV list and the Guide.",
-                ) {
-                    ToggleRow(
-                        title = "Show Channel Logos",
-                        subtitle = "Display each channel's logo in the Live TV list.",
-                        checked = showChannelLogos,
-                        onCheckedChange = viewModel::setShowChannelLogos,
-                    )
-                    DividerRow()
-                    ToggleRow(
-                        title = "Show Channel Numbers",
-                        subtitle = "Display each channel's number in the Live TV list and Guide.",
-                        checked = showChannelNumbers,
-                        onCheckedChange = viewModel::setShowChannelNumbers,
-                    )
-                    DividerRow()
-                    ToggleRow(
-                        title = "Show Channel Names",
-                        subtitle = "Display each channel's name in the Guide's channel column.",
-                        checked = showChannelNames,
-                        onCheckedChange = viewModel::setShowChannelNames,
-                    )
-                    DividerRow()
-                    ToggleRow(
-                        title = "Show Program Subtitles",
-                        subtitle = "Display the episode or match name under each program title in the Guide and Live TV list. Turn off if your EPG repeats the description there.",
-                        checked = showProgramSubtitles,
-                        onCheckedChange = viewModel::setShowProgramSubtitles,
-                    )
-                }
-
-                // PALETTE card — the default 4 buckets plus the "Add more
-                // categories" navigator and the Reset link.
-                settingsCard(
-                    header = "Category Colors",
-                    footer = "Tint EPG cells and channel cards by program category. Select a category below to override its hex.",
-                ) {
-                    ToggleRow(
-                        title = "Color Programs by Category",
-                        subtitle = "Apply category tints to the guide and channel rows.",
-                        checked = palette.masterEnabled,
-                        onCheckedChange = viewModel::setCategoryColorsEnabled,
-                    )
-                }
-
-                // Channel List card (iOS Issue #28 logos + GH #19 numbers).
-                // Hide logos/numbers so long channel names get the full row
-                // width. Both apply to the Live TV list AND the Guide rail.
-                settingsCard(
-                    header = "Palette",
-                    footer = null,
-                ) {
-                    // Plan B5: "category palette in two columns" on tablet.
-                    // These rows are the narrowest on the screen (a swatch, a
-                    // short label, a hex), so they waste the most width when
-                    // stacked. See twoUpInPane for the gating rationale.
-                    BoxWithConstraints {
-                        val dim = if (palette.masterEnabled) 1f else 0.4f
-                        if (twoUpInPane(maxWidth)) {
-                            Column {
-                                ProgramCategory.defaultBuckets.chunked(2)
-                                    .forEachIndexed { rowIndex, pair ->
-                                        if (rowIndex > 0) DividerRow()
-                                        Row(modifier = Modifier.fillMaxWidth()) {
-                                            pair.forEach { bucket ->
-                                                Box(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .alpha(dim),
-                                                ) {
-                                                    CategoryPaletteRow(
-                                                        bucket = bucket,
-                                                        hex = palette.hexFor(bucket),
-                                                        enabled = palette.masterEnabled,
-                                                        onClick = { pickerTarget = bucket },
-                                                    )
-                                                }
-                                            }
-                                            if (pair.size == 1) Spacer(Modifier.weight(1f))
-                                        }
-                                    }
-                            }
-                        } else {
-                            Column {
-                                ProgramCategory.defaultBuckets.forEachIndexed { idx, bucket ->
-                                    if (idx > 0) DividerRow()
-                                    Box(modifier = Modifier.alpha(dim)) {
-                                        CategoryPaletteRow(
-                                            bucket = bucket,
-                                            hex = palette.hexFor(bucket),
-                                            enabled = palette.masterEnabled,
-                                            onClick = { pickerTarget = bucket },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    DividerRow()
-                    Box(modifier = Modifier.alpha(if (palette.masterEnabled) 1f else 0.4f)) {
-                        AddMoreCategoriesRow(
-                            extraOn = ProgramCategory.additionalBuckets.count { palette.isBucketEnabled(it) },
-                            customCount = palette.custom.size,
-                            enabled = palette.masterEnabled,
-                            onClick = onOpenAddMoreCategories,
-                        )
-                    }
-                    DividerRow()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .dpadFocusWash()
-                            .clickable(enabled = palette.masterEnabled) { viewModel.resetCategoryPalette() }
-                            .alpha(if (palette.masterEnabled) 1f else 0.4f)
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "Reset Colors to Defaults",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFFFB8C00),
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
-                }
             }
         }
-    }
-
-    pickerTarget?.let { bucket ->
-        HexPickerDialog(
-            bucket = bucket,
-            currentHex = palette.hexFor(bucket),
-            onDismiss = { pickerTarget = null },
-            onSave = { hex ->
-                viewModel.setCategoryBucketHex(bucket, hex)
-                pickerTarget = null
-            },
-            onReset = {
-                viewModel.setCategoryBucketHex(bucket, null)
-                pickerTarget = null
-            },
-        )
     }
 
     if (accentPickerOpen) {
@@ -517,7 +330,7 @@ fun AppearanceSettingsScreen(
  * Multiview / DVR SettingsCard composable visually, just unrolled for
  * LazyColumn.
  */
-private fun LazyListScope.settingsCard(
+internal fun LazyListScope.settingsCard(
     header: String,
     footer: String?,
     content: @Composable () -> Unit,
@@ -563,7 +376,7 @@ private val TIME_FORMAT_OPTIONS = listOf(
 )
 
 @Composable
-private fun DividerRow() {
+internal fun DividerRow() {
     HorizontalDivider(
         thickness = 0.5.dp,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.20f),
@@ -572,7 +385,7 @@ private fun DividerRow() {
 }
 
 @Composable
-private fun ThemeRow(
+internal fun ThemeRow(
     theme: AppTheme,
     selected: Boolean,
     onClick: () -> Unit,
@@ -646,7 +459,9 @@ private fun AppearanceModeHeaderRow() {
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 2.dp),
+        // 20dp above matches the gap between top-level settings cards; at 12dp
+        // the eyebrow sat flush against the divider (screenshot pass).
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 6.dp),
     )
 }
 
@@ -852,7 +667,7 @@ private fun PreviewCard(theme: AppTheme, customAccentHex: String?) {
 /** Flat single-choice row for this page's cards: same wash/padding as
  *  [ToggleRow], a check mark instead of the On/Off indicator. */
 @Composable
-private fun CheckRow(
+internal fun CheckRow(
     title: String,
     selected: Boolean,
     onClick: () -> Unit,
@@ -884,9 +699,9 @@ private fun CheckRow(
 }
 
 @Composable
-private fun ToggleRow(
+internal fun ToggleRow(
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
@@ -910,11 +725,13 @@ private fun ToggleRow(
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Medium,
             )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall.subtext(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall.subtext(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Spacer(Modifier.size(12.dp))
         OnOffIndicator(on = checked)
@@ -997,7 +814,7 @@ private val ScaleSegmentsInlineMinWidth = 560.dp
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ScaleSliderRow(
+internal fun ScaleSliderRow(
     label: String,
     value: Float,
     onValueChange: (Float) -> Unit,
@@ -1078,7 +895,7 @@ private fun ScaleSliderRow(
 }
 
 @Composable
-private fun CategoryPaletteRow(
+internal fun CategoryPaletteRow(
     bucket: ProgramCategory,
     hex: String,
     enabled: Boolean,
@@ -1121,7 +938,7 @@ private fun CategoryPaletteRow(
 }
 
 @Composable
-private fun AddMoreCategoriesRow(
+internal fun AddMoreCategoriesRow(
     extraOn: Int,
     customCount: Int,
     enabled: Boolean,

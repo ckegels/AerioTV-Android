@@ -255,8 +255,15 @@ fun DvrMediaTabContent(
     // search matches title, subtitle and description; Filter hides channels.
     val hiddenChannels by settingsVm.hiddenDvrChannels.collectAsStateWithLifecycle(initialValue = emptySet())
     val channelNames = remember(library, channelsById) { library.map(channelName).filter { it.isNotBlank() }.distinct().sorted() }
-    var query by rememberSaveable { mutableStateOf("") }
-    var searchActive by rememberSaveable { mutableStateOf(false) }
+    // Not rememberSaveable: see MediaTabContent. A restored open search
+    // re-ran the field's focus effect and summoned the keyboard on the way
+    // back from the fullscreen player.
+    var query by remember { mutableStateOf("") }
+    var searchActive by remember { mutableStateOf(false) }
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {
+        searchActive = false
+        query = ""
+    }
     val isSearching = query.isNotBlank()
     var showManageChannels by remember { mutableStateOf(false) }
     val filteredLibrary = remember(library, kindOf, selectedKind, sortOrder, hiddenChannels, query, channelsById) {

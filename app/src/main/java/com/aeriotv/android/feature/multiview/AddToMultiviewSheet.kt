@@ -131,6 +131,10 @@ fun AddToMultiviewSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val state by playlistVm.state.collectAsStateWithLifecycle()
     val onDemandState by onDemandVm.state.collectAsStateWithLifecycle()
+    // Browse lists are windows over the stored catalog (GH #109), the same
+    // filtered + sorted libraries the Movies and TV Shows tabs show.
+    val movieLibrary by onDemandVm.library(true).collectAsStateWithLifecycle()
+    val seriesLibrary by onDemandVm.library(false).collectAsStateWithLifecycle()
     val dvrState by dvrVm.state.collectAsStateWithLifecycle()
     val selected by multiviewStore.selected.collectAsState()
     val recentIds by settingsVm.recentChannelIds.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -322,9 +326,8 @@ fun AddToMultiviewSheet(
             // are only offered when the active source actually has them so the
             // sheet never lands on an always-empty tab. Switching sources also
             // resets the series drill so re-entering Series starts at the grid.
-            val hasVod = onDemandState.movies.isNotEmpty() ||
-                onDemandState.series.isNotEmpty()
-            val hasSeries = onDemandState.series.isNotEmpty()
+            val hasVod = onDemandState.totalCount > 0 || onDemandState.seriesTotalCount > 0
+            val hasSeries = onDemandState.seriesTotalCount > 0
             val hasRecordings = dvrState.recordings.any {
                 val s = it.effectiveStatus()
                 (s == DvrViewModel.Recording.Status.Completed ||
@@ -488,40 +491,41 @@ fun AddToMultiviewSheet(
                     }
 
                     PickerSource.Movies -> {
-                        items(items = onDemandState.visible, key = { "mv_${it.uuid}" }) { movie ->
-                            val tileId = "vod-${movie.uuid}"
+                        items(items = movieLibrary.items, key = { "mv_${it.key}" }) { item ->
+                            val movieUuid = item.movieUuid.orEmpty()
+                            val tileId = "vod-${movieUuid}"
                             val isSel = tileId in selectedIds
                             VodPickerRow(
-                                title = movie.displayName,
-                                subtitle = movie.year?.let { "Movie · $it" } ?: "Movie",
-                                posterUrl = movie.posterUrl,
+                                title = item.title,
+                                subtitle = item.year?.let { "Movie · $it" } ?: "Movie",
+                                posterUrl = item.posterUrl,
                                 selected = isSel,
-                                resolving = movie.uuid in resolving,
+                                resolving = movieUuid in resolving,
                                 atCap = !isSel && atCapNow,
                                 onPick = {
                                     if (isSel) return@VodPickerRow
                                     gateAdd(true) {
                                         scope.launch {
-                                            resolving = resolving + movie.uuid
-                                            onDemandVm.resolveMovieUrl(movie.uuid).onSuccess { r ->
-                                                val resume = watchVm.get(movie.uuid)?.positionMs ?: 0L
+                                            resolving = resolving + movieUuid
+                                            onDemandVm.resolveMovieUrl(movieUuid).onSuccess { r ->
+                                                val resume = watchVm.get(movieUuid)?.positionMs ?: 0L
                                                 commitTile(
                                                     MultiviewTile(
                                                         id = tileId,
                                                         kind = TileKind.Vod,
-                                                        displayName = movie.displayName,
+                                                        displayName = item.title,
                                                         resolvedUrl = r.url,
                                                         // Audit #53/#38: no API key to
                                                         // an off-origin session URL.
                                                         httpHeaders = if (r.authSafe) vodHeaders else emptyMap(),
-                                                        vodId = movie.uuid,
+                                                        vodId = movieUuid,
                                                         vodType = "movie",
-                                                        posterUrl = movie.posterUrl,
+                                                        posterUrl = item.posterUrl,
                                                         resumePositionMs = resume,
                                                     ),
                                                 )
                                             }
-                                            resolving = resolving - movie.uuid
+                                            resolving = resolving - movieUuid
                                         }
                                     }
                                 },
@@ -532,9 +536,10 @@ fun AddToMultiviewSheet(
                     PickerSource.Series -> {
                         val drillId = drillSeriesId
                         if (drillId == null) {
-                            items(items = onDemandState.visibleSeries, key = { "sr_${it.id}" }) { series ->
+                            items(items = seriesLibrary.items, key = { "sr_${it.key}" }) { series ->
+                                val seriesId = series.seriesId ?: 0
                                 VodPickerRow(
-                                    title = series.displayName,
+                                    title = series.title,
                                     subtitle = "Series",
                                     posterUrl = series.posterUrl,
                                     selected = false,
@@ -542,8 +547,8 @@ fun AddToMultiviewSheet(
                                     atCap = false,
                                     chevron = true,
                                     onPick = {
-                                        drillSeriesId = series.id
-                                        onDemandVm.loadEpisodes(series.id)
+                                        drillSeriesId = seriesId
+                                        onDemandVm.loadEpisodes(seriesId)
                                     },
                                 )
                             }
@@ -784,7 +789,7 @@ private fun NowPlayingPinnedRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = channel.tvgLogo))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -867,7 +872,7 @@ private fun ChannelPickerRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = channel.tvgLogo))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -973,7 +978,7 @@ private fun VodPickerRow(
         Box(
             modifier = Modifier
                 .size(36.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER, model = posterUrl))
                 .background(MaterialTheme.colorScheme.background),
             contentAlignment = Alignment.Center,
         ) {
@@ -981,7 +986,7 @@ private fun VodPickerRow(
                 AsyncImage(
                     model = posterUrl,
                     contentDescription = null,
-                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)),
+                    modifier = Modifier.size(36.dp).clip(com.aeriotv.android.core.ui.artworkTileShape(LOGO_TILE_CORNER)),
                 )
             } else {
                 Icon(
@@ -1071,3 +1076,7 @@ private fun BackRow(onClick: () -> Unit) {
         )
     }
 }
+
+/** The logo tile's own corner radius. The tile and the art inside it read this
+ *  one value, so they cannot drift. */
+private val LOGO_TILE_CORNER = 6.dp

@@ -245,6 +245,18 @@ fun AerioTVNavHost(
     // ESPN2/ESPNU, TV stayed put). Here it runs no matter which screen is up.
     // We still wait for the playlist graph + loaded channels before acting.
     val dlCurrentEntry by navController.currentBackStackEntryAsState()
+    // Leaving the tabs for a fullscreen player cancels any search a tab left
+    // open. Without this the keyboard came back when the user minimized to the
+    // mini player or PiP: the MAIN route is disposed while a player route is on
+    // top, so popping back re-mounted the tab with its search still open and the
+    // field's focus effect ran again. One observer here covers every player
+    // route (live, catch-up, recording, on demand) and every tab.
+    val dlRoute = dlCurrentEntry?.destination?.route
+    LaunchedEffect(dlRoute) {
+        if (dlRoute != null && dlRoute != Routes.MAIN) {
+            com.aeriotv.android.ui.search.SearchDismissSignal.dismissAll()
+        }
+    }
     val dlGraphEntry = remember(dlCurrentEntry) {
         runCatching { navController.getBackStackEntry(Routes.PLAYLIST_GRAPH) }.getOrNull()
     }
@@ -311,6 +323,17 @@ fun AerioTVNavHost(
                             target.title.ifBlank { "Recording" },
                         ),
                     ) { launchSingleTop = true }
+                    onDeepLinkConsumed()
+                }
+                is DeepLinkTarget.Settings -> {
+                    // Screenshot deep link. Hand the page to the view model:
+                    // MainScaffold selects the Settings tab, and SettingsTabContent
+                    // (which is not composed until then) applies the route. Pop any
+                    // player / detail route off first so the tab shell is on top.
+                    if (navController.currentDestination?.route != Routes.MAIN) {
+                        runCatching { navController.popBackStack(Routes.MAIN, false) }
+                    }
+                    dlVm.requestSettingsPage(target.page)
                     onDeepLinkConsumed()
                 }
                 is DeepLinkTarget.ExitPlayer -> {
@@ -1443,7 +1466,7 @@ fun AerioTVNavHost(
                     .firstOrNull { (_, list) -> list.any { it.uuid == episodeUuid } }
                     ?.key
                 val parentSeriesPoster = parentSeriesId?.let { id ->
-                    epOnDemandState.series.firstOrNull { it.id == id }?.posterUrl
+                    onDemandVm.seriesById(id)?.posterUrl
                 }
                 LaunchedEffect(parentSeriesId) {
                     parentSeriesId?.let { onDemandVm.loadSeriesProviders(it) }
@@ -1673,7 +1696,8 @@ fun AerioTVNavHost(
                 val movieUuid = Uri.decode(entry.arguments?.getString("movieUuid").orEmpty())
                 // See the episode route above.
                 val movieFromStart = entry.arguments?.getBoolean("fromStart") ?: false
-                val movie = onDemandState.movies.firstOrNull { it.uuid == movieUuid }
+                // Catalog-backed lookup (GH #109); recomposes when the row lands.
+                val movie = onDemandVm.movieByUuid(movieUuid)
 
                 // Version switching: make sure the provider copies are loaded
                 // for the in-player "Switch Version" sheet (idempotent; the

@@ -146,7 +146,7 @@ fun SeriesDetailScreen(
     // "Related": TMDB recommendations filtered to the local library. Keyed on
     // the library size too so it re-matches as the launch sweep publishes.
     var relatedItems by remember(seriesId) { mutableStateOf<List<MediaItem>>(emptyList()) }
-    LaunchedEffect(seriesId, series == null, info, state.series.size) {
+    LaunchedEffect(seriesId, series == null, info, state.seriesTotalCount) {
         val s = series ?: return@LaunchedEffect
         relatedItems = viewModel.relatedTitles(
             tmdbId = info?.tmdbId ?: s.tmdbId,

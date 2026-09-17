@@ -282,6 +282,28 @@ class PlaylistViewModel @Inject constructor(
         )
     val liveTvTabRequests: SharedFlow<Unit> = _liveTvTabRequests.asSharedFlow()
 
+    /**
+     * Pending `aeriotv://settings/<page>` screenshot deep link, or null.
+     *
+     * A StateFlow rather than a SharedFlow because SettingsTabContent is NOT
+     * composed until MainScaffold has switched to the Settings tab, so the
+     * request has to still be readable on a later frame; the consumer clears
+     * it with [consumeSettingsPage]. It also survives the wait for the active
+     * playlist that the playlist-detail / edit-playlist pages need.
+     */
+    private val _settingsPageRequest = MutableStateFlow<String?>(null)
+    val settingsPageRequest: StateFlow<String?> = _settingsPageRequest.asStateFlow()
+
+    /** Open Settings on [page] (screenshot deep link). */
+    fun requestSettingsPage(page: String) {
+        _settingsPageRequest.value = page
+    }
+
+    /** Clear the pending settings deep link once it has been applied. */
+    fun consumeSettingsPage() {
+        _settingsPageRequest.value = null
+    }
+
     /** Select the Live TV tab (companion X / exit-to-Live-TV). */
     fun requestLiveTvTab() {
         _liveTvTabRequests.tryEmit(Unit)
@@ -1487,6 +1509,9 @@ class PlaylistViewModel @Inject constructor(
             epgWriteMutex.withLock { _state.update { it.copy(epgByChannel = emptyMap()) } }
             // 2. Signal On Demand to run its nuclear reset (id unchanged, so the
             //    observeActiveId collector won't fire; the bus is the bridge).
+            //    The collector deletes THIS playlist's stored VOD catalog and
+            //    forces a full sweep of both kinds, so the tabs go to a loading
+            //    state and repopulate as pages land.
             vodResetBus.requestReset()
             // 3. Re-fetch channels (refresh() rewrites the snapshot cache too).
             repository.refresh(active).fold(
@@ -1789,6 +1814,19 @@ class PlaylistViewModel @Inject constructor(
         ) { id, all -> all.firstOrNull { it.id == id } }
             .distinctUntilChanged()
 
+    /**
+     * The id of the ACTIVE playlist, observed live from the database.
+     *
+     * The playlist picker's selection indicator must follow THIS, never
+     * `state.playlist?.id`: the snapshot in [UiState] is only rewritten once
+     * [switchToPlaylist] has finished fetching the new playlist's channels
+     * (and is never rewritten at all when that fetch fails), so on a phone the
+     * radio button stayed on the OLD row for the whole load and sometimes for
+     * good (Logan 2026-09-16, Nothing Phone). The DAO flow emits the instant
+     * the active row flips.
+     */
+    val activeIdLive: Flow<String?> = repository.observeActiveId()
+
     /** Make [playlistId] active and load its channels. Mirrors the bootstrap
      * load-and-render flow, but skipping the JWT exchange the first-load does
      * for User+Pass since the apiKey is already cached on the row. */
@@ -1827,16 +1865,20 @@ class PlaylistViewModel @Inject constructor(
                         entity.id,
                         channels.asSequence().map { ch -> ch.groupTitle }.filter { g -> g.isNotBlank() }.distinct().toList(),
                     )
-                    // Maintainer requirement: every playlist switch auto-runs the
-                    // full "Refresh Everything" nuclear reset on the now-active
-                    // playlist. refreshEverything() purges + force-reloads the
-                    // guide and signals the VOD bus, so a switch never paints a
-                    // stale cached guide / VOD from a fresh-cache short-circuit.
-                    // It operates on repository.activePlaylist(), which is now
-                    // `entity` after switchActive() above, so no arg is needed.
-                    // (loadEpgIfConfigured is folded into refreshEverything's
-                    // forceRefresh guide reload, so we don't call it separately.)
-                    refreshEverything()
+                    // A SWITCH NO LONGER PURGES ANYTHING (Logan 2026-09-16).
+                    // This used to auto-run refreshEverything(), which purged
+                    // the now-active playlist's guide cache and signalled the
+                    // VOD nuclear reset, so switching back to a playlist threw
+                    // away exactly the caches that make switching back
+                    // instant. Every cache stays keyed by playlist id and is
+                    // destroyed only when that playlist is deleted.
+                    //
+                    // The guide loads from this playlist's cache and refreshes
+                    // itself on the normal staleness rules; the drop-in
+                    // in-memory map from the OLD playlist is cleared first so
+                    // the grid never paints the previous source's programmes.
+                    epgWriteMutex.withLock { _state.update { st -> st.copy(epgByChannel = emptyMap()) } }
+                    loadEpgIfConfigured(entity)
                 },
                 onFailure = { t ->
                     Log.w(TAG, "switchToPlaylist failed", t)

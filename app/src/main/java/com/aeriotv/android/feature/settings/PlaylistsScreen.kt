@@ -87,7 +87,12 @@ fun PlaylistsScreen(
     val playlists: List<PlaylistEntity> by viewModel.allPlaylists
         .collectAsStateWithLifecycle(initialValue = emptyList<PlaylistEntity>())
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val activeId = state.playlist?.id
+    // LIVE from the DAO, not the UiState snapshot: the selection indicator
+    // has to move to the newly active row the moment the switch commits,
+    // rather than after its channel fetch returns (Logan 2026-09-16).
+    val activeIdLive by viewModel.activeIdLive
+        .collectAsStateWithLifecycle(initialValue = state.playlist?.id)
+    val activeId = activeIdLive
     val isTv = rememberIsTvDevice()
 
     var pendingDelete by remember { mutableStateOf<PlaylistEntity?>(null) }
@@ -391,7 +396,12 @@ private fun SwipeablePlaylistRow(
     androidx.compose.material3.SwipeToDismissBox(
         state = dismissState,
         backgroundContent = {
-            Box(
+            // Only paint the red action WHILE a swipe is in progress. The
+            // playlist row's own fill is translucent, so an always-drawn
+            // background bled through every settled row (screenshot pass).
+            if (dismissState.dismissDirection !=
+                androidx.compose.material3.SwipeToDismissBoxValue.Settled
+            ) Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))

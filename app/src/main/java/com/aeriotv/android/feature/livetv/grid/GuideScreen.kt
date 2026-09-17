@@ -217,6 +217,10 @@ fun GuideScreen(
     val tabActive = com.aeriotv.android.feature.main.LocalTabIsActive.current
     var groupSidebarOpen by remember { mutableStateOf(false) }
     var searchActive by remember { mutableStateOf(false) }
+    com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {
+        searchActive = false
+        viewModel.onSearchQueryChange("")
+    }
     var collectionPickerFor by remember { mutableStateOf<Pair<String, String>?>(null) }
     var showManageGroups by remember { mutableStateOf(false) }
     var sidebarOriginalGroup by remember { mutableStateOf<String?>(null) }
@@ -250,7 +254,27 @@ fun GuideScreen(
     val subtextGrowth = com.aeriotv.android.ui.scale.LocalSubtextScale.current.let { s ->
         1f + (s - 1f).coerceAtLeast(0f) * (if (!isTv && isPhoneIdiom) GUIDE_PHONE_SUBTEXT_SHARE else GUIDE_SUBTEXT_SHARE)
     }
-    val rowHeight = (if (isTv) (if (previewMode) 48.dp else 55.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth
+    // PHYSICAL PARITY WITH APPLE TV (Logan 2026-09-17). Apple TV points are
+    // about 2x the Streamer's dp on the same physical screen (1080 pt tall vs
+    // 540 dp), so Apple's 132 pt row is 66 dp here and its 22 pt band is 11 dp.
+    // The TV base heights ARE those totals, band included: the band is carved
+    // out of the row, never added on top of it. Preview mode is Apple's 96 pt
+    // row, which is 48 dp here and is the mode Logan compares against, so the
+    // Streamer shows the same seven rows as the Apple TV guide does
+    // (measured 2026-09-17).
+    //
+    // THE TV ROW DOES NOT GROW FOR THE BAND (Logan 2026-09-16, Streamer).
+    // The band is CARVED OUT of the row the guide already had, exactly as
+    // Apple TV does it: Apple's 132 pt row is the row INCLUDING its band, not
+    // 132 pt plus a band. Adding the 22 dp band on top here took the Streamer
+    // row from 96 px to 140 px and dropped the guide from 7 visible channels
+    // to under 5, because the Android TV guide viewport is proportionally
+    // shorter than Apple's (the header, the filter row and the tab bar take
+    // more of it), so the row count, not the row height, is what has to match.
+    // The phone / tablet column still takes its small net growth: there the
+    // band replaces a number line that used to sit under the logo.
+    val rowHeight = (if (isTv) (if (previewMode) 48.dp else 66.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth +
+        (if (isTv) 0.dp else com.aeriotv.android.feature.livetv.grid.GUIDE_PHONE_ROW_BAND_GROWTH)
     val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
 
     // Clock: 30 s tick for the now-line and the airing tint.
@@ -458,6 +482,19 @@ fun GuideScreen(
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var menuFor by remember { mutableStateOf<Pair<M3UChannel, EPGProgramme>?>(null) }
     val menuGuard = rememberTvMenuGuard()
+    // Start catch-up playback of one already-aired cell. Shared by the grid's
+    // primary action (single tap / OK) and the long-press menu's "Watch from
+    // Start", so both go through one resolve + navigate path.
+    val startCatchup: (M3UChannel, EPGProgramme) -> Unit = { channel, cell ->
+        viewModel.playCatchup(channel, cell) { result ->
+            result.onSuccess { r ->
+                // TV: remember the launched cell and the timeline so the
+                // guide that composes again after the replay lands back here.
+                if (isTv) GuideCatchupReturn.set(channel.id, cell.startMillis, grid.viewportStartMs)
+                onPlayCatchup(channel.id, r.url, cell.title, cell.startMillis, cell.endMillis, r.panelTimeZoneId, r.channelUuid.orEmpty())
+            }
+        }
+    }
     val guideFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
     // Land focus on the grid on entry (TV).
@@ -925,10 +962,14 @@ fun GuideScreen(
                 favoriteIds = favoriteIds,
                 recordingWindows = recordingWindows,
                 isTv = isTv,
-                onPlay = { channel, _ ->
+                onPlay = { channel, cell ->
+                    // Already-aired + within the catch-up window: play it from
+                    // the start right away (no menu first). The rail tap hands
+                    // us the cell airing NOW, so tapping the logo still tunes live.
+                    if (!cell.isPlaceholder && channel.canReplay(cell, nowMs)) startCatchup(channel, cell)
                     // OK on the channel already in the corner mini promotes the
                     // mini to fullscreen instead of re-tuning the same stream.
-                    if (isTv && miniChannelId == channel.id) miniPlayerVm.session.requestResume()
+                    else if (isTv && miniChannelId == channel.id) miniPlayerVm.session.requestResume()
                     else onChannelClick(channel)
                 },
                 onOpenMenu = { channel, cell -> menuFor = channel to cell; menuGuard.arm() },
@@ -1167,16 +1208,7 @@ fun GuideScreen(
         val replayable = !cell.isPlaceholder && channel.canReplay(cell, nowMs)
         // Apple TV order (Logan 2026-09-02): Favorites, Multiview, Collection,
         // Program Info, Record from Now, then the Android-only extras.
-        val watchFromStart: () -> Unit = {
-            viewModel.playCatchup(channel, cell) { result ->
-                result.onSuccess { r ->
-                    // TV: remember the launched cell and the timeline so the
-                    // guide that composes again after the replay lands back here.
-                    if (isTv) GuideCatchupReturn.set(channel.id, cell.startMillis, grid.viewportStartMs)
-                    onPlayCatchup(channel.id, r.url, cell.title, cell.startMillis, cell.endMillis, r.panelTimeZoneId, r.channelUuid.orEmpty())
-                }
-            }
-        }
+        val watchFromStart: () -> Unit = { startCatchup(channel, cell) }
         val reminderSet = key in reminderKeys
         val toggleReminder: () -> Unit = {
             if (reminderSet) remindersVm.cancelReminder(key)

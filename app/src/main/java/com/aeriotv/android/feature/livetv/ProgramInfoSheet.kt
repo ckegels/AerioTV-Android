@@ -206,7 +206,7 @@ fun ProgramInfoSheet(
             // labelled columns, the description as the card's one focus
             // target, then the metadata and category pills.
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(INFO_CARD_CORNER),
                 color = com.aeriotv.android.ui.tv.TvChrome.dialogSurface(),
                 tonalElevation = 6.dp,
                 modifier = Modifier
@@ -266,7 +266,7 @@ private fun TvProgramInfoCard(
         // Same slot as the guide preview banner (ProgramArtSlot, Logan
         // 2026-09-15): same size on both surfaces, whole image, no crop.
         if (posterUrl != null) {
-            ProgramArtSlot(model = posterUrl)
+            ProgramArtSlot(model = posterUrl, containerCorner = INFO_CARD_CORNER)
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
@@ -492,7 +492,7 @@ private fun ProgramInfoBody(
                 modifier = Modifier
                     .width(posterWidth)
                     .aspectRatio(posterRatio)
-                    .clip(RoundedCornerShape(8.dp)),
+                    .clip(com.aeriotv.android.core.ui.artworkTileShape(INFO_CARD_CORNER)),
             )
         }
     }
@@ -624,3 +624,9 @@ private fun formatDuration(millis: Long): String {
     val mins = totalMinutes % 60
     return if (mins == 0) "$hours h" else "$hours h $mins min"
 }
+
+/**
+ * The Program Info card's own corner radius. Program artwork on this surface
+ * matches it (Appearance > Rounded corners on logos and artwork).
+ */
+private val INFO_CARD_CORNER = 14.dp
