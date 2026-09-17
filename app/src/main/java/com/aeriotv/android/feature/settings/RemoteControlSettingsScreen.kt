@@ -214,7 +214,6 @@ fun RemoteControlSettingsScreen(
     val groupSelector by viewModel.guideGroupSelector.collectAsStateWithLifecycle(
         initialValue = "pills",
     )
-    var editingGroupSelector by remember { mutableStateOf(false) }
     val tuneInMini by viewModel.guideTuneInMini.collectAsStateWithLifecycle(
         initialValue = false,
     )
@@ -309,17 +308,6 @@ fun RemoteControlSettingsScreen(
                 }
 
                 SettingsSection(
-                    header = "TV Guide Groups",
-                    footer = "How channel groups are picked in the guide. Top pills keep the group row above the grid; the sidebar menu hides that row and opens by holding Left in the grid (unless Left (Hold) is reassigned above). Only one is active at a time.",
-                ) {
-                    SlotRow(
-                        slotName = "Group Selection",
-                        valueName = if (groupSelector == "sidebar") "Sidebar menu" else "Top group pills",
-                        onClick = { editingGroupSelector = true },
-                    )
-                }
-
-                SettingsSection(
                     header = "Reset",
                     footer = "Restore every button to the standard AerioTV scheme.",
                 ) {
@@ -351,28 +339,6 @@ fun RemoteControlSettingsScreen(
                 },
             ),
             onDismiss = { editingTuneTarget = false },
-            guard = menuGuard,
-        )
-    }
-
-    if (editingGroupSelector) {
-        TvActionMenuDialog(
-            title = "Group Selection",
-            actions = listOf(
-                TvMenuAction(
-                    label = if (groupSelector != "sidebar") "Top group pills  (current)" else "Top group pills",
-                ) {
-                    viewModel.setGuideGroupSelector("pills")
-                    editingGroupSelector = false
-                },
-                TvMenuAction(
-                    label = if (groupSelector == "sidebar") "Sidebar menu  (current)" else "Sidebar menu",
-                ) {
-                    viewModel.setGuideGroupSelector("sidebar")
-                    editingGroupSelector = false
-                },
-            ),
-            onDismiss = { editingGroupSelector = false },
             guard = menuGuard,
         )
     }

@@ -115,12 +115,13 @@ import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.playlist.nowPlaying
 import com.aeriotv.android.feature.settings.AddMoreCategoriesScreen
 import com.aeriotv.android.feature.settings.AddPlaylistWizardStep
-import com.aeriotv.android.feature.settings.AppBehaviorsSettingsScreen
 import com.aeriotv.android.feature.settings.AppearanceSettingsScreen
 import com.aeriotv.android.feature.settings.DeveloperSettingsScreen
 import com.aeriotv.android.feature.settings.DvrSettingsScreen
-import com.aeriotv.android.feature.settings.MultiviewSettingsScreen
-import com.aeriotv.android.feature.settings.NetworkSettingsScreen
+import com.aeriotv.android.feature.settings.GeneralSettingsScreen
+import com.aeriotv.android.feature.settings.LiveTvSettingsScreen
+import com.aeriotv.android.feature.settings.MoviesAndTvShowsSettingsScreen
+import com.aeriotv.android.feature.settings.PlayerSettingsScreen
 import com.aeriotv.android.feature.settings.SettingsRootContent
 import com.aeriotv.android.feature.settings.DefaultSettingsPaneSelection
 import com.aeriotv.android.feature.settings.SettingsRoute
@@ -2454,13 +2455,15 @@ private fun SettingsTabContent(
             onBack = { nav.pop() },
         )
         is SettingsRoute.Section -> when (r.section) {
-            SettingsSection.Appearance -> AppearanceSettingsScreen(
+            SettingsSection.LiveTV -> LiveTvSettingsScreen(
                 onBack = { nav.pop() },
                 onOpenAddMoreCategories = { nav.push(SettingsRoute.AddMoreCategories) },
             )
-            SettingsSection.AppBehaviors -> AppBehaviorsSettingsScreen(onBack = { nav.pop() })
-            SettingsSection.Multiview -> MultiviewSettingsScreen(onBack = { nav.pop() })
-            SettingsSection.Network -> NetworkSettingsScreen(onBack = { nav.pop() })
+            SettingsSection.Player -> PlayerSettingsScreen(onBack = { nav.pop() })
+            SettingsSection.MoviesAndTvShows ->
+                MoviesAndTvShowsSettingsScreen(onBack = { nav.pop() })
+            SettingsSection.Appearance -> AppearanceSettingsScreen(onBack = { nav.pop() })
+            SettingsSection.General -> GeneralSettingsScreen(onBack = { nav.pop() })
             SettingsSection.RemoteControl ->
                 com.aeriotv.android.feature.settings.RemoteControlSettingsScreen(
                     onBack = { nav.pop() },
@@ -2474,6 +2477,14 @@ private fun SettingsTabContent(
             SettingsSection.Developer -> DeveloperSettingsScreen(
                 onBack = { nav.pop() },
                 onOpenLogViewer = { nav.push(SettingsRoute.LogViewer) },
+            )
+            // The About page is the root's About block rendered on its own,
+            // so the copy cannot drift from what the pane hosts already show.
+            SettingsSection.About -> SettingsScreen(
+                onSectionClick = { nav.push(SettingsRoute.Section(it)) },
+                onOpenLicenses = { nav.push(SettingsRoute.Licenses) },
+                viewModel = playlistVm,
+                content = SettingsRootContent.AboutOnly,
             )
         }
     }
