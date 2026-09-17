@@ -79,9 +79,17 @@ fun GeneralSettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 // MARK: Startup
+                //
+                // Apple phase 1 parity: Default Tab, the two launch toggles and
+                // Auto-rotate are ONE section with one combined footer.
                 SettingsSection(
                     header = "Startup",
-                    footer = "The tab shown when the app first launches.",
+                    footer = "The tab shown when the app first launches. Skip loading screen may cause brief stutter while data hydrates. Resume last channel re-opens the player on launch if the saved channel still exists in your playlist." +
+                        if (isTv) {
+                            ""
+                        } else {
+                            " The player's fullscreen button can still rotate into landscape whatever Auto-rotate says."
+                        },
                 ) {
                     // Search is a TV-only nav tab and not a sensible launch tab;
                     // on phones it does not exist at all. On Demand and Favorites
@@ -97,12 +105,6 @@ fun GeneralSettingsScreen(
                             onClick = { viewModel.setDefaultTab(tab.name) },
                         )
                     }
-                }
-
-                SettingsSection(
-                    header = "Launch",
-                    footer = "Skip loading screen may cause brief stutter while data hydrates. Resume last channel re-opens the player on launch if the saved channel still exists in your playlist.",
-                ) {
                     SettingsToggleRow(
                         title = "Skip loading screen",
                         subtitle = "Land on Live TV instantly; data hydrates in the background",
@@ -115,19 +117,12 @@ fun GeneralSettingsScreen(
                         checked = autoResumeLastChannel,
                         onCheckedChange = viewModel::setAutoResumeLastChannel,
                     )
-                }
-
-                // Auto-Rotate (Logan 2026-08-07, iOS twin): phones/tablets only -
-                // TVs have no rotation. Default ON; when off MainActivity locks
-                // the activity to its current orientation.
-                if (!isTv) {
-                    val autoRotate by viewModel.autoRotate
-                        .collectAsStateWithLifecycle(initialValue = true)
-                    SettingsSection(
-                        header = "Orientation",
-                        footer = "The player's fullscreen button can still rotate " +
-                            "into landscape either way.",
-                    ) {
+                    // Auto-Rotate (Logan 2026-08-07, iOS twin): phones/tablets
+                    // only - TVs have no rotation. Default ON; when off
+                    // MainActivity locks the activity to its current orientation.
+                    if (!isTv) {
+                        val autoRotate by viewModel.autoRotate
+                            .collectAsStateWithLifecycle(initialValue = true)
                         SettingsToggleRow(
                             title = "Auto-rotate",
                             subtitle = "Follow the device orientation. When off, " +

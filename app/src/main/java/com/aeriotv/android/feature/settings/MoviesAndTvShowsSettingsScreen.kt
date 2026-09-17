@@ -86,9 +86,10 @@ fun MoviesAndTvShowsSettingsScreen(
                 ) {
                     // MARK: Refresh library
                     //
-                    // TV-only today, exactly as it was on App Behaviors. The
-                    // pref is global, so nothing changes for phones/tablets.
-                    if (isTv) item("refresh-library") {
+                    // Shown on every form factor (Apple parity): the cadence is
+                    // read by the shared OnDemandViewModel, so it always applied
+                    // everywhere even while the rows were TV-only.
+                    item("refresh-library") {
                         SettingsSection(header = "Refresh library") {
                             listOf(
                                 0 to "Every Launch",

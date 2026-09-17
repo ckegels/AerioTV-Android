@@ -248,7 +248,7 @@ fun LiveTvSettingsScreen(
                         // Moved here from Remote Control (Settings phase 1). Same
                         // row, same dialog, same persisted key.
                         SettingsSection(
-                            header = "TV Guide Groups",
+                            header = "Group Selection",
                             footer = "How channel groups are picked in the guide. Top pills keep the group row above the grid; the sidebar menu hides that row and opens by holding Left in the grid (unless Left (Hold) is reassigned in Remote Control). Only one is active at a time.",
                         ) {
                             GroupSelectionRow(

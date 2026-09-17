@@ -209,17 +209,27 @@ fun PlayerSettingsScreen(
                 }
 
                 // MARK: Playback
+                //
+                // Apple phase 1 parity: skip intervals, buffer size and stream
+                // recovery share one section.
                 SettingsSection(
                     header = "Playback",
-                    footer = if (isTv) {
-                        "How far the skip buttons and a single left or right press move " +
-                            "in live rewind, catch-up, recordings, movies, and TV shows. " +
-                            "Holding left or right still scrubs faster the longer you hold."
-                    } else {
-                        "How far the skip buttons move in live rewind, catch-up, " +
-                            "recordings, movies, and TV shows, including the cast remote " +
-                            "and the playback notification."
-                    },
+                    footer = (
+                        if (isTv) {
+                            "How far the skip buttons and a single left or right press move " +
+                                "in live rewind, catch-up, recordings, movies, and TV shows. " +
+                                "Holding left or right still scrubs faster the longer you hold."
+                        } else {
+                            "How far the skip buttons move in live rewind, catch-up, " +
+                                "recordings, movies, and TV shows, including the cast remote " +
+                                "and the playback notification."
+                        }
+                        ) + " Buffer Size controls how much stream data is pre-loaded: larger " +
+                        "buffers reduce stuttering on poor connections but add startup delay. " +
+                        "If a live stream stops sending video, Auto-Recover reloads it; turn " +
+                        "that off if live channels restart or stutter during commercial " +
+                        "breaks, and a brief freeze may show instead. Recovery applies to the " +
+                        "next channel you tune.",
                 ) {
                     SteppedSliderRow(
                         label = "Skip back",
@@ -235,12 +245,6 @@ fun PlayerSettingsScreen(
                         format = ::formatSkipSeconds,
                         onSelect = viewModel::setSkipForwardSeconds,
                     )
-                }
-
-                SettingsSection(
-                    header = "Buffer Size",
-                    footer = "Controls how much stream data is pre-loaded. Larger buffers reduce stuttering on poor connections but add startup delay.",
-                ) {
                     BUFFER_OPTIONS.forEach { opt ->
                         SettingsSelectionRow(
                             label = opt.label,
@@ -249,12 +253,6 @@ fun PlayerSettingsScreen(
                             onClick = { viewModel.setStreamBufferSize(opt.id) },
                         )
                     }
-                }
-
-                SettingsSection(
-                    header = "Stream Recovery",
-                    footer = "If a live stream stops sending video, the player reloads it to recover. Turn this off if live channels restart or stutter during commercial breaks; a brief freeze may show instead. Applies to the next channel you tune.",
-                ) {
                     SettingsToggleRow(
                         title = "Auto-Recover Frozen Streams",
                         subtitle = "Reload a live stream that stops sending video. Off keeps the stream as-is through commercial-break stutters.",
@@ -328,9 +326,13 @@ fun PlayerSettingsScreen(
                 }
 
                 // MARK: Multiview
+                //
+                // Apple phase 1 parity: indicator, spacing and tile corners
+                // share one section. tvOS presents corners as a Square /
+                // Rounded selection (s_09); same underlying Boolean.
                 SettingsSection(
                     header = "Multiview",
-                    footer = "How the grid shows which tile is unmuted. Center Icon fades with the chrome, Gray Outline stays visible, Accent Outline appears on switch and fades after 5 seconds.",
+                    footer = "How the grid shows which tile is unmuted. Center Icon fades with the chrome, Gray Outline stays visible, Accent Outline appears on switch and fades after 5 seconds. Padding inserts a small gap between tiles so each stream stands on its own.",
                 ) {
                     AUDIO_FOCUS_OPTIONS.forEach { opt ->
                         SettingsSelectionRow(
@@ -340,21 +342,12 @@ fun PlayerSettingsScreen(
                             onClick = { viewModel.setMultiviewAudioFocusStyle(opt.id) },
                         )
                     }
-                }
-                SettingsSection(
-                    header = "Spacing",
-                    footer = "Insert a small gap between tiles so each stream stands on its own.",
-                ) {
                     SettingsToggleRow(
                         title = "Padding Between Tiles",
                         subtitle = "Add a small gap between tiles for visual separation.",
                         checked = multiviewPadding,
                         onCheckedChange = viewModel::setMultiviewTilePadding,
                     )
-                }
-                // tvOS presents corners as a Square / Rounded selection (s_09)
-                // rather than a single toggle; same underlying Boolean.
-                SettingsSection(header = "Tile Corners") {
                     SettingsSelectionRow(
                         label = "Square",
                         selected = !multiviewRounded,
@@ -382,8 +375,6 @@ fun PlayerSettingsScreen(
                             checked = matchContentResolution,
                             onCheckedChange = viewModel::setMatchContentResolution,
                         )
-                    }
-                    SettingsSection(header = "Startup Refresh Rate") {
                         listOf(
                             "off" to "Off (system default)",
                             "50" to "50 Hz",
