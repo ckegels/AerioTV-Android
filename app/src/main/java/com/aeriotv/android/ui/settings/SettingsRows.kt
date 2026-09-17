@@ -46,7 +46,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.aeriotv.android.ui.tv.tvFocusScale
 
 /**
  * Shared tvOS-style Settings building blocks (mirrors the `TVSettings*` row
@@ -56,8 +55,8 @@ import com.aeriotv.android.ui.tv.tvFocusScale
  * grouped card with dividers, which is the iOS-phone style the Android
  * sub-screens previously copied). Each row sits on `tvSettingsCardBG`:
  *   - at rest: a soft card fill + a faint accent hairline border
- *   - on D-pad focus: an accent-tinted fill (0.18), a bright accent border
- *     (0.65, 2dp), and a 1.02 scale (via [tvFocusScale])
+ *   - on D-pad focus: an accent-tinted fill (0.18), and a bright accent border
+ *     (0.65, 2dp). No scale bump (Phase 3)
  *
  * Selections show an accent checkmark (no RadioButton); toggles keep a Switch
  * (idiomatic on Android) but ride the same focus card. Sections are introduced
@@ -65,6 +64,13 @@ import com.aeriotv.android.ui.tv.tvFocusScale
  *
  * Used by every Settings sub-screen so the look is uniform and matches tvOS.
  */
+
+/**
+ * The one focus-ring width in Settings, matching the guide grid's focused
+ * cell (`GuideGrid`: 2dp, theme accent). Logan's standing rule: never white,
+ * never oversized.
+ */
+val SettingsFocusRingWidth = 2.dp
 
 /** Uppercase accent section header (tvOS `tvSettingsHeader`). */
 @Composable
@@ -99,8 +105,10 @@ fun SettingsSectionFooter(text: String, modifier: Modifier = Modifier) {
 fun Modifier.settingsRowCard(focused: Boolean): Modifier {
     val primary = MaterialTheme.colorScheme.primary
     val rest = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+    // Phase 3: NO scale bump. A 1.02x pop on every focused row made long TV
+    // settings pages feel like they were breathing; the accent ring alone is
+    // the app-wide focus signal (same one the guide grid draws).
     return this
-        .tvFocusScale(focused, focusedScale = 1.02f)
         .clip(RoundedCornerShape(12.dp))
         .background(if (focused) primary.copy(alpha = 0.18f) else rest)
         .border(
@@ -460,7 +468,7 @@ fun SettingsDetailTopBar(title: String, onBack: () -> Unit) {
  *
  * On TV a bare TextButton is invisible to D-pad focus (no chrome) and the
  * appbar parks it at the raw screen edge, outside the 48dp overscan margin.
- * This gives it the guide-pill treatment (white 2dp focus ring + tinted
+ * This gives it the guide-pill treatment (accent focus ring + tinted
  * fill) and insets it to the title-safe area. Phones keep the plain
  * iOS-style text action.
  */
@@ -485,8 +493,8 @@ fun SettingsHeaderTextButton(
                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                 )
                 .border(
-                    width = 2.dp,
-                    color = if (focused) androidx.compose.ui.graphics.Color.White
+                    width = SettingsFocusRingWidth,
+                    color = if (focused) MaterialTheme.colorScheme.primary
                     else androidx.compose.ui.graphics.Color.Transparent,
                     shape = RoundedCornerShape(50),
                 )
@@ -533,7 +541,7 @@ fun Modifier.dpadFocusWash(tint: androidx.compose.ui.graphics.Color = MaterialTh
 }
 
 /**
- * Self-contained D-pad focus ring (the app-wide white 2dp convention) plus a
+ * Self-contained D-pad focus ring (the app-wide accent convention) plus a
  * subtle tinted wash, for pills / segments / swatches / cards that keep their
  * own selection styling. The border is transparent (not absent) at rest so
  * the element's measured size never changes on focus. Place AFTER
@@ -559,8 +567,8 @@ fun Modifier.dpadFocusRing(
             },
         )
         .border(
-            width = 2.dp,
-            color = if (focused) androidx.compose.ui.graphics.Color.White
+            width = SettingsFocusRingWidth,
+            color = if (focused) MaterialTheme.colorScheme.primary
             else androidx.compose.ui.graphics.Color.Transparent,
             shape = shape,
         )
@@ -570,7 +578,7 @@ fun Modifier.dpadFocusRing(
  * Drop-in replacement for the bare TextButton in AlertDialog
  * confirmButton/dismissButton slots. Material's TextButton focus state is a
  * faint overlay, invisible at couch distance; this keeps the text-button look
- * at rest and adds the white 2dp focus ring + tinted fill under D-pad focus.
+ * at rest and adds the accent focus ring + tinted fill under D-pad focus.
  * Safe on phones (the chrome only appears with focus, which touch never has).
  */
 @Composable
@@ -592,8 +600,8 @@ fun SettingsDialogTextButton(
                 else androidx.compose.ui.graphics.Color.Transparent,
             )
             .border(
-                width = 2.dp,
-                color = if (focused) androidx.compose.ui.graphics.Color.White
+                width = SettingsFocusRingWidth,
+                color = if (focused) MaterialTheme.colorScheme.primary
                 else androidx.compose.ui.graphics.Color.Transparent,
                 shape = RoundedCornerShape(50),
             )
