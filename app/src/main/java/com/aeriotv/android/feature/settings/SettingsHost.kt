@@ -60,13 +60,18 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aeriotv.android.ui.settings.LocalSettingsInPane
 import com.aeriotv.android.ui.settings.SettingsNavRow
 import com.aeriotv.android.ui.settings.SettingsSectionHeader
 import com.aeriotv.android.ui.settings.TvSettingsMetrics
 
-/** Touch sidebar width (plan B3). The TV rail widens to 300dp in B4. */
+/**
+ * Fallback touch sidebar width (plan B3) for callers that do not pass one.
+ * Live callers hand in `Viewport.settingsSidebarWidth` (280dp on a medium
+ * window, 320dp expanded) or, on a foldable, the hinge position.
+ */
 private val SidebarWidth = 320.dp
 
 /**
@@ -152,6 +157,19 @@ fun SettingsTwoPaneHost(
     /** Drives the Sync row's On / Off subtitle; see settingsSectionSubtitle. */
     syncEnabled: Boolean,
     takeover: (SettingsRoute) -> Boolean,
+    /**
+     * Sidebar width. On a foldable this is the hinge's leading edge, so the
+     * sidebar ends exactly where the crease begins; otherwise it is the
+     * viewport's fixed width for this size class.
+     */
+    sidebarWidth: Dp = SidebarWidth,
+    /**
+     * Width of the crease, when the boundary sits on a vertical fold. Blank
+     * space rather than a divider: on a half-opened device those pixels are
+     * physically the hinge, and drawing a line there would be a second,
+     * redundant separator. 0 (no fold, or a flat one) keeps the hairline.
+     */
+    hingeGap: Dp = 0.dp,
     detail: @Composable (SettingsRoute) -> Unit,
 ) {
     // See the TV host: a takeover removes this whole subtree, so each pane's
@@ -169,13 +187,17 @@ fun SettingsTwoPaneHost(
             sections = sections,
             activePlaylistName = activePlaylistName,
             syncEnabled = syncEnabled,
-            modifier = Modifier.width(SidebarWidth),
+            modifier = Modifier.width(sidebarWidth),
         )
-        VerticalDivider(
-            modifier = Modifier.fillMaxHeight(),
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-        )
+        if (hingeGap > 0.dp) {
+            Spacer(Modifier.width(hingeGap).fillMaxHeight())
+        } else {
+            VerticalDivider(
+                modifier = Modifier.fillMaxHeight(),
+                thickness = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+        }
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
             if (pushed != null) {
                 // A push keeps its own back affordance: the sidebar is beside
@@ -213,7 +235,13 @@ private fun SettingsSidebar(
         // Status bar inset: on the unfolded Fold the "Settings" title sat under
         // the clock (Logan's emulator 2026-09-09).
         contentPadding = PaddingValues(
-            start = 12.dp, end = 12.dp, bottom = 12.dp,
+            start = 12.dp, end = 12.dp,
+            // Tab-pill reserve: the sidebar reached foldables in Settings phase
+            // 2, and those keep the FLOATING bottom pill, which overlays
+            // content. Without this the last rows (Updates, About) sit under
+            // it. On a tablet the pill is at the top and the provided inset is
+            // already small, so this is a no-op there.
+            bottom = 12.dp + com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset.current,
             top = 12.dp + androidx.compose.foundation.layout.WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
         ),
         verticalArrangement = Arrangement.spacedBy(6.dp),

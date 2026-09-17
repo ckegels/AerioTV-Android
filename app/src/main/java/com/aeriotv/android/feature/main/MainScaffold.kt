@@ -2294,7 +2294,12 @@ private fun SettingsTabContent(
     // gate -- a landscape phone is "expanded" but far too short -- and TV keeps
     // the stacked layout until B4 lands the rail with its focus contract.
     val isTvDevice = rememberIsTvDevice()
-    val paneEligible = rememberViewport().isTwoPaneEligible
+    val viewport = rememberViewport()
+    // Settings phase 2: the gate is MEDIUM width and up, so an unfolded
+    // foldable gets the sidebar. `settingsTwoPane` is Settings' own flag; the
+    // window-wide `isTwoPaneEligible` (and the tab-bar placement built on it)
+    // is deliberately unchanged.
+    val paneEligible = viewport.settingsTwoPane
     // Same eligibility, two hosts: touch tablets get the tap sidebar (B3), TV
     // gets the 10-foot rail with its focus contract (B4).
     val tabletTwoPane = paneEligible && !isTvDevice
@@ -2551,6 +2556,19 @@ private fun SettingsTabContent(
     }
     }
 
+    // Fold awareness (phase 2 item 2). A vertical hinge that splits the window
+    // left/right moves the pane boundary ONTO the crease: the sidebar ends
+    // where the hinge starts and the detail pane resumes after it, so neither
+    // pane is folded in half. A horizontal (tabletop) fold reports no vertical
+    // feature and is ignored here by construction. The host Row starts at the
+    // window's leading edge, which is the same origin the hinge bounds use.
+    val fold = com.aeriotv.android.ui.adaptive.rememberVerticalFold()
+    val settingsSidebarWidth = when {
+        fold != null && fold.start > 0.dp -> fold.start
+        else -> viewport.settingsSidebarWidth
+    }
+    val settingsHingeGap = if (fold != null && fold.start > 0.dp) fold.gap else 0.dp
+
     Box(modifier = Modifier.focusRequester(settingsContentFocus).focusGroup()) {
         if (tvRail) {
             SettingsTvRailHost(
@@ -2590,8 +2608,17 @@ private fun SettingsTabContent(
                 ),
                 activePlaylistName = playlistState.playlist?.name,
                 syncEnabled = syncEnabled,
-                // Log lines want the whole width; everything else fits a pane.
-                takeover = { it is SettingsRoute.LogViewer || it is SettingsRoute.Licenses },
+                // Log lines and license texts want the whole width, and the
+                // Add Playlist wizard is a modal flow of its own; everything
+                // else (playlist detail, Edit Playlist, Add More Categories,
+                // section sub-pages) renders in the pane with the sidebar up.
+                takeover = {
+                    it is SettingsRoute.LogViewer ||
+                        it is SettingsRoute.Licenses ||
+                        it is SettingsRoute.AddPlaylist
+                },
+                sidebarWidth = settingsSidebarWidth,
+                hingeGap = settingsHingeGap,
                 detail = { renderRoute(it) },
             )
         } else {
