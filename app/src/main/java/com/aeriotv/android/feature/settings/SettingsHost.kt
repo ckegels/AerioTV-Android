@@ -26,10 +26,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.focus.FocusRequester
@@ -45,6 +47,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
@@ -73,6 +76,37 @@ import com.aeriotv.android.ui.settings.TvSettingsMetrics
  * window, 320dp expanded) or, on a foldable, the hinge position.
  */
 private val SidebarWidth = 320.dp
+
+/**
+ * How the two-pane host divides its window, decided by the caller from the
+ * viewport and the OS-reported folding feature.
+ *
+ * One value rather than four parameters because the fields only make sense
+ * together: [sidebarExtent] is a WIDTH side by side and a HEIGHT stacked, and
+ * [gap] and [drawDivider] describe the same boundary either way.
+ */
+data class SettingsPaneSplit(
+    /**
+     * Tabletop: the sidebar goes ABOVE the crease and the detail BELOW it.
+     * A side-by-side boundary here would run the bend through both panes.
+     */
+    val stacked: Boolean = false,
+    /** Sidebar width when side by side, sidebar height when [stacked]. */
+    val sidebarExtent: Dp = SidebarWidth,
+    /** Extent of the crease, left blank between the panes. */
+    val gap: Dp = 0.dp,
+    /** Hairline between the panes; suppressed when the crease takes the space. */
+    val drawDivider: Boolean = true,
+)
+
+/**
+ * Width of one category in the TABLETOP sidebar row.
+ *
+ * The row scrolls horizontally, so this is a pitch rather than a fit: wide
+ * enough for the longest label ("Movies & TV Shows") with its subtitle on one
+ * line, narrow enough that three or four are in view at once.
+ */
+private val TabletopSidebarItemWidth = 260.dp
 
 /**
  * Pane-swap crossfade (plan B5: "about 150ms crossfade on pane content swaps;
@@ -158,18 +192,11 @@ fun SettingsTwoPaneHost(
     syncEnabled: Boolean,
     takeover: (SettingsRoute) -> Boolean,
     /**
-     * Sidebar width. On a foldable this is the hinge's leading edge, so the
-     * sidebar ends exactly where the crease begins; otherwise it is the
-     * viewport's fixed width for this size class.
+     * How to divide the window. On a foldable the boundary sits ON the crease,
+     * so no pane is bent; otherwise it is the viewport's fixed width for this
+     * size class. See [SettingsPaneSplit].
      */
-    sidebarWidth: Dp = SidebarWidth,
-    /**
-     * Width of the crease, when the boundary sits on a vertical fold. Blank
-     * space rather than a divider: on a half-opened device those pixels are
-     * physically the hinge, and drawing a line there would be a second,
-     * redundant separator. 0 (no fold, or a flat one) keeps the hairline.
-     */
-    hingeGap: Dp = 0.dp,
+    split: SettingsPaneSplit = SettingsPaneSplit(),
     detail: @Composable (SettingsRoute) -> Unit,
 ) {
     // See the TV host: a takeover removes this whole subtree, so each pane's
@@ -180,6 +207,56 @@ fun SettingsTwoPaneHost(
         detail(pushed)
         return
     }
+    // Declared once and placed by whichever arm runs, so the two postures can
+    // never drift apart in what the detail pane actually shows.
+    val paneBody: @Composable () -> Unit = {
+        if (pushed != null) {
+            // A push keeps its own back affordance: the sidebar is beside or
+            // above it, not replacing it, so system Back is not the only way
+            // out.
+            detail(pushed)
+        } else {
+            // Same crossfade as the TV host; see SettingsPaneCrossfadeMs.
+            Crossfade(
+                targetState = selection,
+                animationSpec = tween(SettingsPaneCrossfadeMs),
+                label = "settingsPane",
+            ) { paneRoute ->
+                paneStateHolder.SaveableStateProvider(encodeSettingsRoute(paneRoute)) {
+                    CompositionLocalProvider(LocalSettingsInPane provides true) {
+                        detail(paneRoute)
+                    }
+                }
+            }
+        }
+    }
+
+    if (split.stacked) {
+        // Tabletop. The crease runs left to right, so the panes stack across
+        // it: categories in the top segment, the selected page in the bottom.
+        Column(modifier = Modifier.fillMaxSize()) {
+            SettingsSidebarRow(
+                selection = selection,
+                onSelect = onSelect,
+                sections = sections,
+                activePlaylistName = activePlaylistName,
+                syncEnabled = syncEnabled,
+                modifier = Modifier.height(split.sidebarExtent),
+            )
+            if (split.gap > 0.dp) {
+                Spacer(Modifier.height(split.gap).fillMaxWidth())
+            } else if (split.drawDivider) {
+                HorizontalDivider(
+                    modifier = Modifier.fillMaxWidth(),
+                    thickness = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                )
+            }
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) { paneBody() }
+        }
+        return
+    }
+
     Row(modifier = Modifier.fillMaxSize()) {
         SettingsSidebar(
             selection = selection,
@@ -187,37 +264,94 @@ fun SettingsTwoPaneHost(
             sections = sections,
             activePlaylistName = activePlaylistName,
             syncEnabled = syncEnabled,
-            modifier = Modifier.width(sidebarWidth),
+            modifier = Modifier.width(split.sidebarExtent),
         )
-        if (hingeGap > 0.dp) {
-            Spacer(Modifier.width(hingeGap).fillMaxHeight())
-        } else {
+        if (split.gap > 0.dp) {
+            Spacer(Modifier.width(split.gap).fillMaxHeight())
+        } else if (split.drawDivider) {
             VerticalDivider(
                 modifier = Modifier.fillMaxHeight(),
                 thickness = 1.dp,
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
             )
         }
-        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-            if (pushed != null) {
-                // A push keeps its own back affordance: the sidebar is beside
-                // it, not above it, so system Back is not the only way out.
-                detail(pushed)
-            } else {
-                // Same crossfade as the TV host; see SettingsPaneCrossfadeMs.
-                Crossfade(
-                    targetState = selection,
-                    animationSpec = tween(SettingsPaneCrossfadeMs),
-                    label = "settingsPane",
-                ) { paneRoute ->
-                    paneStateHolder.SaveableStateProvider(encodeSettingsRoute(paneRoute)) {
-                        CompositionLocalProvider(LocalSettingsInPane provides true) {
-                            detail(paneRoute)
-                        }
-                    }
+        Box(modifier = Modifier.weight(1f).fillMaxHeight()) { paneBody() }
+    }
+}
+
+/**
+ * The tabletop sidebar: the same category rows, laid out across the top
+ * segment instead of down the side.
+ *
+ * Reuses [SettingsNavRow] at a fixed width rather than inventing a chip, so
+ * the selected row keeps EXACTLY the existing tonal treatment; no new border,
+ * ring or highlight style enters the app through this posture.
+ */
+@Composable
+private fun SettingsSidebarRow(
+    selection: SettingsRoute,
+    onSelect: (SettingsRoute) -> Unit,
+    sections: List<SettingsSectionGroupSpec>,
+    activePlaylistName: String?,
+    syncEnabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    // Flattened: the group headers are a vertical-list affordance and have no
+    // place in a single scrolling row.
+    val rows = remember(sections, activePlaylistName, syncEnabled) {
+        buildList {
+            add(Triple(SettingsRoute.Playlists as SettingsRoute, "Playlists", activePlaylistName))
+            sections.forEach { group ->
+                group.sections.forEach { section ->
+                    add(
+                        Triple(
+                            SettingsRoute.Section(section),
+                            section.title,
+                            settingsSectionSubtitle(section, syncEnabled),
+                        ),
+                    )
                 }
             }
         }
+    }
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = "Settings",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.padding(
+                start = 18.dp,
+                top = 8.dp + androidx.compose.foundation.layout.WindowInsets.statusBars
+                    .asPaddingValues().calculateTopPadding(),
+                bottom = 8.dp,
+            ),
+        )
+        // The top segment is half the window, far more than the row needs.
+        // Spend the slack ABOVE the row so the categories sit just over the
+        // crease: short eye travel to the pane, and the empty band lands under
+        // the title where it reads as breathing room rather than a gap.
+        Spacer(Modifier.weight(1f, fill = true))
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(items = rows, key = { encodeSettingsRoute(it.first) }) { row ->
+                val (route, title, subtitle) = row
+                SettingsNavRow(
+                    title = title,
+                    subtitle = subtitle,
+                    icon = settingsRouteIcon(route),
+                    onClick = { onSelect(route) },
+                    selected = route == selection,
+                    trailingChevron = false,
+                    flat = true,
+                    modifier = Modifier.width(TabletopSidebarItemWidth),
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
     }
 }
 

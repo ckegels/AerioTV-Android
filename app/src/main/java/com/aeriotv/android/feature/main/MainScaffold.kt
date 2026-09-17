@@ -135,6 +135,7 @@ import com.aeriotv.android.ui.adaptive.topTabBarScale
 import com.aeriotv.android.ui.adaptive.rememberViewport
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.feature.settings.SettingsTvRailHost
+import com.aeriotv.android.feature.settings.SettingsPaneSplit
 import com.aeriotv.android.feature.settings.SettingsTwoPaneHost
 import com.aeriotv.android.feature.settings.rememberSettingsNavState
 import com.aeriotv.android.feature.settings.rememberSettingsPaneSelection
@@ -2267,6 +2268,12 @@ internal fun Modifier.collapsibleChrome(visibleFraction: Float): Modifier = this
  * (plan B2's TV takeover set). Shared so the focus contract and the rail host
  * cannot disagree about what counts as a takeover.
  */
+/**
+ * Shortest top segment that can still hold the tabletop category row (title
+ * plus one row of items). Below this the posture falls back to side by side.
+ */
+private val MinTabletopSidebarHeight = 160.dp
+
 private fun isSettingsTakeover(route: SettingsRoute): Boolean =
     route is SettingsRoute.LogViewer ||
         route is SettingsRoute.Licenses ||
@@ -2556,18 +2563,50 @@ private fun SettingsTabContent(
     }
     }
 
-    // Fold awareness (phase 2 item 2). A vertical hinge that splits the window
-    // left/right moves the pane boundary ONTO the crease: the sidebar ends
-    // where the hinge starts and the detail pane resumes after it, so neither
-    // pane is folded in half. A horizontal (tabletop) fold reports no vertical
-    // feature and is ignored here by construction. The host Row starts at the
-    // window's leading edge, which is the same origin the hinge bounds use.
-    val fold = com.aeriotv.android.ui.adaptive.rememberVerticalFold()
-    val settingsSidebarWidth = when {
-        fold != null && fold.start > 0.dp -> fold.start
-        else -> viewport.settingsSidebarWidth
+    // Fold awareness. Every geometry comes from the OS-reported FoldingFeature,
+    // and the boundary always lands ON the crease so no pane is bent:
+    //
+    //  - VERTICAL crease: the window splits left/right, so the existing
+    //    side-by-side layout just moves its boundary to the hinge.
+    //  - HORIZONTAL crease, HALF_OPENED (tabletop): the window is physically
+    //    bent across the middle. Side by side would run that bend through BOTH
+    //    panes, so the host stacks instead: categories above, detail below.
+    //  - HORIZONTAL crease, FLAT: nothing is bent, so the ordinary vertical
+    //    split is kept; only an OCCLUDING hinge changes anything, by taking
+    //    the hairline away.
+    //
+    // The host's Row/Column starts at the window's leading/top edge, which is
+    // the same origin the feature bounds use. Recomposing on a new FoldInfo
+    // re-lays-out only; `selection` and the nav stack live above this and are
+    // untouched, and `twoPane` does not flip, so no posture mapping runs.
+    val fold = com.aeriotv.android.ui.adaptive.rememberFoldInfo()
+    val settingsSplit = when {
+        fold != null &&
+            fold.axis == com.aeriotv.android.ui.adaptive.FoldAxis.HORIZONTAL &&
+            fold.isHalfOpened &&
+            // A top segment too short to hold the category row is worse than
+            // the bend it avoids; fall through to side by side.
+            fold.start >= MinTabletopSidebarHeight ->
+            SettingsPaneSplit(
+                stacked = true,
+                sidebarExtent = fold.start,
+                gap = fold.gap,
+                drawDivider = !fold.needsBlankGap,
+            )
+        fold != null &&
+            fold.axis == com.aeriotv.android.ui.adaptive.FoldAxis.VERTICAL &&
+            fold.start > 0.dp ->
+            SettingsPaneSplit(
+                sidebarExtent = fold.start,
+                gap = fold.gap,
+                drawDivider = !fold.needsBlankGap,
+            )
+        else ->
+            SettingsPaneSplit(
+                sidebarExtent = viewport.settingsSidebarWidth,
+                drawDivider = fold?.isOccluding != true,
+            )
     }
-    val settingsHingeGap = if (fold != null && fold.start > 0.dp) fold.gap else 0.dp
 
     Box(modifier = Modifier.focusRequester(settingsContentFocus).focusGroup()) {
         if (tvRail) {
@@ -2617,8 +2656,7 @@ private fun SettingsTabContent(
                         it is SettingsRoute.Licenses ||
                         it is SettingsRoute.AddPlaylist
                 },
-                sidebarWidth = settingsSidebarWidth,
-                hingeGap = settingsHingeGap,
+                split = settingsSplit,
                 detail = { renderRoute(it) },
             )
         } else {
