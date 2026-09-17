@@ -73,6 +73,31 @@ data class Viewport(val widthDp: Int, val heightDp: Int, val diagonalInches: Flo
      */
     val isTwoPaneEligible: Boolean get() = isExpanded && heightDp >= 480
 
+    /**
+     * Whether the SETTINGS host runs its sidebar + detail layout here.
+     *
+     * Settings phase 2 drops the width floor to MEDIUM, so an unfolded
+     * foldable (about 690dp across) gets the sidebar instead of the stacked
+     * phone list. The height floor is unchanged and still what keeps a
+     * landscape phone (roughly 997x450dp, "expanded" by width) stacked.
+     *
+     * Deliberately a SEPARATE flag from [isTwoPaneEligible] rather than a
+     * relaxation of it: [prefersTopTabBar] is built on that one, and moving
+     * the main tab bar to the top of a 600dp window is not part of this phase
+     * (Logan 2026-09-08: phones and foldables keep the bottom bar).
+     */
+    val settingsTwoPane: Boolean get() = widthDp >= 600 && heightDp >= 480
+
+    /**
+     * Width of the Settings sidebar when no fold dictates the boundary.
+     *
+     * Medium windows are barely 600dp across, so the 320dp sidebar the
+     * expanded layout uses would eat more than half of them and squeeze the
+     * detail pane under its own content cap. 280dp still fits the longest row
+     * label plus its subtitle.
+     */
+    val settingsSidebarWidth: Dp get() = if (isExpanded) 320.dp else 280.dp
+
     /** Max content width for form-style screens. Phones get the full width;
      * larger viewports cap so a single column of labels + inputs stays
      * readable at 10-foot UX (TV) or 18-inch (tablet). Numbers measured
@@ -169,7 +194,9 @@ val LocalTabBarBottomInset = androidx.compose.runtime.compositionLocalOf { 104.d
  * already puts its tab bar on top -- so tablets match across both platforms.
  * Phones keep the bottom pill; TV has its own 10-foot top bar already.
  */
-/** Top tab bar only on real tablets; phones and foldables keep the bottom bar (Logan 2026-09-08). */
+/** Top tab bar only on real tablets; phones and foldables keep the bottom bar (Logan 2026-09-08).
+ *  Stays on [Viewport.isTwoPaneEligible] (expanded width) on purpose: Settings
+ *  phase 2 widened only its OWN two-pane gate, [Viewport.settingsTwoPane]. */
 val Viewport.prefersTopTabBar: Boolean get() = isTwoPaneEligible && isTabletSize
 
 /**
