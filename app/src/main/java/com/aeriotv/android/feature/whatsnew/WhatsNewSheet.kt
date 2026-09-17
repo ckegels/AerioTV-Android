@@ -295,28 +295,28 @@ object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Switch Stream stays connected",
-            body = "Switching a channel's stream now keeps one connection, so the channel no longer drops or falls back to the stream you switched away from.",
+            title = "Your whole library",
+            body = "Movies and TV Shows no longer stop at 40,000 titles. The catalog is stored on the device as it loads, resumes where it left off after a restart, and never loads the whole library into memory.",
         ),
         WhatsNewItem(
-            title = "Your Dispatcharr permissions",
-            body = "The app now follows what your own Dispatcharr account can do instead of assuming an admin. DVR, Movies and TV Shows appear when your account has access, and recording works for any account allowed to manage the DVR.",
+            title = "Guide channel column",
+            body = "Channel number, favorite star and catch-up icon sit in a band above the logo, and the logo fills the space below it. Season and episode moved from the guide cells to the program details.",
         ),
         WhatsNewItem(
-            title = "Clear connection limit notices",
-            body = "When a stream is refused because your account or the provider is out of connections, the player says so and offers Retry instead of failing quietly.",
+            title = "Playlist switching keeps your data",
+            body = "Switching playlists no longer clears the previous playlist's guide or library, and permissions refresh the moment you switch. Refresh Everything rebuilds the library from scratch.",
         ),
         WhatsNewItem(
-            title = "Steadier live playback",
-            body = "A channel that keeps ending now waits longer between attempts instead of fighting other devices for the slot, and a slow channel gets more time to start before another stream is tried.",
+            title = "Rounded corners, two toggles",
+            body = "Rounded corners for List view and Guide view are now separate in Settings > Appearance, and guide artwork follows the Guide toggle.",
         ),
         WhatsNewItem(
-            title = "Player Info Card",
-            body = "Choose what appears on the info card in the player, from the channel logo and name to the program name, time, subtitle and description. Find it in Settings > App Behaviors.",
+            title = "Android TV: Guide only",
+            body = "The List view is retired on TV. Live TV always opens the Guide, and its options live under Guide Presentation in Appearance.",
         ),
         WhatsNewItem(
-            title = "Program art in the guide",
-            body = "Artwork keeps its own shape, so landscape stays landscape and posters stay posters, and it grows with the app-wide Text Size setting.",
+            title = "Fixes",
+            body = "Switching streams on a slow provider no longer freezes the picture. The interface no longer runs off the screen after a resolution switch on the Google TV Streamer. Crash reports are captured automatically for the log export.",
         ),
     )
 }
