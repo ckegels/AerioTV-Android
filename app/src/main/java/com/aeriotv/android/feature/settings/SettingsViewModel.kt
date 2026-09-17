@@ -329,6 +329,10 @@ class SettingsViewModel @Inject constructor(
     }
 
     /** TV guide group-selector style: "pills" (top row) or "sidebar". */
+    /** Read-only mirror of the Drive sync master switch, for the Settings root
+     *  row value. Writing still belongs to SyncSettingsViewModel. */
+    val syncMasterEnabled: kotlinx.coroutines.flow.Flow<Boolean> = prefs.syncMasterEnabled
+
     val guideGroupSelector: StateFlow<String> = prefs.guideGroupSelector
         .stateIn(viewModelScope, SharingStarted.Eagerly, "pills")
     fun setGuideGroupSelector(mode: String) {
