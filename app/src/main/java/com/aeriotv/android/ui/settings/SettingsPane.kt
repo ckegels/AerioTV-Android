@@ -67,3 +67,22 @@ fun SettingsPaneContent(
 @Composable
 fun Modifier.settingsPaneWidth(maxWidth: Dp = SettingsPaneMaxWidth): Modifier =
     this.widthIn(max = maxWidth).fillMaxWidth()
+
+/**
+ * Phase 3, item 7: the ONE form width cap for every Settings page.
+ *
+ * 600dp on a medium window, 700dp on an expanded one, uncapped on a compact
+ * phone - the ladder `Viewport.formMaxWidth` already defines for the rest of
+ * the app, so a Settings form and an onboarding form agree. Pair it with a
+ * `Box(contentAlignment = Alignment.TopCenter)` so the capped column is
+ * centered in whatever it is hosted by, pane or window.
+ *
+ * Replaces the mix of `adaptiveFormWidth()`, `settingsPaneWidth()` (which had
+ * drifted to its own 640dp) and bare `widthIn(vp.formMaxWidth)` the pages had
+ * accumulated.
+ */
+@Composable
+fun Modifier.settingsFormWidth(): Modifier {
+    val cap = com.aeriotv.android.ui.adaptive.rememberViewport().formMaxWidth
+    return if (cap != Dp.Unspecified) this.widthIn(max = cap).fillMaxWidth() else this.fillMaxWidth()
+}
