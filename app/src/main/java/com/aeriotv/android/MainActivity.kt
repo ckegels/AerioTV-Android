@@ -415,14 +415,16 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Pull a deep-link target out of [intent.data] when the scheme is
-     * `aeriotv`. Supported hosts: `channel`, `vod`, `guide`. Path is the id /
+     * `aeriotv`. Supported hosts: `channel`, `vod`, `guide`, `settings`. Path is the id /
      * uuid / guideMatchKey. Anything else is ignored.
      */
     private fun captureDeepLinkFrom(intent: Intent?) {
         val data = intent?.data ?: return
         if (!data.scheme.equals("aeriotv", ignoreCase = true)) return
         val host = data.host?.lowercase() ?: return
-        val path = data.pathSegments?.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
+        val path = data.pathSegments?.firstOrNull()?.takeIf { it.isNotBlank() }
+            // Screenshot deep link: a bare aeriotv://settings means the root.
+            ?: (if (host == "settings") "root" else return)
         val target = when (host) {
             "channel" -> DeepLinkTarget.Channel(path)
             "vod" -> DeepLinkTarget.Vod(path)
@@ -432,6 +434,9 @@ class MainActivity : ComponentActivity() {
                 videoId = path,
                 isEpisode = data.getQueryParameter("episode") == "1",
             )
+            // Screenshot automation: open Settings on one page. Harmless in
+            // release -- it only opens a page the user can already reach.
+            "settings" -> DeepLinkTarget.Settings(path)
             "guide" -> {
                 val start = data.getQueryParameter("start")?.toLongOrNull()
                     ?: return // no start time => cannot anchor; ignore

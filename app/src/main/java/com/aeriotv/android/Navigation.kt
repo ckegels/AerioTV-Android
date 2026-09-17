@@ -325,6 +325,17 @@ fun AerioTVNavHost(
                     ) { launchSingleTop = true }
                     onDeepLinkConsumed()
                 }
+                is DeepLinkTarget.Settings -> {
+                    // Screenshot deep link. Hand the page to the view model:
+                    // MainScaffold selects the Settings tab, and SettingsTabContent
+                    // (which is not composed until then) applies the route. Pop any
+                    // player / detail route off first so the tab shell is on top.
+                    if (navController.currentDestination?.route != Routes.MAIN) {
+                        runCatching { navController.popBackStack(Routes.MAIN, false) }
+                    }
+                    dlVm.requestSettingsPage(target.page)
+                    onDeepLinkConsumed()
+                }
                 is DeepLinkTarget.ExitPlayer -> {
                     // Companion X: pop the live / VOD / recording player (and
                     // any detail pushed under it) so the tab shell is on top

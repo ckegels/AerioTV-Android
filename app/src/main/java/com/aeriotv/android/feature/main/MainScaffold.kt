@@ -138,6 +138,9 @@ import com.aeriotv.android.feature.settings.SettingsTvRailHost
 import com.aeriotv.android.feature.settings.SettingsTwoPaneHost
 import com.aeriotv.android.feature.settings.rememberSettingsNavState
 import com.aeriotv.android.feature.settings.rememberSettingsPaneSelection
+import com.aeriotv.android.feature.settings.isPaneBaseline
+import com.aeriotv.android.feature.settings.settingsDeepLinkPageNeedsPlaylist
+import com.aeriotv.android.feature.settings.settingsRouteForDeepLinkPage
 import com.aeriotv.android.feature.settings.visibleSettingsSections
 import com.aeriotv.android.ui.tv.tvFocusScale
 
@@ -599,6 +602,20 @@ fun MainScaffold(
     LaunchedEffect(Unit) {
         viewModel.liveTvTabRequests.collect {
             selectedTab = AppTab.LiveTV
+            initialTabApplied = true
+        }
+    }
+
+    // Screenshot deep link (aeriotv://settings/<page>). Select the Settings
+    // tab so SettingsTabContent composes; that composable then reads the same
+    // pending request and applies the route (it cannot be applied from here --
+    // the nav stack and pane selection live inside it). The request is a
+    // StateFlow, so it is still readable on the frame after this switch and on
+    // a cold launch where Settings had never been composed.
+    val pendingSettingsPage by viewModel.settingsPageRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingSettingsPage) {
+        if (pendingSettingsPage != null) {
+            selectedTab = AppTab.Settings
             initialTabApplied = true
         }
     }
@@ -2302,6 +2319,44 @@ private fun SettingsTabContent(
     }
     val playlistVm = playlistViewModel
     val playlistState by playlistVm.state.collectAsStateWithLifecycle()
+
+    // Screenshot deep link (aeriotv://settings/<page>). MainScaffold has already
+    // selected the Settings tab, which is what composed us; translate the page
+    // into this host's own terms. In a two-pane host a pane-baseline page is the
+    // SELECTION and everything else is a push above Playlists, matching what the
+    // user would have produced by hand; the stacked phone layout just pushes.
+    // The playlist pages wait for an active playlist, which is why the request
+    // is a StateFlow and this effect is keyed on the playlist id as well.
+    val pendingSettingsPage by playlistVm.settingsPageRequest.collectAsStateWithLifecycle()
+    // Bumped when a deep link changes the rail's selection: the rail only pulls
+    // focus into the pane on a PUSH, so a plain selection change would leave
+    // focus wherever it was (the tab pill on a cold launch).
+    var deepLinkPaneFocus by remember { mutableIntStateOf(0) }
+    LaunchedEffect(pendingSettingsPage, twoPane, tvRail, playlistState.playlist?.id) {
+        val page = pendingSettingsPage ?: return@LaunchedEffect
+        val activeId = playlistState.playlist?.id
+        // No playlist yet: leave the request pending and retry when one lands.
+        if (activeId == null && settingsDeepLinkPageNeedsPlaylist(page)) return@LaunchedEffect
+        val target = settingsRouteForDeepLinkPage(page, activeId)
+        nav.popToRoot()
+        if (twoPane) {
+            when {
+                target == null ->
+                    selection = if (tvRail) SettingsRoute.Root else DefaultSettingsPaneSelection
+                target.isPaneBaseline -> selection = target
+                else -> {
+                    // Playlist detail / edit are pushes; baseline them on the
+                    // Playlists pane so Back walks out the way it normally would.
+                    selection = SettingsRoute.Playlists
+                    nav.push(target)
+                }
+            }
+            deepLinkPaneFocus++
+        } else if (target != null) {
+            nav.push(target)
+        }
+        playlistVm.consumeSettingsPage()
+    }
     // Watch for a playlist id flip while we're inside the Add Playlist flow;
     // that means the user's onboarding Save succeeded and the new row was
     // promoted active. Close the embedded flow.
@@ -2497,6 +2552,7 @@ private fun SettingsTabContent(
     Box(modifier = Modifier.focusRequester(settingsContentFocus).focusGroup()) {
         if (tvRail) {
             SettingsTvRailHost(
+                focusPaneSignal = deepLinkPaneFocus,
                 selection = selection,
                 onSelect = { picked ->
                     nav.popToRoot()

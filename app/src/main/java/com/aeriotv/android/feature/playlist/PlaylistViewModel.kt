@@ -282,6 +282,28 @@ class PlaylistViewModel @Inject constructor(
         )
     val liveTvTabRequests: SharedFlow<Unit> = _liveTvTabRequests.asSharedFlow()
 
+    /**
+     * Pending `aeriotv://settings/<page>` screenshot deep link, or null.
+     *
+     * A StateFlow rather than a SharedFlow because SettingsTabContent is NOT
+     * composed until MainScaffold has switched to the Settings tab, so the
+     * request has to still be readable on a later frame; the consumer clears
+     * it with [consumeSettingsPage]. It also survives the wait for the active
+     * playlist that the playlist-detail / edit-playlist pages need.
+     */
+    private val _settingsPageRequest = MutableStateFlow<String?>(null)
+    val settingsPageRequest: StateFlow<String?> = _settingsPageRequest.asStateFlow()
+
+    /** Open Settings on [page] (screenshot deep link). */
+    fun requestSettingsPage(page: String) {
+        _settingsPageRequest.value = page
+    }
+
+    /** Clear the pending settings deep link once it has been applied. */
+    fun consumeSettingsPage() {
+        _settingsPageRequest.value = null
+    }
+
     /** Select the Live TV tab (companion X / exit-to-Live-TV). */
     fun requestLiveTvTab() {
         _liveTvTabRequests.tryEmit(Unit)

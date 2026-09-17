@@ -312,6 +312,13 @@ private const val RailSelectDebounceMs = 150L
  */
 @Composable
 fun SettingsTvRailHost(
+    /**
+     * Bumped by the screenshot deep link when it changes [selection] without a
+     * push. The rail's own focus effect only fires on a push, so without this
+     * a deep-linked pane would render with focus still on the tab pill.
+     * 0 means "never", and is ignored.
+     */
+    focusPaneSignal: Int = 0,
     selection: SettingsRoute,
     onSelect: (SettingsRoute) -> Unit,
     pushed: SettingsRoute?,
@@ -381,6 +388,13 @@ fun SettingsTvRailHost(
             runCatching { railFocus.requestFocus() }
         }
         prevPushed = pushed
+    }
+
+    androidx.compose.runtime.LaunchedEffect(focusPaneSignal) {
+        if (focusPaneSignal == 0) return@LaunchedEffect
+        // One frame for the new pane content to compose before aiming at it.
+        kotlinx.coroutines.delay(RailSelectDebounceMs)
+        runCatching { detailFocus.requestFocus() }
     }
 
     // Back in the pane returns focus to the rail instead of leaving Settings.

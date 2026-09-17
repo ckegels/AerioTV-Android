@@ -134,6 +134,40 @@ fun visibleSettingsSections(
     ),
 )
 
+/**
+ * Maps a `aeriotv://settings/<page>` path segment onto the route that page
+ * opens. Used by the screenshot deep link; null means "the Settings root",
+ * which is also what an unknown page resolves to.
+ *
+ * [activePlaylistId] is the active playlist's id; the two playlist pages need
+ * it, and resolve to the root when there is no active playlist yet.
+ */
+fun settingsRouteForDeepLinkPage(
+    page: String,
+    activePlaylistId: String?,
+): SettingsRoute? = when (page.trim().lowercase()) {
+    "root" -> null
+    "playlists" -> SettingsRoute.Playlists
+    "livetv" -> SettingsRoute.Section(SettingsSection.LiveTV)
+    "player" -> SettingsRoute.Section(SettingsSection.Player)
+    "movies" -> SettingsRoute.Section(SettingsSection.MoviesAndTvShows)
+    "dvr" -> SettingsRoute.Section(SettingsSection.DvrSettings)
+    "appearance" -> SettingsRoute.Section(SettingsSection.Appearance)
+    "general" -> SettingsRoute.Section(SettingsSection.General)
+    "remote" -> SettingsRoute.Section(SettingsSection.RemoteControl)
+    "sync" -> SettingsRoute.Section(SettingsSection.Sync)
+    "updates" -> SettingsRoute.Section(SettingsSection.AppUpdates)
+    "developer" -> SettingsRoute.Section(SettingsSection.Developer)
+    "about" -> SettingsRoute.About
+    "playlist-detail" -> activePlaylistId?.let { SettingsRoute.PlaylistDetail(it) }
+    "edit-playlist" -> activePlaylistId?.let { SettingsRoute.EditPlaylist(it) }
+    else -> null
+}
+
+/** True when [page] needs the active playlist id before it can be resolved. */
+fun settingsDeepLinkPageNeedsPlaylist(page: String): Boolean =
+    page.trim().lowercase() == "playlist-detail" || page.trim().lowercase() == "edit-playlist"
+
 /** Stage within the Add Playlist wizard. */
 sealed interface AddPlaylistWizardStep {
     data object ChooseType : AddPlaylistWizardStep
