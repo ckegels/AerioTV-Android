@@ -27,13 +27,16 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.feature.main.AppTab
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
+import com.aeriotv.android.ui.settings.SettingsPickerOption
+import com.aeriotv.android.ui.settings.SettingsPickerRow
 import com.aeriotv.android.ui.settings.SettingsSection
 import com.aeriotv.android.ui.settings.SettingsSelectionRow
+import com.aeriotv.android.ui.settings.SettingsSubPageHost
 import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.settingsRowCard
 import com.aeriotv.android.ui.theme.textAccent
 
@@ -61,13 +64,14 @@ fun GeneralSettingsScreen(
     val timeoutSecs by viewModel.networkTimeoutSecs.collectAsStateWithLifecycle(initialValue = 15.0)
     val maxRetries by viewModel.maxRetries.collectAsStateWithLifecycle(initialValue = 3)
 
+    SettingsSubPageHost {
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "General", onBack = onBack)
 
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Column(
                 modifier = Modifier
-                    .adaptiveFormWidth()
+                    .settingsFormWidth()
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(
@@ -94,17 +98,17 @@ fun GeneralSettingsScreen(
                     // Search is a TV-only nav tab and not a sensible launch tab;
                     // on phones it does not exist at all. On Demand and Favorites
                     // are no longer tabs on any form factor (media center 2026-09-10).
-                    AppTab.entries.filter {
+                    val tabs = AppTab.entries.filter {
                         it != AppTab.Search && it != AppTab.OnDemand && it != AppTab.Favorites
-                    }.forEach { tab ->
-                        val selected = (defaultTab.isEmpty() && tab == AppTab.LiveTV) ||
-                            defaultTab == tab.name
-                        SettingsSelectionRow(
-                            label = tab.label,
-                            selected = selected,
-                            onClick = { viewModel.setDefaultTab(tab.name) },
-                        )
                     }
+                    SettingsPickerRow(
+                        title = "Default Tab",
+                        options = tabs.map { SettingsPickerOption(it.name, it.label) },
+                        // Nothing stored means Live TV, which is where a first
+                        // launch lands; keep that reading as an explicit pick.
+                        selected = if (defaultTab.isEmpty()) AppTab.LiveTV.name else defaultTab,
+                        onSelect = { viewModel.setDefaultTab(it) },
+                    )
                     SettingsToggleRow(
                         title = "Skip loading screen",
                         subtitle = "Land on Live TV instantly; data hydrates in the background",
@@ -223,6 +227,7 @@ fun GeneralSettingsScreen(
                 }
             }
         }
+    }
     }
 }
 

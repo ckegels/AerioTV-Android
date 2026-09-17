@@ -58,7 +58,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.db.entity.sourceTypeDisplayLabel
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.SettingsHeaderTextButton
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
@@ -182,7 +182,7 @@ fun PlaylistDetailScreen(
         ) {
         val isTv = rememberIsTvDevice()
         LazyColumn(
-            modifier = Modifier.adaptiveFormWidth(),
+            modifier = Modifier.settingsFormWidth(),
             // 104dp bottom clears the MainScaffold NavigationBar on phones;
             // the TV nav lives at the top, so a slim overscan inset suffices.
             contentPadding = PaddingValues(

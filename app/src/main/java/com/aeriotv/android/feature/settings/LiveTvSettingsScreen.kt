@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -25,24 +24,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.category.CategoryPaletteState
 import com.aeriotv.android.core.category.ProgramCategory
-import com.aeriotv.android.core.tv.TvActionMenuDialog
-import com.aeriotv.android.core.tv.TvMenuAction
-import com.aeriotv.android.core.tv.rememberTvMenuGuard
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
-import com.aeriotv.android.ui.adaptive.rememberViewport
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
-import com.aeriotv.android.ui.settings.SettingsRowContainer
+import com.aeriotv.android.ui.settings.SettingsPickerOption
+import com.aeriotv.android.ui.settings.SettingsPickerRow
 import com.aeriotv.android.ui.settings.SettingsSection
 import com.aeriotv.android.ui.settings.SettingsSelectionRow
+import com.aeriotv.android.ui.settings.SettingsSubGroup
+import com.aeriotv.android.ui.settings.SettingsSubPageHost
 import com.aeriotv.android.ui.settings.SettingsToggleRow
+import com.aeriotv.android.ui.settings.settingsCountSummary
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.dpadFocusWash
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.theme.textAccent
@@ -87,21 +85,15 @@ fun LiveTvSettingsScreen(
     val scaleLiveTV by viewModel.displayScaleLiveTV.collectAsStateWithLifecycle(initialValue = 1.0f)
     val palette by viewModel.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
 
-    var editingGroupSelector by remember { mutableStateOf(false) }
     var pickerTarget by remember { mutableStateOf<ProgramCategory?>(null) }
-    val menuGuard = rememberTvMenuGuard()
 
+    SettingsSubPageHost {
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "Live TV", onBack = onBack)
 
-        val vp = rememberViewport()
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             LazyColumn(
-                modifier = if (vp.formMaxWidth != Dp.Unspecified) {
-                    Modifier.widthIn(max = vp.formMaxWidth)
-                } else {
-                    Modifier
-                },
+                modifier = Modifier.settingsFormWidth(),
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
@@ -184,14 +176,15 @@ fun LiveTvSettingsScreen(
                             checked = roundedArtwork,
                             onCheckedChange = viewModel::setRoundedArtwork,
                         )
-                        val current = defaultLiveTVView.lowercase()
-                        DEFAULT_LIVE_TV_VIEW_OPTIONS.forEach { (value, label) ->
-                            SettingsSelectionRow(
-                                label = label,
-                                selected = current == value,
-                                onClick = { viewModel.setDefaultLiveTVView(value) },
-                            )
-                        }
+                        SettingsPickerRow(
+                            title = "Default Live TV View",
+                            inlineTitle = true,
+                            options = DEFAULT_LIVE_TV_VIEW_OPTIONS.map {
+                                SettingsPickerOption(it.first, it.second)
+                            },
+                            selected = defaultLiveTVView.lowercase(),
+                            onSelect = viewModel::setDefaultLiveTVView,
+                        )
                     }
                 }
 
@@ -228,33 +221,42 @@ fun LiveTvSettingsScreen(
                             com.aeriotv.android.feature.playlist.PlaylistViewModel.FAVORITES_GROUP,
                             com.aeriotv.android.feature.playlist.PlaylistViewModel.RECENT_GROUP,
                         )
-                        (fixedTokens + defaultGroupOptions).forEach { token ->
-                            val isAll =
-                                token == com.aeriotv.android.feature.playlist.PlaylistViewModel.ALL_GROUPS
-                            SettingsSelectionRow(
-                                label = com.aeriotv.android.feature.livetv.groupDisplayName(token),
-                                // Nothing stored reads as All Channels, which is
-                                // where a first launch lands.
-                                selected = defaultGroupToken == token ||
-                                    (isAll && defaultGroupToken.isBlank()),
-                                onClick = { viewModel.setDefaultGroupToken(token) },
-                            )
-                        }
+                        val allToken =
+                            com.aeriotv.android.feature.playlist.PlaylistViewModel.ALL_GROUPS
+                        SettingsPickerRow(
+                            title = "Default Group",
+                            options = (fixedTokens + defaultGroupOptions).map { token ->
+                                SettingsPickerOption(
+                                    token,
+                                    com.aeriotv.android.feature.livetv.groupDisplayName(token),
+                                )
+                            },
+                            // Nothing stored reads as All Channels, which is
+                            // where a first launch lands.
+                            selected = if (defaultGroupToken.isBlank()) allToken else defaultGroupToken,
+                            onSelect = viewModel::setDefaultGroupToken,
+                        )
                     }
                 }
 
                 item("group-selection") {
+                    // Phase 3: one picker on both inputs. TV used to open a
+                    // TvActionMenuDialog from a value row and touch listed the
+                    // two choices inline; the shared picker renders inline on
+                    // TV and pushes a choice page on touch. Same keys.
                     if (isTv) {
-                        // Moved here from Remote Control (Settings phase 1). Same
-                        // row, same dialog, same persisted key.
                         SettingsSection(
                             header = "Group Selection",
                             footer = "How channel groups are picked in the guide. Top pills keep the group row above the grid; the sidebar menu hides that row and opens by holding Left in the grid (unless Left (Hold) is reassigned in Remote Control). Only one is active at a time.",
                         ) {
-                            GroupSelectionRow(
-                                slotName = "Group Selection",
-                                valueName = if (guideGroupSelector == "sidebar") "Sidebar menu" else "Top group pills",
-                                onClick = { editingGroupSelector = true },
+                            SettingsPickerRow(
+                                title = "Group Selection",
+                                options = listOf(
+                                    SettingsPickerOption("pills", "Top group pills"),
+                                    SettingsPickerOption("sidebar", "Sidebar menu"),
+                                ),
+                                selected = if (guideGroupSelector == "sidebar") "sidebar" else "pills",
+                                onSelect = viewModel::setGuideGroupSelector,
                             )
                         }
                     } else {
@@ -264,15 +266,14 @@ fun LiveTvSettingsScreen(
                                 "group list from the header button; Pills puts the groups " +
                                 "in a strip across the header.",
                         ) {
-                            SettingsSelectionRow(
-                                label = "Drawer",
-                                selected = phoneGroupSelector != "pills",
-                                onClick = { viewModel.setPhoneGroupSelector("sidebar") },
-                            )
-                            SettingsSelectionRow(
-                                label = "Pills",
-                                selected = phoneGroupSelector == "pills",
-                                onClick = { viewModel.setPhoneGroupSelector("pills") },
+                            SettingsPickerRow(
+                                title = "Group Selection",
+                                options = listOf(
+                                    SettingsPickerOption("sidebar", "Drawer"),
+                                    SettingsPickerOption("pills", "Pills"),
+                                ),
+                                selected = if (phoneGroupSelector == "pills") "pills" else "sidebar",
+                                onSelect = viewModel::setPhoneGroupSelector,
                             )
                         }
                     }
@@ -296,14 +297,24 @@ fun LiveTvSettingsScreen(
                             onCheckedChange = { viewModel.setShowEpgBadges(isTv, it) },
                         )
                         if (showEpgBadges) {
-                            for (badge in listOf("NEW", "REPEAT", "LIVE", "PREMIERE", "FINALE")) {
-                                SettingsToggleRow(
-                                    title = "${badge.first()}${badge.drop(1).lowercase()} badge",
-                                    checked = badge !in hiddenEpgBadges,
-                                    onCheckedChange = { on ->
-                                        viewModel.setBadgeHidden(badge, hidden = !on)
-                                    },
-                                )
+                            // Phase 3, item 4: the five per-badge toggles
+                            // collapse under one master row whose subtitle says
+                            // how many are on. TV keeps them inline.
+                            val badges = listOf("NEW", "REPEAT", "LIVE", "PREMIERE", "FINALE")
+                            val shown = badges.count { it !in hiddenEpgBadges }
+                            SettingsSubGroup(
+                                title = "Badge types",
+                                summary = settingsCountSummary(shown, badges.size),
+                            ) {
+                                badges.forEach { badge ->
+                                    SettingsToggleRow(
+                                        title = "${badge.first()}${badge.drop(1).lowercase()} badge",
+                                        checked = badge !in hiddenEpgBadges,
+                                        onCheckedChange = { on ->
+                                            viewModel.setBadgeHidden(badge, hidden = !on)
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -392,7 +403,10 @@ fun LiveTvSettingsScreen(
                         Text(
                             text = "Reset Colors to Defaults",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFFFB8C00),
+                            // Phase 3: the app's destructive/reset token (the
+                            // same one Playlist Detail's Danger Zone and DVR's
+                            // Reset to Default use), not a hardcoded orange.
+                            color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.Medium,
                         )
                     }
@@ -408,6 +422,8 @@ fun LiveTvSettingsScreen(
                 }
             }
         }
+    }
+
     }
 
     pickerTarget?.let { bucket ->
@@ -426,53 +442,6 @@ fun LiveTvSettingsScreen(
         )
     }
 
-    if (editingGroupSelector) {
-        TvActionMenuDialog(
-            title = "Group Selection",
-            actions = listOf(
-                TvMenuAction(
-                    label = if (guideGroupSelector != "sidebar") "Top group pills  (current)" else "Top group pills",
-                ) {
-                    viewModel.setGuideGroupSelector("pills")
-                    editingGroupSelector = false
-                },
-                TvMenuAction(
-                    label = if (guideGroupSelector == "sidebar") "Sidebar menu  (current)" else "Sidebar menu",
-                ) {
-                    viewModel.setGuideGroupSelector("sidebar")
-                    editingGroupSelector = false
-                },
-            ),
-            onDismiss = { editingGroupSelector = false },
-            guard = menuGuard,
-        )
-    }
-}
-
-/** Label + current value row, as Remote Control drew the Group Selection row
- *  before it moved here. Same shared container, no new chrome. */
-@Composable
-private fun GroupSelectionRow(
-    slotName: String,
-    valueName: String,
-    onClick: () -> Unit,
-) {
-    SettingsRowContainer(onClick = onClick) {
-        Text(
-            text = slotName,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-        )
-        if (valueName.isNotEmpty()) {
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = valueName,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.textAccent,
-            )
-        }
-    }
 }
 
 /** Default Live TV View choices. Empty string = "Automatic" (form-factor

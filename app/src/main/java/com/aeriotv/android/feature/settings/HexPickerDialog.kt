@@ -15,7 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -99,20 +98,18 @@ fun HexPickerDialog(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
+                com.aeriotv.android.ui.settings.SettingsTextField(
+                    label = "Hex color",
                     value = input,
                     onValueChange = { raw ->
-                        val cleaned = raw.removePrefix("#").uppercase().filter { it in HEX_CHARS }.take(6)
-                        input = cleaned
+                        input = raw.removePrefix("#").uppercase().filter { it in HEX_CHARS }.take(6)
                     },
-                    label = { Text("Hex color (e.g. ${bucket.defaultHex})") },
-                    singleLine = true,
+                    placeholder = bucket.defaultHex,
                     keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Ascii,
                         capitalization = KeyboardCapitalization.Characters,
                         imeAction = ImeAction.Done,
                     ),
-                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         },

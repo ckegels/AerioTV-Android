@@ -60,7 +60,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.BuildConfig
 import com.aeriotv.android.core.debug.DebugLogger
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsActionRow
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
@@ -138,7 +138,7 @@ fun DeveloperSettingsScreen(
             // readable-width cap, so on a tablet or TV its rows stretched the
             // full window while every sibling screen capped. Matches the
             // Network/DVR/Playlist pattern.
-            modifier = Modifier.adaptiveFormWidth().fillMaxSize(),
+            modifier = Modifier.settingsFormWidth().fillMaxSize(),
             // 104dp bottom clears the MainScaffold NavigationBar so the
             // Build section (version code, "What's Captured" list) isn't
             // clipped.

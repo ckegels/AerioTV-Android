@@ -30,7 +30,7 @@ import com.aeriotv.android.core.remote.RemoteSlot
 import com.aeriotv.android.core.tv.TvActionMenuDialog
 import com.aeriotv.android.core.tv.TvMenuAction
 import com.aeriotv.android.core.tv.rememberTvMenuGuard
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsRowContainer
 import com.aeriotv.android.ui.settings.SettingsSection
@@ -232,7 +232,7 @@ fun RemoteControlSettingsScreen(
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Column(
                 modifier = Modifier
-                    .adaptiveFormWidth()
+                    .settingsFormWidth()
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = LocalTabBarBottomInset.current),

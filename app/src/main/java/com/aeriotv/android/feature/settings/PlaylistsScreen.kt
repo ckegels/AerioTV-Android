@@ -53,7 +53,7 @@ import com.aeriotv.android.core.tv.TvActionMenuDialog
 import com.aeriotv.android.core.tv.TvMenuAction
 import com.aeriotv.android.core.tv.rememberTvMenuGuard
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.SettingsHeaderTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
@@ -176,7 +176,7 @@ fun PlaylistsScreen(
         }
         LazyColumn(
             state = lazyListState,
-            modifier = Modifier.adaptiveFormWidth(),
+            modifier = Modifier.settingsFormWidth(),
             // 104dp bottom clears the MainScaffold NavigationBar so the
             // last playlist row stays draggable down to the very bottom.
             contentPadding = PaddingValues(
@@ -195,17 +195,10 @@ fun PlaylistsScreen(
                         isDragging = isDragging,
                         // Guarded so the OK-release after a TV long-press can't
                         // also register as a tap on the row (see TvMenuGuard).
-                        onTap = tvGuard.wrap {
-                            // Same rule as the root/pane list: on TV every row
-                            // enters its detail (Set Active lives there), so a
-                            // non-active playlist is reachable. Phone keeps
-                            // tap-to-activate.
-                            if (isTv || pl.id == activeId) {
-                                onOpenPlaylistDetail(pl.id)
-                            } else {
-                                viewModel.switchToPlaylist(pl.id)
-                            }
-                        },
+                        // Phase 3, item 5: selecting a row opens its detail
+                        // on EVERY form factor. Set Active is the first row of
+                        // the detail's Actions section.
+                        onTap = tvGuard.wrap { onOpenPlaylistDetail(pl.id) },
                         onLongPress = {
                             if (isTv) {
                                 menuFor = pl

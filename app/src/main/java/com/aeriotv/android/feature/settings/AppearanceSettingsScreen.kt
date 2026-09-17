@@ -63,6 +63,12 @@ import com.aeriotv.android.ui.settings.OnOffIndicator
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
+import com.aeriotv.android.ui.settings.SettingsPickerOption
+import com.aeriotv.android.ui.settings.SettingsPickerRow
+import com.aeriotv.android.ui.settings.SettingsSection
+import com.aeriotv.android.ui.settings.SettingsSubPageHost
+import com.aeriotv.android.ui.settings.SettingsTextField
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.dpadFocusWash
 import com.aeriotv.android.core.preferences.TEXT_SCALE_MAX
 import com.aeriotv.android.core.preferences.TEXT_SCALE_MIN
@@ -87,7 +93,7 @@ import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
  * MainActivity's collectAsState bindings, which rebuild AerioTVTheme's
  * Material3 colorScheme. Every surface that reads MaterialTheme.colorScheme
  * (top bars, nav bar, sheets, dialogs, mini-player, splash) re-themes in
- * the same frame — no recreate needed.
+ * the same frame - no recreate needed.
  */
 /**
  * Minimum PANE width before this screen lays content out two-up (plan B5).
@@ -134,25 +140,22 @@ fun AppearanceSettingsScreen(
 
     var accentPickerOpen by remember { mutableStateOf(false) }
 
+    SettingsSubPageHost {
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "Appearance", onBack = onBack)
 
-        val vp = rememberViewport()
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.TopCenter,
         ) {
             LazyColumn(
-                modifier = if (vp.formMaxWidth != Dp.Unspecified)
-                    Modifier.widthIn(max = vp.formMaxWidth)
-                else
-                    Modifier,
+                modifier = Modifier.settingsFormWidth(),
                 // Bottom padding covers the bottom-nav bar (~80 dp) plus
                 // 24 dp breathing room, so the last LazyColumn item ("Reset
                 // Colors to Defaults" under the Palette card) isn't clipped
                 // behind MainScaffold's NavigationBar. Without this, the
                 // user can't scroll past the nav bar to reach the Reset row
-                // or the Add More Categories navigator — the LazyColumn
+                // or the Add More Categories navigator, because the LazyColumn
                 // hits its content edge first.
                 contentPadding = PaddingValues(
                     start = 16.dp,
@@ -162,7 +165,7 @@ fun AppearanceSettingsScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                // THEME card — six brand presets + Custom Accent override row.
+                // THEME card - six brand presets + Custom Accent override row.
                 settingsCard(
                     header = "Theme",
                     footer = "Choose the palette and the light or dark appearance. Theme sets the color; Appearance sets light vs dark. They are independent, so any theme works in either appearance. Changes apply live; the preset accent kicks in unless Custom Accent is on.",
@@ -232,7 +235,7 @@ fun AppearanceSettingsScreen(
                     )
                 }
 
-                // PREVIEW card — shows how the active theme reads on a card,
+                // PREVIEW card - shows how the active theme reads on a card,
                 // including the accent-tinted title and Now-Playing pill.
                 item {
                     PreviewCard(
@@ -286,22 +289,26 @@ fun AppearanceSettingsScreen(
 
                 // TIME FORMAT card: every clock in the app (guide header,
                 // cell ranges, program info, DVR) follows this.
-                settingsCard(
-                    header = "Time Format",
-                    footer = "System follows your device's clock setting. Applies to the Guide, program info, and recordings.",
-                ) {
-                    TIME_FORMAT_OPTIONS.forEachIndexed { i, (value, label) ->
-                        if (i > 0) DividerRow()
-                        CheckRow(
-                            title = label,
-                            selected = timeFormat == value,
-                            onClick = { viewModel.setTimeFormat(value) },
+                item("time-format") {
+                    SettingsSection(
+                        header = "Time Format",
+                        footer = "System follows your device's clock setting. Applies to the Guide, program info, and recordings.",
+                    ) {
+                        SettingsPickerRow(
+                            title = "Time Format",
+                            options = TIME_FORMAT_OPTIONS.map {
+                                SettingsPickerOption(it.first, it.second)
+                            },
+                            selected = TIME_FORMAT_OPTIONS.firstOrNull { it.first == timeFormat }
+                                ?.first ?: "system",
+                            onSelect = viewModel::setTimeFormat,
                         )
                     }
                 }
 
             }
         }
+    }
     }
 
     if (accentPickerOpen) {
@@ -667,38 +674,6 @@ private fun PreviewCard(theme: AppTheme, customAccentHex: String?) {
 /** Flat single-choice row for this page's cards: same wash/padding as
  *  [ToggleRow], a check mark instead of the On/Off indicator. */
 @Composable
-internal fun CheckRow(
-    title: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .dpadFocusWash()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        if (selected) {
-            Icon(
-                imageVector = Icons.Filled.Check,
-                contentDescription = "Selected",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-    }
-}
-
-@Composable
 internal fun ToggleRow(
     title: String,
     subtitle: String? = null,
@@ -1028,19 +1003,18 @@ private fun AccentPickerDialog(
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                androidx.compose.material3.OutlinedTextField(
+                SettingsTextField(
+                    label = "Hex color",
                     value = input,
                     onValueChange = { raw ->
                         input = raw.removePrefix("#").uppercase().filter { it in HEX_CHARS_ACCENT }.take(6)
                     },
-                    label = { Text("Hex color (e.g. 1AC4D8)") },
-                    singleLine = true,
+                    placeholder = "1AC4D8",
                     keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Ascii,
                         capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Characters,
                         imeAction = androidx.compose.ui.text.input.ImeAction.Done,
                     ),
-                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         },

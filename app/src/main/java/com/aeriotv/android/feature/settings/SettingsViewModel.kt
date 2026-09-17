@@ -513,7 +513,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setDefaultTab(value) }
     }
 
-    // Live TV view-mode persistence (Phase 5 hand-off — migrated from
+    // Live TV view-mode persistence (Phase 5 hand-off - migrated from
     // rememberSaveable in LiveTVViewMode.kt to DataStore in Phase 8b).
     val defaultLiveTVView: StateFlow<String> = prefs.defaultLiveTVView
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")

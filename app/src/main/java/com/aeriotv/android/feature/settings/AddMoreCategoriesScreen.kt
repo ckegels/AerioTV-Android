@@ -31,7 +31,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -50,7 +49,7 @@ import com.aeriotv.android.core.category.CategoryPaletteState
 import com.aeriotv.android.core.category.CustomCategoryEntry
 import com.aeriotv.android.core.category.ProgramCategory
 import com.aeriotv.android.core.category.parseHex
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.OnOffIndicator
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
@@ -117,7 +116,7 @@ fun AddMoreCategoriesScreen(
             contentAlignment = androidx.compose.ui.Alignment.TopCenter,
         ) {
         LazyColumn(
-            modifier = Modifier.adaptiveFormWidth(),
+            modifier = Modifier.settingsFormWidth(),
             // 104dp bottom clears the MainScaffold NavigationBar so the
             // custom-category section + Save row at the bottom stay
             // reachable.
@@ -376,12 +375,10 @@ private fun CustomEntryDialog(
         title = { Text(if (initial == null) "Add Custom Category" else "Edit Custom Category") },
         text = {
             Column {
-                OutlinedTextField(
+                com.aeriotv.android.ui.settings.SettingsTextField(
+                    label = "Match (substring, case-insensitive)",
                     value = match,
                     onValueChange = { match = it },
-                    label = { Text("Match (substring, case-insensitive)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = aerioTextFieldKeyboardOptions(
                         imeAction = androidx.compose.ui.text.input.ImeAction.Next,
                     ),
@@ -400,13 +397,12 @@ private fun CustomEntryDialog(
                             ),
                     )
                     Spacer(Modifier.width(10.dp))
-                    OutlinedTextField(
+                    com.aeriotv.android.ui.settings.SettingsTextField(
+                        label = "Hex color",
                         value = hex,
                         onValueChange = {
                             hex = it.removePrefix("#").uppercase().filter { c -> c in HEX_CHARS_FOR_CUSTOM }.take(6)
                         },
-                        label = { Text("Hex color") },
-                        singleLine = true,
                         modifier = Modifier.weight(1f),
                         keyboardOptions = aerioTextFieldKeyboardOptions(
                             keyboardType = androidx.compose.ui.text.input.KeyboardType.Ascii,

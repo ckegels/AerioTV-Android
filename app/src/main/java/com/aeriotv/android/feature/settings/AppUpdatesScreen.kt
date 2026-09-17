@@ -32,7 +32,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.BuildConfig
 import com.aeriotv.android.core.update.UpdateState
 import com.aeriotv.android.feature.update.UpdateViewModel
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsActionRow
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsInfoRow
@@ -62,7 +62,7 @@ fun AppUpdatesScreen(
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Column(
                 modifier = Modifier
-                    .adaptiveFormWidth()
+                    .settingsFormWidth()
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = LocalTabBarBottomInset.current),

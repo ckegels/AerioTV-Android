@@ -9,12 +9,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -24,24 +22,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.ui.TmdbAttribution
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
-import com.aeriotv.android.ui.adaptive.rememberViewport
 import com.aeriotv.android.ui.scale.subtext
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
+import com.aeriotv.android.ui.settings.SettingsPickerOption
+import com.aeriotv.android.ui.settings.SettingsPickerRow
 import com.aeriotv.android.ui.settings.SettingsSection
-import com.aeriotv.android.ui.settings.SettingsSelectionRow
+import com.aeriotv.android.ui.settings.SettingsSubPageHost
+import com.aeriotv.android.ui.settings.SettingsTextField
 import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
-import com.aeriotv.android.ui.textfield.SecretRevealIconButton
-import com.aeriotv.android.ui.textfield.rememberSecretRevealState
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
-import com.aeriotv.android.ui.tv.tvFormFieldInput
 
 /**
  * Settings > Movies & TV Shows. Library refresh cadence, TMDB poster lookup,
@@ -65,17 +62,13 @@ fun MoviesAndTvShowsSettingsScreen(
     val scaleMovies by viewModel.displayScaleMovies.collectAsStateWithLifecycle(initialValue = 1.0f)
 
     TvKeyboardOnOkHost {
+        SettingsSubPageHost {
         Column(modifier = Modifier.fillMaxSize()) {
             SettingsDetailTopBar(title = "Movies & TV Shows", onBack = onBack)
 
-            val vp = rememberViewport()
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                 LazyColumn(
-                    modifier = if (vp.formMaxWidth != Dp.Unspecified) {
-                        Modifier.widthIn(max = vp.formMaxWidth)
-                    } else {
-                        Modifier
-                    },
+                    modifier = Modifier.settingsFormWidth(),
                     contentPadding = PaddingValues(
                         start = 16.dp,
                         end = 16.dp,
@@ -90,23 +83,19 @@ fun MoviesAndTvShowsSettingsScreen(
                     // read by the shared OnDemandViewModel, so it always applied
                     // everywhere even while the rows were TV-only.
                     item("refresh-library") {
-                        SettingsSection(header = "Refresh library") {
-                            listOf(
-                                0 to "Every Launch",
-                                24 to "Daily",
-                                168 to "Weekly",
-                            ).forEach { (hours, label) ->
-                                SettingsSelectionRow(
-                                    label = label,
-                                    selected = vodRefreshHours == hours,
-                                    onClick = { viewModel.setVodLibraryRefreshHours(hours) },
-                                )
-                            }
-                            Text(
-                                text = "Live TV channels refresh on every launch. Movies and TV Shows open from the saved library and re-sweep the provider on this schedule. Pull down on either tab to refresh right away.",
-                                style = MaterialTheme.typography.bodySmall.subtext(),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        SettingsSection(
+                            header = "Refresh library",
+                            footer = "Live TV channels refresh on every launch. Movies and TV Shows open from the saved library and re-sweep the provider on this schedule. Pull down on either tab to refresh right away.",
+                        ) {
+                            SettingsPickerRow(
+                                title = "Refresh library",
+                                options = listOf(
+                                    SettingsPickerOption(0, "Every Launch"),
+                                    SettingsPickerOption(24, "Daily"),
+                                    SettingsPickerOption(168, "Weekly"),
+                                ),
+                                selected = vodRefreshHours,
+                                onSelect = viewModel::setVodLibraryRefreshHours,
                             )
                         }
                     }
@@ -125,31 +114,21 @@ fun MoviesAndTvShowsSettingsScreen(
                             )
                             if (programPostersTmdb) {
                                 var keyDraft by remember(savedTmdbKey) { mutableStateOf(savedTmdbKey) }
-                                val keyReveal = rememberSecretRevealState()
                                 TmdbAttribution(
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
                                     long = false,
                                     isTv = isTv,
                                 )
-                                OutlinedTextField(
+                                SettingsTextField(
+                                    label = "TMDB API key (v3) or read token (v4)",
                                     value = keyDraft,
                                     onValueChange = {
                                         keyDraft = it
                                         viewModel.resetTmdbKeyTestState()
                                     },
-                                    label = { Text("TMDB API key (v3) or read token (v4)") },
-                                    singleLine = true,
-                                    visualTransformation = keyReveal.transformation,
-                                    trailingIcon = {
-                                        SecretRevealIconButton(state = keyReveal, contentLabel = "key")
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 8.dp)
-                                        .tvFormFieldInput(
-                                            horizontalFocusEscape = true,
-                                            okSuppressed = { keyReveal.controlFocused },
-                                        ),
+                                    secure = true,
+                                    secureLabel = "key",
+                                    modifier = Modifier.padding(top = 8.dp),
                                 )
                                 Row(
                                     modifier = Modifier
@@ -208,5 +187,6 @@ fun MoviesAndTvShowsSettingsScreen(
                 }
             }
         }
+    }
     }
 }

@@ -65,17 +65,16 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
-import com.aeriotv.android.core.data.db.entity.sourceTypeDisplayLabel
+import com.aeriotv.android.core.data.db.entity.sourceTypeBadgeLabel
 import com.aeriotv.android.core.tv.TvQrLink
 import com.aeriotv.android.core.tv.TvQrLinkDialog
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 import com.aeriotv.android.ui.settings.SettingsNavRow
 import com.aeriotv.android.feature.whatsnew.WhatsNewSheetOnDemand
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.settings.settingsShowsBackArrow
-import com.aeriotv.android.ui.settings.settingsPaneWidth
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.settingsEyebrowStyle
 import com.aeriotv.android.ui.settings.settingsFootnoteStyle
 import com.aeriotv.android.ui.settings.settingsRowTitleStyle
@@ -218,7 +217,7 @@ fun SettingsScreen(
         LazyColumn(
             // Full-screen measures the WINDOW; a detail pane must measure the
             // PANE or it sizes itself against the whole tablet and overflows.
-            modifier = (if (fullRoot) Modifier.adaptiveFormWidth() else Modifier.settingsPaneWidth())
+            modifier = Modifier.settingsFormWidth()
                 .fillMaxSize(),
             contentPadding = PaddingValues(
                 start = 16.dp,
@@ -239,24 +238,15 @@ fun SettingsScreen(
                     // In a pane the top bar already reads "Playlists".
                     showHeader = fullRoot,
                     paneHost = content == SettingsRootContent.PlaylistsOnly || isTv,
-                    onTap = { pl ->
-                        // Rev 2 canon amendment 1: on every RAIL/SIDEBAR form
-                        // factor - the tablet pane and ALL of TV - a playlist
-                        // row enters its detail, where the Set Active row
-                        // lives. TV is included even though its rail host is
-                        // still pending, because the old rule made a detail
-                        // page unreachable whenever nothing was active yet
-                        // (e.g. straight after a Drive restore): only the
-                        // ACTIVE playlist opened, and OK on the others just
-                        // tried to activate. The phone root is untouched.
-                        if (content == SettingsRootContent.PlaylistsOnly || isTv) {
-                            onOpenPlaylistDetail(pl.id)
-                        } else if (pl.id == activeId) {
-                            onOpenPlaylistDetail(pl.id)
-                        } else {
-                            viewModel.switchToPlaylist(pl.id)
-                        }
-                    },
+                    // Phase 3, item 5: selecting a playlist row opens its
+                    // DETAIL on every form factor, phone included. Rev 2 had
+                    // already done this for the rail/sidebar hosts because
+                    // tap-to-activate made the detail unreachable when nothing
+                    // was active yet; the phone had the same hole, and having
+                    // one row mean "activate" and another mean "open" was the
+                    // thing nobody could predict. Set Active is the first row
+                    // of the detail's Actions section.
+                    onTap = { pl -> onOpenPlaylistDetail(pl.id) },
                     onAdd = onAddPlaylist,
                     onManage = onOpenPlaylists,
                 )
@@ -458,20 +448,12 @@ private fun PlaylistsSection(
         }
         if (playlists.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            // Input-appropriate verbs: a remote has no "tap".
-            if (paneHost) {
-                // Rail/sidebar form factors enter the detail on select, so the
-                // activate verb moved there. The phone strings below are
-                // untouched (frozen canon).
-                SectionFooter("Select a playlist to open it · Set Active lives in its Actions section")
-                if (playlists.size > 1) {
-                    SectionFooter("Select Manage Playlists to reorder")
-                }
-            } else {
-                SectionFooter("Tap ○ to set the active playlist · Tap the active playlist to edit or delete it")
-                if (playlists.size > 1) {
-                    SectionFooter("Tap Manage Playlists to reorder")
-                }
+            // One rule now, so one string. Input-appropriate verbs only: a
+            // remote has no "tap".
+            val verb = if (paneHost) "Select" else "Tap"
+            SectionFooter("Select a playlist to open it; Set Active is in its Actions")
+            if (playlists.size > 1) {
+                SectionFooter("$verb Manage Playlists to reorder")
             }
         }
     }
@@ -508,25 +490,39 @@ private fun PlaylistRow(
             )
             Spacer(Modifier.size(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = playlist.name,
-                    style = settingsRowTitleStyle(),
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                )
-                val subtitle = buildString {
-                    append("${playlist.channelCount} channels")
-                    // Shared pretty-printer (PlaylistEntity.sourceTypeDisplayLabel)
-                    // keeps this subtitle in lockstep with the Playlist Detail
-                    // Type row.
-                    val pretty = playlist.sourceTypeDisplayLabel()
-                    if (pretty.isNotBlank()) append("  ·  ").append(pretty)
+                // Phase 3, item 5: name + a source-type BADGE PILL on one line,
+                // then the channel count, then the URL in monospace truncated
+                // in the MIDDLE. Matches the Apple playlist row exactly, so a
+                // user with both apps reads the same row.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = playlist.name,
+                        style = settingsRowTitleStyle(),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    SourceTypeBadge(playlist.sourceTypeBadgeLabel())
                 }
                 Text(
-                    text = subtitle,
+                    text = "${playlist.channelCount} channels",
                     style = settingsFootnoteStyle().subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                val shownUrl = middleTruncate(playlist.urlString, 44)
+                if (shownUrl.isNotBlank()) {
+                    Text(
+                        text = shownUrl,
+                        style = settingsFootnoteStyle().subtext().copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        maxLines = 1,
+                    )
+                }
             }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -537,6 +533,39 @@ private fun PlaylistRow(
     }
 }
 
+
+/**
+ * The playlist row's source-type pill. A quiet tonal chip, not a focus ring:
+ * no border, accent TEXT on a faint accent fill (Logan's restraint rule).
+ */
+@Composable
+private fun SourceTypeBadge(label: String) {
+    Text(
+        text = label,
+        style = settingsFootnoteStyle(),
+        color = MaterialTheme.colorScheme.textAccent,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    )
+}
+
+/**
+ * Truncates in the MIDDLE, which is what a URL wants: the scheme + host and
+ * the tail both carry meaning, and trailing ellipsis throws away the half that
+ * distinguishes two playlists on the same server. Apple's row does the same.
+ */
+internal fun middleTruncate(text: String, max: Int): String {
+    val t = text.trim()
+    if (t.length <= max) return t
+    val keep = max - 1
+    val head = (keep + 1) / 2
+    val tail = keep - head
+    return t.take(head) + "\u2026" + t.takeLast(tail)
+}
 
 /**
  * D-pad focus highlight for rows inside the grouped settings cards. The

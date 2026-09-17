@@ -24,12 +24,17 @@ import com.aeriotv.android.core.preferences.PLAYER_EDGE_LEFT
 import com.aeriotv.android.core.preferences.PLAYER_EDGE_RIGHT
 import com.aeriotv.android.core.ui.SkipIntervals
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
+import com.aeriotv.android.ui.settings.SettingsPickerOption
+import com.aeriotv.android.ui.settings.SettingsPickerRow
 import com.aeriotv.android.ui.settings.SettingsSection
 import com.aeriotv.android.ui.settings.SettingsSelectionRow
+import com.aeriotv.android.ui.settings.SettingsSubGroup
+import com.aeriotv.android.ui.settings.SettingsSubPageHost
 import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
+import com.aeriotv.android.ui.settings.settingsFormWidth
+import com.aeriotv.android.ui.settings.settingsItemsSummary
 import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.ui.tv.dpadFocusEscape
 import kotlin.math.abs
@@ -92,13 +97,14 @@ fun PlayerSettingsScreen(
     val startupRefreshRate by viewModel.startupRefreshRate.collectAsStateWithLifecycle(initialValue = "off")
     val matchContentResolution by viewModel.matchContentResolution.collectAsStateWithLifecycle(initialValue = false)
 
+    SettingsSubPageHost {
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "Player", onBack = onBack)
 
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Column(
                 modifier = Modifier
-                    .adaptiveFormWidth()
+                    .settingsFormWidth()
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(
@@ -115,44 +121,79 @@ fun PlayerSettingsScreen(
                     footer = "Choose what appears on the program info card in the " +
                         "player while the controls are showing.",
                 ) {
-                    SettingsToggleRow(
-                        title = "Channel Logo",
-                        checked = cardChannelLogo,
-                        onCheckedChange = viewModel::setPlayerCardShowChannelLogo,
+                    // Phase 3, item 4: six toggles behind one master row whose
+                    // subtitle names what is on ("Logo, name, time" / "All 6").
+                    // TV keeps them inline under the header.
+                    val cardParts = listOf(
+                        Triple("Channel Logo", "logo", cardChannelLogo) to
+                            viewModel::setPlayerCardShowChannelLogo,
+                        Triple("Channel Name", "name", cardChannelName) to
+                            viewModel::setPlayerCardShowChannelName,
+                        Triple("Program Name", "program", cardProgramName) to
+                            viewModel::setPlayerCardShowProgramName,
+                        Triple("Program Time", "time", cardProgramTime) to
+                            viewModel::setPlayerCardShowProgramTime,
+                        Triple("Program Subtitle", "subtitle", cardProgramSubtitle) to
+                            viewModel::setPlayerCardShowProgramSubtitle,
+                        Triple("Program Description", "description", cardProgramDescription) to
+                            viewModel::setPlayerCardShowProgramDescription,
                     )
-                    SettingsToggleRow(
-                        title = "Channel Name",
-                        checked = cardChannelName,
-                        onCheckedChange = viewModel::setPlayerCardShowChannelName,
-                    )
-                    SettingsToggleRow(
-                        title = "Program Name",
-                        checked = cardProgramName,
-                        onCheckedChange = viewModel::setPlayerCardShowProgramName,
-                    )
-                    SettingsToggleRow(
-                        title = "Program Time",
-                        checked = cardProgramTime,
-                        onCheckedChange = viewModel::setPlayerCardShowProgramTime,
-                    )
-                    SettingsToggleRow(
-                        title = "Program Subtitle",
-                        checked = cardProgramSubtitle,
-                        onCheckedChange = viewModel::setPlayerCardShowProgramSubtitle,
-                    )
-                    SettingsToggleRow(
-                        title = "Program Description",
-                        checked = cardProgramDescription,
-                        onCheckedChange = viewModel::setPlayerCardShowProgramDescription,
-                    )
+                    SettingsSubGroup(
+                        title = "Info Card",
+                        summary = settingsItemsSummary(
+                            enabled = cardParts.filter { it.first.third }
+                                .map { it.first.second }
+                                .let { parts ->
+                                    // Sentence-case the first item only, so the
+                                    // subtitle reads "Logo, name, time".
+                                    parts.mapIndexed { i, p ->
+                                        if (i == 0) p.replaceFirstChar { c -> c.uppercase() } else p
+                                    }
+                                },
+                            total = cardParts.size,
+                        ),
+                    ) {
+                        cardParts.forEach { (part, setter) ->
+                            SettingsToggleRow(
+                                title = part.first,
+                                checked = part.third,
+                                onCheckedChange = setter,
+                            )
+                        }
+                    }
                 }
 
                 // MARK: Live Rewind
+                // Phase 3, item 4: Keep Available and Keep Recent Channels
+                // were their own sections; they are sub-settings of the master
+                // toggle, so they now sit under it in ONE card and still appear
+                // only while it is on.
                 SettingsSection(
                     header = "Live Rewind",
-                    footer = "Buffers the channel you are watching so you can pause and " +
-                        "rewind live TV. Uses device storage while you watch; buffered " +
-                        "video is removed automatically.",
+                    footer = buildString {
+                        append(
+                            "Buffers the channel you are watching so you can pause and " +
+                                "rewind live TV. Uses device storage while you watch; " +
+                                "buffered video is removed automatically.",
+                        )
+                        if (liveRewindEnabled) {
+                            append(" ")
+                            append(depthEstimateText(liveRewindDepth))
+                            append(
+                                if (keepRecent) {
+                                    " Channels you flip away from keep buffering so you " +
+                                        "can flip back and rewind across the time you were " +
+                                        "away. Each kept channel uses an extra connection " +
+                                        "to your provider; accounts limited to one " +
+                                        "connection should leave this off."
+                                } else {
+                                    " Keep recent channels live buffers the channels you " +
+                                        "most recently flipped away from, at one extra " +
+                                        "provider connection per kept channel."
+                                },
+                            )
+                        }
+                    },
                 ) {
                     SettingsToggleRow(
                         title = "Pause & rewind live TV",
@@ -160,36 +201,18 @@ fun PlayerSettingsScreen(
                         checked = liveRewindEnabled,
                         onCheckedChange = viewModel::setLiveRewindEnabled,
                     )
-                }
-                if (liveRewindEnabled) {
-                    SettingsSection(
-                        header = "Keep Available",
-                        footer = "How far back you can rewind the channel you are " +
-                            "watching. Buffered video is released as soon as you " +
-                            "leave the channel. " +
-                            depthEstimateText(liveRewindDepth),
-                    ) {
-                        SteppedSliderRow(
-                            label = "Rewind up to",
-                            values = REWIND_DEPTH_MINUTES,
-                            selected = liveRewindDepth,
-                            format = ::formatDepthMinutes,
+                    if (liveRewindEnabled) {
+                        SettingsPickerRow(
+                            title = "Rewind up to",
+                            inlineTitle = true,
+                            options = REWIND_DEPTH_MINUTES.map {
+                                SettingsPickerOption(it, formatDepthMinutes(it))
+                            },
+                            selected = REWIND_DEPTH_MINUTES.minByOrNull {
+                                abs(it - liveRewindDepth)
+                            } ?: liveRewindDepth,
                             onSelect = viewModel::setLiveRewindDepthMinutes,
                         )
-                    }
-                    SettingsSection(
-                        header = "Keep Recent Channels Live",
-                        footer = if (keepRecent) {
-                            "Channels you flip away from keep buffering so you can flip " +
-                                "back and rewind across the time you were away. Each kept " +
-                                "channel uses an extra connection to your provider; accounts " +
-                                "limited to one connection should leave this off. Oldest " +
-                                "channels stop first, and all stop when the app leaves the screen."
-                        } else {
-                            "Keep buffering the channels you most recently flipped away " +
-                                "from. Uses one extra provider connection per kept channel."
-                        },
-                    ) {
                         SettingsToggleRow(
                             title = "Keep recent channels live",
                             subtitle = "Buffer flipped-away channels in the background",
@@ -207,6 +230,7 @@ fun PlayerSettingsScreen(
                         }
                     }
                 }
+
 
                 // MARK: Playback
                 //
@@ -245,14 +269,17 @@ fun PlayerSettingsScreen(
                         format = ::formatSkipSeconds,
                         onSelect = viewModel::setSkipForwardSeconds,
                     )
-                    BUFFER_OPTIONS.forEach { opt ->
-                        SettingsSelectionRow(
-                            label = opt.label,
-                            subtitle = opt.detail,
-                            selected = opt.id == bufferSize,
-                            onClick = { viewModel.setStreamBufferSize(opt.id) },
-                        )
-                    }
+                    SettingsPickerRow(
+                        title = "Buffer Size",
+                        inlineTitle = true,
+                        options = BUFFER_OPTIONS.map {
+                            SettingsPickerOption(it.id, it.label, it.detail)
+                        },
+                        // Unknown ids (the retired "small") read as Default.
+                        selected = BUFFER_OPTIONS.firstOrNull { it.id == bufferSize }?.id
+                            ?: BUFFER_OPTIONS.first().id,
+                        onSelect = viewModel::setStreamBufferSize,
+                    )
                     SettingsToggleRow(
                         title = "Auto-Recover Frozen Streams",
                         subtitle = "Reload a live stream that stops sending video. Off keeps the stream as-is through commercial-break stutters.",
@@ -334,29 +361,31 @@ fun PlayerSettingsScreen(
                     header = "Multiview",
                     footer = "How the grid shows which tile is unmuted. Center Icon fades with the chrome, Gray Outline stays visible, Accent Outline appears on switch and fades after 5 seconds. Padding inserts a small gap between tiles so each stream stands on its own.",
                 ) {
-                    AUDIO_FOCUS_OPTIONS.forEach { opt ->
-                        SettingsSelectionRow(
-                            label = opt.label,
-                            subtitle = opt.detail,
-                            selected = multiviewStyle == opt.id,
-                            onClick = { viewModel.setMultiviewAudioFocusStyle(opt.id) },
-                        )
-                    }
+                    SettingsPickerRow(
+                        title = "Audio Focus Indicator",
+                        inlineTitle = true,
+                        options = AUDIO_FOCUS_OPTIONS.map {
+                            SettingsPickerOption(it.id, it.label, it.detail)
+                        },
+                        selected = AUDIO_FOCUS_OPTIONS.firstOrNull { it.id == multiviewStyle }?.id
+                            ?: AUDIO_FOCUS_OPTIONS.first().id,
+                        onSelect = viewModel::setMultiviewAudioFocusStyle,
+                    )
                     SettingsToggleRow(
                         title = "Padding Between Tiles",
                         subtitle = "Add a small gap between tiles for visual separation.",
                         checked = multiviewPadding,
                         onCheckedChange = viewModel::setMultiviewTilePadding,
                     )
-                    SettingsSelectionRow(
-                        label = "Square",
-                        selected = !multiviewRounded,
-                        onClick = { viewModel.setMultiviewTileCornersRounded(false) },
-                    )
-                    SettingsSelectionRow(
-                        label = "Rounded",
+                    SettingsPickerRow(
+                        title = "Tile corners",
+                        inlineTitle = true,
+                        options = listOf(
+                            SettingsPickerOption(false, "Square"),
+                            SettingsPickerOption(true, "Rounded"),
+                        ),
                         selected = multiviewRounded,
-                        onClick = { viewModel.setMultiviewTileCornersRounded(true) },
+                        onSelect = viewModel::setMultiviewTileCornersRounded,
                     )
                 }
 
@@ -375,22 +404,25 @@ fun PlayerSettingsScreen(
                             checked = matchContentResolution,
                             onCheckedChange = viewModel::setMatchContentResolution,
                         )
-                        listOf(
-                            "off" to "Off (system default)",
-                            "50" to "50 Hz",
-                            "59.94" to "59.94 Hz",
-                            "60" to "60 Hz",
-                        ).forEach { (wire, label) ->
-                            SettingsSelectionRow(
-                                label = label,
-                                selected = startupRefreshRate == wire,
-                                onClick = { viewModel.setStartupRefreshRate(wire) },
-                            )
-                        }
+                        val rates = listOf(
+                            SettingsPickerOption("off", "Off (system default)"),
+                            SettingsPickerOption("50", "50 Hz"),
+                            SettingsPickerOption("59.94", "59.94 Hz"),
+                            SettingsPickerOption("60", "60 Hz"),
+                        )
+                        SettingsPickerRow(
+                            title = "Startup Refresh Rate",
+                            inlineTitle = true,
+                            options = rates,
+                            selected = rates.firstOrNull { it.value == startupRefreshRate }?.value
+                                ?: "off",
+                            onSelect = viewModel::setStartupRefreshRate,
+                        )
                     }
                 }
             }
         }
+    }
     }
 }
 

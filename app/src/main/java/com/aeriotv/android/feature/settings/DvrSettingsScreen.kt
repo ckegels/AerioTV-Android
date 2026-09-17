@@ -27,16 +27,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.CenterAlignedTopAppBar
-import com.aeriotv.android.ui.scale.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -56,7 +52,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.feature.dvr.DvrViewModel
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+import com.aeriotv.android.ui.settings.SettingsPickerOption
+import com.aeriotv.android.ui.settings.SettingsPickerRow
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsSection
 import com.aeriotv.android.ui.settings.SettingsToggleRow
@@ -103,6 +101,7 @@ fun DvrSettingsScreen(
     val usedMB = (usedBytes / (1024L * 1024L)).toInt()
     val usedFraction = if (capMB > 0) (usedMB.toFloat() / capMB.toFloat()).coerceIn(0f, 1f) else 0f
 
+    com.aeriotv.android.ui.settings.SettingsSubPageHost {
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "DVR Settings", onBack = onBack)
 
@@ -111,7 +110,7 @@ fun DvrSettingsScreen(
             contentAlignment = androidx.compose.ui.Alignment.TopCenter,
         ) {
         LazyColumn(
-            modifier = Modifier.adaptiveFormWidth().fillMaxSize(),
+            modifier = Modifier.settingsFormWidth().fillMaxSize(),
             // Bottom padding clears the MainScaffold NavigationBar (~80dp)
             // so the final card (Output Folder + its footer) isn't clipped.
             contentPadding = PaddingValues(
@@ -128,46 +127,45 @@ fun DvrSettingsScreen(
                 // server-capable accounts; this only pre-selects it.
                 val defaultDestination by settingsVm.dvrDefaultDestination
                     .collectAsStateWithLifecycle(initialValue = "server")
-                Card(
+                SettingsSection(
                     header = "Default Destination",
                     footer = "Where new recordings are saved unless you change it in the record sheet. Accounts without server recording always record to this device.",
                 ) {
-                    Column {
-                        DestinationRow(
-                            label = "Server (Dispatcharr)",
-                            selected = defaultDestination != "local",
-                            onSelect = { settingsVm.setDvrDefaultDestination("server") },
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                        DestinationRow(
-                            label = "This device",
-                            selected = defaultDestination == "local",
-                            onSelect = { settingsVm.setDvrDefaultDestination("local") },
-                        )
-                    }
+                    SettingsPickerRow(
+                        title = "Default Destination",
+                        options = listOf(
+                            SettingsPickerOption("server", "Server (Dispatcharr)"),
+                            SettingsPickerOption("local", "This device"),
+                        ),
+                        selected = if (defaultDestination == "local") "local" else "server",
+                        onSelect = settingsVm::setDvrDefaultDestination,
+                    )
                 }
             }
 
             item {
-                Card(
+                SettingsSection(
                     header = "Default Recording Buffers",
                     footer = "Buffers extend new recordings beyond the scheduled window. Existing recordings aren't touched. Useful for sports and live events that run over.",
                 ) {
-                    Column {
-                        BufferRow(
-                            label = "Start Early",
-                            options = ROLL_OPTIONS,
-                            selected = preRoll,
-                            onSelect = settingsVm::setDvrDefaultPreRollMins,
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                        BufferRow(
-                            label = "End Late",
-                            options = ROLL_OPTIONS,
-                            selected = postRoll,
-                            onSelect = settingsVm::setDvrDefaultPostRollMins,
-                        )
-                    }
+                    // Phase 3: these were DropdownMenus anchored to a value
+                    // row, which a remote could not sensibly drive. Same
+                    // options, same keys, through the shared picker.
+                    val rolls = ROLL_OPTIONS.map { SettingsPickerOption(it, formatRoll(it)) }
+                    SettingsPickerRow(
+                        title = "Start Early",
+                        inlineTitle = true,
+                        options = rolls,
+                        selected = preRoll,
+                        onSelect = settingsVm::setDvrDefaultPreRollMins,
+                    )
+                    SettingsPickerRow(
+                        title = "End Late",
+                        inlineTitle = true,
+                        options = rolls,
+                        selected = postRoll,
+                        onSelect = settingsVm::setDvrDefaultPostRollMins,
+                    )
                 }
             }
 
@@ -318,6 +316,7 @@ fun DvrSettingsScreen(
         }
         }
     }
+    }
 }
 
 @Composable
@@ -333,108 +332,6 @@ private fun Card(
     SettingsSection(header = header, footer = footer) {
         Column(modifier = Modifier.fillMaxWidth().settingsRowCard(focused = false)) {
             content()
-        }
-    }
-}
-
-/**
- * Compact buffer-picker row matching iOS DVR Settings > DEFAULT RECORDING
- * BUFFERS. Shows the label + the current value as a chevron-tagged value;
- * tapping expands a DropdownMenu of the supported minute options. Two
- * BufferRows share one card via stacked layout.
- */
-/** Task #50: one Default Destination choice row (checkmark on the active). */
-@Composable
-private fun DestinationRow(
-    label: String,
-    selected: Boolean,
-    onSelect: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .dpadFocusWash()
-            .clickable(onClick = onSelect)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        if (selected) {
-            Icon(
-                imageVector = Icons.Filled.Check,
-                contentDescription = "Selected",
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
-    }
-}
-
-@Composable
-private fun BufferRow(
-    label: String,
-    options: List<Int>,
-    selected: Int,
-    onSelect: (Int) -> Unit,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-    Box {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .dpadFocusWash()
-                .clickable { menuOpen = true }
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = formatRoll(selected),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.textAccent,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.size(6.dp))
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowDown,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        DropdownMenu(
-            expanded = menuOpen,
-            onDismissRequest = { menuOpen = false },
-        ) {
-            options.forEach { mins ->
-                DropdownMenuItem(
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = mins == selected,
-                                onClick = null,
-                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary),
-                            )
-                            Spacer(Modifier.size(8.dp))
-                            Text(formatRoll(mins))
-                        }
-                    },
-                    onClick = {
-                        onSelect(mins)
-                        menuOpen = false
-                    },
-                )
-            }
         }
     }
 }

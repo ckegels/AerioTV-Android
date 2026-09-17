@@ -26,7 +26,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -45,28 +44,26 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 import com.aeriotv.android.ui.settings.SettingsActionRow
+import com.aeriotv.android.ui.settings.SettingsTextField
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsHeaderTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.dpadFocusWash
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
-import com.aeriotv.android.ui.textfield.SecretRevealIconButton
-import com.aeriotv.android.ui.textfield.rememberSecretRevealState
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
 import com.aeriotv.android.ui.tv.dpadFocusEscape
-import com.aeriotv.android.ui.tv.tvFormFieldInput
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
 
 /**
  * Edit Playlist sub-screen. Mirrors iOS Edit Playlist modal: Cancel header
- * left, "Edit Playlist" title, Save header right. Three sections — Connection,
+ * left, "Edit Playlist" title, Save header right. Three sections - Connection,
  * Authentication (with segmented control for Dispatcharr User+Pass vs API Key),
  * EPG Source (M3U only). Save calls [PlaylistViewModel.saveEdits] which reuses
  * the bootstrap load path with `existingId` so the row's UUID stays stable.
  *
- * Source type is NOT editable here — changing it would invalidate the auth
+ * Source type is NOT editable here - changing it would invalidate the auth
  * fields shape. iOS gates that behind a separate "Change Source Type" flow
  * (Settings > Change Playlist), which on Android maps to the existing clear+
  * re-onboard path.
@@ -222,7 +219,7 @@ fun EditPlaylistScreen(
             androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringIntoViewSpec,
         ) {
         LazyColumn(
-            modifier = Modifier.adaptiveFormWidth(),
+            modifier = Modifier.settingsFormWidth(),
             // 104dp bottom clears the MainScaffold NavigationBar so the
             // Save button at the bottom of the form stays tappable.
             contentPadding = PaddingValues(
@@ -236,43 +233,30 @@ fun EditPlaylistScreen(
             item {
                 Section(header = "Connection") {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        OutlinedTextField(
+                        SettingsTextField(
+                            label = "Name",
                             value = name,
                             onValueChange = { name = it },
-                            label = { Text("Name") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
                             keyboardOptions = aerioTextFieldKeyboardOptions(
                                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
                                 imeAction = androidx.compose.ui.text.input.ImeAction.Next,
                             ),
                         )
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
+                        Spacer(Modifier.height(12.dp))
+                        SettingsTextField(
+                            label = when (sourceType) {
+                                SourceType.M3uUrl -> "Playlist URL"
+                                SourceType.DispatcharrApiKey,
+                                SourceType.DispatcharrUserPass -> "Server URL"
+                                SourceType.XtreamCodes -> "Server URL"
+                            },
                             value = url,
                             onValueChange = { url = it },
-                            label = {
-                                Text(
-                                    when (sourceType) {
-                                        SourceType.M3uUrl -> "Playlist URL"
-                                        SourceType.DispatcharrApiKey,
-                                        SourceType.DispatcharrUserPass -> "Server URL"
-                                        SourceType.XtreamCodes -> "Server URL"
-                                    },
-                                )
-                            },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                            helper = "Type: ${sourceType.displayName}. To switch types, use Change Playlist.",
                             keyboardOptions = aerioTextFieldKeyboardOptions(
                                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
                                 imeAction = androidx.compose.ui.text.input.ImeAction.Next,
                             ),
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "Type: ${sourceType.displayName}. To switch types, use Change Playlist.",
-                            style = MaterialTheme.typography.bodySmall.subtext(),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -289,13 +273,11 @@ fun EditPlaylistScreen(
                         "to always use the server URL.",
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        OutlinedTextField(
+                        SettingsTextField(
+                            label = "Local URL (optional)",
                             value = lanUrl,
                             onValueChange = { lanUrl = it },
-                            label = { Text("Local URL (optional)") },
-                            placeholder = { Text("http://192.168.1.10:9191") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                            placeholder = "http://192.168.1.10:9191",
                             keyboardOptions = aerioTextFieldKeyboardOptions(
                                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
                                 imeAction = androidx.compose.ui.text.input.ImeAction.Next,
@@ -309,23 +291,12 @@ fun EditPlaylistScreen(
                 SourceType.DispatcharrApiKey -> item {
                     Section(header = "Authentication") {
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            val apiKeyReveal = rememberSecretRevealState()
-                            OutlinedTextField(
+                            SettingsTextField(
+                                label = "API Key",
                                 value = apiKey,
                                 onValueChange = { apiKey = it },
-                                label = { Text("API Key") },
-                                singleLine = true,
-                                visualTransformation = apiKeyReveal.transformation,
-                                trailingIcon = {
-                                    SecretRevealIconButton(
-                                        state = apiKeyReveal,
-                                        contentLabel = "API key",
-                                    )
-                                },
-                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(
-                                    horizontalFocusEscape = true,
-                                    okSuppressed = { apiKeyReveal.controlFocused },
-                                ),
+                                secure = true,
+                                secureLabel = "API key",
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
                                 ),
@@ -336,8 +307,6 @@ fun EditPlaylistScreen(
                 SourceType.DispatcharrUserPass -> item {
                     Section(header = "Authentication") {
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            val passwordReveal = rememberSecretRevealState()
-                            val apiKeyReveal = rememberSecretRevealState()
                             SegmentedToggle(
                                 left = "Username & Password",
                                 right = "API Key",
@@ -346,54 +315,32 @@ fun EditPlaylistScreen(
                             )
                             Spacer(Modifier.height(10.dp))
                             if (dispatcharrMode == DispatcharrMode.UsernamePassword) {
-                                OutlinedTextField(
+                                SettingsTextField(
+                                    label = "Username",
                                     value = username,
                                     onValueChange = { username = it },
-                                    label = { Text("Username") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
                                     keyboardOptions = aerioTextFieldKeyboardOptions(
                                         imeAction = androidx.compose.ui.text.input.ImeAction.Next,
                                     ),
                                 )
-                                Spacer(Modifier.height(8.dp))
-                                OutlinedTextField(
+                                Spacer(Modifier.height(12.dp))
+                                SettingsTextField(
+                                    label = "Password",
                                     value = password,
                                     onValueChange = { password = it },
-                                    label = { Text("Password") },
-                                    singleLine = true,
-                                    visualTransformation = passwordReveal.transformation,
-                                    trailingIcon = {
-                                        SecretRevealIconButton(
-                                            state = passwordReveal,
-                                            contentLabel = "password",
-                                        )
-                                    },
-                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(
-                                        horizontalFocusEscape = true,
-                                        okSuppressed = { passwordReveal.controlFocused },
-                                    ),
+                                    secure = true,
+                                    secureLabel = "password",
                                     keyboardOptions = aerioTextFieldKeyboardOptions(
                                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
                                     ),
                                 )
                             } else {
-                                OutlinedTextField(
+                                SettingsTextField(
+                                    label = "API Key",
                                     value = apiKey,
                                     onValueChange = { apiKey = it },
-                                    label = { Text("API Key") },
-                                    singleLine = true,
-                                    visualTransformation = apiKeyReveal.transformation,
-                                    trailingIcon = {
-                                        SecretRevealIconButton(
-                                            state = apiKeyReveal,
-                                            contentLabel = "API key",
-                                        )
-                                    },
-                                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(
-                                        horizontalFocusEscape = true,
-                                        okSuppressed = { apiKeyReveal.controlFocused },
-                                    ),
+                                    secure = true,
+                                    secureLabel = "API key",
                                 )
                             }
                         }
@@ -402,34 +349,21 @@ fun EditPlaylistScreen(
                 SourceType.XtreamCodes -> item {
                     Section(header = "Authentication") {
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            OutlinedTextField(
+                            SettingsTextField(
+                                label = "Username",
                                 value = username,
                                 onValueChange = { username = it },
-                                label = { Text("Username") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     imeAction = androidx.compose.ui.text.input.ImeAction.Next,
                                 ),
                             )
-                            Spacer(Modifier.height(8.dp))
-                            val passwordReveal = rememberSecretRevealState()
-                            OutlinedTextField(
+                            Spacer(Modifier.height(12.dp))
+                            SettingsTextField(
+                                label = "Password",
                                 value = password,
                                 onValueChange = { password = it },
-                                label = { Text("Password") },
-                                singleLine = true,
-                                visualTransformation = passwordReveal.transformation,
-                                trailingIcon = {
-                                    SecretRevealIconButton(
-                                        state = passwordReveal,
-                                        contentLabel = "password",
-                                    )
-                                },
-                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(
-                                    horizontalFocusEscape = true,
-                                    okSuppressed = { passwordReveal.controlFocused },
-                                ),
+                                secure = true,
+                                secureLabel = "password",
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
                                 ),
@@ -572,13 +506,11 @@ fun EditPlaylistScreen(
                         footer = footerText,
                     ) {
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            OutlinedTextField(
+                            SettingsTextField(
+                                label = "XMLTV URL",
                                 value = epgUrl,
                                 onValueChange = { epgUrl = it },
-                                label = { Text("XMLTV URL") },
-                                singleLine = true,
-                                placeholder = { Text("https://example.com/xmltv.xml") },
-                                modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
+                                placeholder = "https://example.com/xmltv.xml",
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
                                 ),

@@ -64,7 +64,7 @@ import com.aeriotv.android.core.pip.findActivity
 import com.aeriotv.android.core.sync.DriveSyncManager
 import com.aeriotv.android.core.sync.SyncCategory
 import com.aeriotv.android.core.sync.SyncConfig
-import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsActionRow
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
@@ -132,7 +132,7 @@ fun SyncSettingsScreen(
     var inFlight by remember { mutableStateOf(false) }
     // When Sign-in with Google is tapped on a build without an OAuth client
     // ID baked in, surface an explanatory dialog instead of silently doing
-    // nothing — the prior "disabled button + no feedback" UX had testers
+    // nothing - the prior "disabled button + no feedback" UX had testers
     // believing the integration itself was broken.
     var notConfiguredDialogOpen by remember { mutableStateOf(false) }
 
@@ -191,10 +191,10 @@ fun SyncSettingsScreen(
 
         LazyColumn(
             // fillMaxHeight bounds the LazyColumn so its inner viewport can
-            // scroll past the first screen of content — without it, the column
+            // scroll past the first screen of content - without it, the column
             // sized to wrap its contents and Settings -> Sync was stuck on
             // whatever fit above the bottom edge.
-            modifier = Modifier.adaptiveFormWidth().fillMaxHeight(),
+            modifier = Modifier.settingsFormWidth().fillMaxHeight(),
             // 104dp bottom clears the MainScaffold NavigationBar so the
             // Actions card (Push/Pull + Clear Drive Data) isn't clipped
             // when signed in.
@@ -252,7 +252,7 @@ fun SyncSettingsScreen(
                         SignInWithGoogleButton(
                             // Stay enabled even without OAuth config so the
                             // tap surfaces the explanation dialog. inFlight
-                            // is the only true disabled state — prevents
+                            // is the only true disabled state - prevents
                             // double-launching the credential picker.
                             enabled = !inFlight,
                             onClick = {
@@ -609,7 +609,7 @@ private fun AccountRow(signedIn: Boolean, email: String) {
 }
 
 /**
- * Full-width Sign-Out CTA — pairs visually with [SignInWithGoogleButton]
+ * Full-width Sign-Out CTA - pairs visually with [SignInWithGoogleButton]
  * (same rounded-pill height and stretch). Renders below the account card
  * when signed in so the destructive action has space to breathe.
  */
@@ -648,7 +648,7 @@ private fun SignOutButton(enabled: Boolean, onClick: () -> Unit) {
 private fun SignInWithGoogleButton(enabled: Boolean, onClick: () -> Unit) {
     // Google ships two officially-permitted button styles: light (white BG /
     // dark text) and dark (#131314 BG / white text). Both must use the
-    // full four-color G mark — the only freedom callers have is which
+    // full four-color G mark - the only freedom callers have is which
     // background variant they pick. The dark variant lands much better
     // against AerioTV's navy app surface than the white pill the previous
     // cut used, while staying compliant with Google's brand guidelines.
@@ -693,7 +693,7 @@ private fun SignInWithGoogleButton(enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
-// Phase 61b: removed the inline GoogleGMark approximation — the button now
+// Phase 61b: removed the inline GoogleGMark approximation - the button now
 // renders the official four-color brand mark from res/drawable/ic_google_g.xml.
 
 private fun formatTimestamp(value: Long): String {

@@ -457,6 +457,18 @@ fun PlaylistEntity.sourceTypeDisplayLabel(): String = when (sourceType) {
 }
 
 /**
+ * SHORT source-type label for the playlist row's badge pill (Settings phase 3,
+ * Apple parity). [sourceTypeDisplayLabel] is the long form the Playlist Detail
+ * Type row shows; a pill needs one or two words.
+ */
+fun PlaylistEntity.sourceTypeBadgeLabel(): String = when (sourceType) {
+    SourceType.DispatcharrUserPass.name, SourceType.DispatcharrApiKey.name -> "Dispatcharr"
+    SourceType.XtreamCodes.name -> "Xtream Codes"
+    SourceType.M3uUrl.name -> "M3U"
+    else -> sourceType
+}
+
+/**
  * The connected account's assigned Channel Profile ids parsed from the
  * comma-joined [PlaylistEntity.dispatcharrAccountProfileIds]. Empty list = no
  * account filter (show all). Tolerant of blanks / non-integers so a malformed
