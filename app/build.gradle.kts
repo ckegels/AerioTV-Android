@@ -178,6 +178,9 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material3.windowsizeclass)
+    // Fold awareness for two-pane Settings (phase 2): WindowLayoutInfo gives the
+    // hinge bounds so the sidebar / detail boundary can sit on the crease.
+    implementation(libs.androidx.window)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
 

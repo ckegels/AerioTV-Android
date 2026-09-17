@@ -31,6 +31,9 @@ media3 = "1.4.1"
 castFramework = "21.5.0"
 castTv = "21.1.1"
 mediarouter = "1.7.0"
+# Fold awareness for the two-pane Settings host (Settings phase 2): hinge
+# position comes from WindowLayoutInfo so no pane straddles the crease.
+windowManager = "1.5.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -92,6 +95,7 @@ androidx-media3-session = { group = "androidx.media3", name = "media3-session", 
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 play-services-cast-framework = { group = "com.google.android.gms", name = "play-services-cast-framework", version.ref = "castFramework" }
 play-services-cast-tv = { group = "com.google.android.gms", name = "play-services-cast-tv", version.ref = "castTv" }
+androidx-window = { group = "androidx.window", name = "window", version.ref = "windowManager" }
 androidx-mediarouter = { group = "androidx.mediarouter", name = "mediarouter", version.ref = "mediarouter" }
 # Local JVM unit tests only (cast HLS proxy remuxer); never packaged in the app.
 junit = { group = "junit", name = "junit", version = "4.13.2" }
