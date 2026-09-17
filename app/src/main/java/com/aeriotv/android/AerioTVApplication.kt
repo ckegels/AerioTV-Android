@@ -139,6 +139,16 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
 
     override fun onCreate() {
         super.onCreate()
+        // Crash capture FIRST, and independent of the Debug Logging toggle: a
+        // user whose app dies seconds after launch cannot turn logging on in
+        // time, so the report has to be collected without being asked for.
+        // A pending report from the previous run is folded into the debug log
+        // file the Settings screens already view and share.
+        com.aeriotv.android.core.debug.CrashReporter.install(this)
+        appScope.launch {
+            com.aeriotv.android.core.debug.CrashReporter
+                .publishToDebugLog(this@AerioTVApplication, debugLogger.logFile())
+        }
         // Time Format: seed the process-wide clock mode and follow the pref.
         com.aeriotv.android.core.ui.ClockFormat.init(this)
         appScope.launch {

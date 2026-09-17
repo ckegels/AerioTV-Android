@@ -40,8 +40,8 @@ import coil3.toBitmap
  * The badge is a FIXED vertical order with DEDICATED positions:
  *
  *     logo    (takes every pixel the two text lines do not)
- *     number  (single line, never ellipsized)
  *     name    (single line, ellipsized)
+ *     number  (single line, never ellipsized)
  *
  * A hidden line contributes ZERO height, so turning the number off gives its
  * height to the logo rather than leaving a gap.
@@ -125,7 +125,7 @@ fun artworkRadiusPx(
 /**
  * Lay the badge out. Pure: no composition, no density, pixels in and out.
  *
- * Vertical order is logo, number, name. [numberHeight] / [nameHeight] are 0
+ * Vertical order is logo, name, number. [numberHeight] / [nameHeight] are 0
  * when that line is hidden, and a hidden line also drops its gap. The logo
  * claims everything left over between the insets, optionally clamped by
  * [maxLogoWidth] / [maxLogoHeight] (the guide rail's stock 36x24 box), and the
@@ -145,18 +145,38 @@ fun channelBadgeLayout(
     maxLogoHeight: Float = Float.MAX_VALUE,
     logoAspect: Float = 0f,
     widthDrivenLogo: Boolean = false,
+    numberColumnWidth: Float = 0f,
+    numberColumnGap: Float = 0f,
 ): ChannelBadgeGeometry {
     if (slotWidth <= 0f || slotHeight <= 0f) return ChannelBadgeGeometry(null, null, null)
     val hasNumber = numberHeight > 0f
     val hasName = nameHeight > 0f
-    val textHeight = numberHeight + nameHeight + (if (hasNumber && hasName) lineGap else 0f)
+
+    // TV FORM FACTOR (Logan 2026-09-16): a TV rail is WIDE and SHORT, so
+    // stacking three things vertically is far too cramped. On TV the channel
+    // NUMBER gets its own fixed-width column on the LEFT, vertically centered,
+    // and the logo (with the name under it, where the surface shows a name)
+    // takes the whole column to its right. Numbers off and the left column
+    // disappears, so the logo column is the full width.
+    //
+    // Phone and tablet keep the stacked order - logo, number, name - which is
+    // the layout Logan approved there.
+    val leftColumn = if (hasNumber && numberColumnWidth > 0f) numberColumnWidth else 0f
+    val leftGap = if (leftColumn > 0f) numberColumnGap else 0f
+    val columnLeft = leftColumn + leftGap
+    val columnWidth = (slotWidth - columnLeft).coerceAtLeast(0f)
+
+    // Only the lines that live IN the logo column cost the logo any height.
+    val stackedNumber = if (leftColumn > 0f) 0f else numberHeight
+    val textHeight = stackedNumber + nameHeight +
+        (if (stackedNumber > 0f && hasName) lineGap else 0f)
     val gap = if (showLogo && textHeight > 0f) logoGap else 0f
 
     val available = slotHeight - topInset - bottomInset
     // Height left for the logo once the text lines have taken theirs.
     val roomForLogo = (available - textHeight - gap).coerceAtLeast(0f)
     var logoHeight = if (showLogo) roomForLogo else 0f
-    var logoWidth = if (showLogo) slotWidth else 0f
+    var logoWidth = if (showLogo) columnWidth else 0f
     if (showLogo && widthDrivenLogo && logoAspect > 0f) {
         // WIDTH-DRIVEN (the Live TV list rows, Logan 2026-09-16): the logo box
         // is the full column WIDTH by width/aspect, so every logo of the same
@@ -164,9 +184,9 @@ fun channelBadgeLayout(
         // row beside it has. The row height only CAPS the box: a taller box
         // than the room left shrinks to the height instead, which is what
         // keeps a very tall portrait image inside the row.
-        val wanted = slotWidth / logoAspect
+        val wanted = columnWidth / logoAspect
         logoHeight = minOf(wanted, roomForLogo)
-        logoWidth = minOf(slotWidth, logoHeight * logoAspect)
+        logoWidth = minOf(columnWidth, logoHeight * logoAspect)
     }
     if (showLogo) {
         logoHeight = minOf(logoHeight, maxLogoHeight)
@@ -176,18 +196,29 @@ fun channelBadgeLayout(
     var y = topInset + ((available - blockHeight) / 2f).coerceAtLeast(0f)
 
     val logo = if (showLogo && logoHeight > 0f) {
-        ArtworkRect((slotWidth - logoWidth) / 2f, y, logoWidth, logoHeight).also {
+        ArtworkRect(columnLeft + (columnWidth - logoWidth) / 2f, y, logoWidth, logoHeight).also {
             y += logoHeight + gap
         }
     } else {
         null
     }
-    val number = if (hasNumber) {
-        ArtworkRect(0f, y, slotWidth, numberHeight).also { y += numberHeight + if (hasName) lineGap else 0f }
+    // ORDER (Logan 2026-09-16): logo, NAME, NUMBER. The name reads first
+    // under the logo and the number trails it. The Live TV list rows are
+    // unaffected: they hide the name here and keep it in their own text
+    // column, so their stack is still logo then number.
+    val name = if (hasName) {
+        ArtworkRect(columnLeft, y, columnWidth, nameHeight)
+            .also { y += nameHeight + if (stackedNumber > 0f) lineGap else 0f }
     } else {
         null
     }
-    val name = if (hasName) ArtworkRect(0f, y, slotWidth, nameHeight) else null
+    val number = when {
+        !hasNumber -> null
+        // TV: its own column on the left, vertically centered in the slot.
+        leftColumn > 0f -> ArtworkRect(0f, (slotHeight - numberHeight) / 2f, leftColumn, numberHeight)
+        // Phone / tablet: stacked under the logo and the name.
+        else -> ArtworkRect(columnLeft, y, columnWidth, numberHeight)
+    }
     return ChannelBadgeGeometry(logo, number, name)
 }
 
@@ -202,8 +233,15 @@ fun artworkTileShape(
     container: Dp,
     shorterSide: Dp = Dp.Unspecified,
     model: Any? = null,
+    /**
+     * Which Appearance toggle governs this surface. Null (the default) means
+     * the LIST toggle, which is every card surface. The guide surfaces pass
+     * `LocalRoundedArtwork.current.guide` instead, so program art in the guide
+     * rounds with the guide logos and is square with them (Logan 2026-09-16).
+     */
+    rounded: Boolean? = null,
 ): Shape {
-    if (!LocalRoundedArtwork.current) return RoundedCornerShape(0.dp)
+    if (!(rounded ?: LocalRoundedArtwork.current.list)) return RoundedCornerShape(0.dp)
     if (model != null && ArtworkTile.verdict(model) == false) return RoundedCornerShape(0.dp)
     val capped = if (shorterSide == Dp.Unspecified) container else minOf(container, shorterSide * 0.25f)
     return RoundedCornerShape(capped)
@@ -225,7 +263,7 @@ fun artworkFittedShape(
         artworkRadiusPx(
             fitted = fitted,
             containerRadiusPx = container.toPx(),
-            rounded = LocalRoundedArtwork.current,
+            rounded = LocalRoundedArtwork.current.list,
             isTile = isTile,
         )
     }
@@ -268,6 +306,13 @@ fun ChannelBadge(
     fallbackText: String? = null,
     fallbackStyle: TextStyle = numberStyle,
     fallbackColor: Color = numberColor,
+    /**
+     * TV form factor: the channel number moves to its own fixed-width column
+     * on the LEFT, vertically centered, and the logo (plus the name, where the
+     * surface renders one) takes the column to its right. Phone and tablet
+     * keep the stacked layout.
+     */
+    numberOnLeft: Boolean = false,
 ) {
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
@@ -284,6 +329,21 @@ fun ChannelBadge(
     val nameHeight = name?.let {
         measurer.measure(it, style = nameStyle, maxLines = 1, softWrap = false).size.height.toFloat()
     } ?: 0f
+
+    // The left number column is measured from the WIDEST number the app can
+    // show, so the number is single line and is never truncated, and so the
+    // logo column starts at the same x on every row.
+    // The left number column is measured from THIS row's own number and is
+    // left aligned at the slot's edge, so the number sits hard against the
+    // start of the cell and the logo and name begin immediately after it
+    // (Logan 2026-09-16). Sizing it from the widest number the app can show
+    // pushed short numbers into the middle of a wide column and stole that
+    // width from the name ("NBC Sports NOW HD" truncated).
+    val numberColumnPx = if (numberOnLeft && number != null) {
+        measurer.measure(number, style = numberStyle, maxLines = 1, softWrap = false).size.width.toFloat()
+    } else {
+        0f
+    }
 
     var slotPx by remember { mutableStateOf(IntSize.Zero) }
     var logoAspect by remember(logoModel) { mutableStateOf(0f) }
@@ -306,6 +366,8 @@ fun ChannelBadge(
             nameHeight = nameHeight,
             logoGap = with(density) { CHANNEL_BADGE_LOGO_GAP.toPx() },
             lineGap = with(density) { CHANNEL_BADGE_LINE_GAP.toPx() },
+            numberColumnWidth = numberColumnPx,
+            numberColumnGap = with(density) { CHANNEL_BADGE_NUMBER_GAP.toPx() },
             logoAspect = logoAspect,
             // The badge's own surfaces (the Live TV list rows) have rows of
             // differing height, so the logo is sized from the COLUMN WIDTH and
@@ -374,10 +436,14 @@ fun ChannelBadge(
                 maxLines = 1,
                 softWrap = false,
                 overflow = TextOverflow.Visible,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                textAlign = if (numberOnLeft) {
+                    androidx.compose.ui.text.style.TextAlign.Start
+                } else {
+                    androidx.compose.ui.text.style.TextAlign.Center
+                },
                 modifier = Modifier
-                    .offset(0.dp, rect.top.toDp(density))
-                    .width(slotWidth),
+                    .offset(rect.left.toDp(density), rect.top.toDp(density))
+                    .width(rect.width.toDp(density)),
             )
         }
         geometry.name?.let { rect ->
@@ -389,8 +455,8 @@ fun ChannelBadge(
                 overflow = TextOverflow.Ellipsis,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 modifier = Modifier
-                    .offset(0.dp, rect.top.toDp(density))
-                    .width(slotWidth),
+                    .offset(rect.left.toDp(density), rect.top.toDp(density))
+                    .width(rect.width.toDp(density)),
             )
         }
     }
@@ -400,6 +466,9 @@ private fun Float.toDp(density: Density): Dp = with(density) { this@toDp.toDp() 
 
 /** Gap between the logo and the text stack under it. */
 val CHANNEL_BADGE_LOGO_GAP = 3.dp
+
+/** Gap between the TV number column and the logo column beside it. */
+val CHANNEL_BADGE_NUMBER_GAP = 6.dp
 
 /** Gap between the number line and the name line. */
 val CHANNEL_BADGE_LINE_GAP = 1.dp

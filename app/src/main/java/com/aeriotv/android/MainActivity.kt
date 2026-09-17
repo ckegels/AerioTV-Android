@@ -673,6 +673,7 @@ class MainActivity : ComponentActivity() {
     private fun onContentRateRequested(rate: Float) {
         lastContentRate = rate
         if (!matchContentResolutionEnabled || !isTelevisionDevice()) return
+        if (resolutionMatchUnsupported) return
         val player = resMatchPlayer ?: return
         if (!player.playWhenReady) return
         val disp = currentDisplay() ?: return
@@ -701,6 +702,7 @@ class MainActivity : ComponentActivity() {
     /** GH #40: switch the display to the content's resolution class. */
     private fun applyContentResolutionMode(videoW: Int, videoH: Int) {
         if (!matchContentResolutionEnabled || !isTelevisionDevice()) return
+        if (resolutionMatchUnsupported) return
         if (videoH <= 0) return
         val disp = currentDisplay() ?: return
         val current = disp.mode ?: return
@@ -727,9 +729,12 @@ class MainActivity : ComponentActivity() {
             .firstOrNull() ?: return
         Log.i(TAG, "GH#40 content res match: ${videoW}x$videoH -> mode ${best.physicalWidth}x${best.physicalHeight}@${best.refreshRate} (want ${"%.2f".format(wantRate)}Hz)")
         lastModeSwitchAt = android.os.SystemClock.elapsedRealtime()
+        val widthDpBefore = resources.configuration.screenWidthDp
         com.aeriotv.android.feature.player.DisplayModeSwitchSignal.raise()
         window.attributes = window.attributes.apply { preferredDisplayModeId = best.modeId }
         resolutionModeApplied = true
+        // GH #113: catch boxes that resize the display without rescaling it.
+        verifyDisplayScaleAfterModeSwitch(widthDpBefore)
         // Frankie B.'s Chromecast logs (2026-08-04): onVideoSizeChanged fires
         // at first frame, so this switch lands UNDER the active decode. The
         // HDMI re-handshake tears the codec's output surface (SurfaceUtils
@@ -772,10 +777,53 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * GH #113 (Google TV Streamer, Android 14): some TV boxes change the
+     * display's pixel size for an app-pinned mode but do NOT re-derive the
+     * display density with it. The UI's dp space then halves (960dp wide at
+     * 2160p/640dpi becomes 480dp at 1080p/640dpi) and every pixel of the app,
+     * player chrome and guide alike, is drawn at double size and clipped by
+     * the screen edges. Nothing in the app can fix the box's density, so the
+     * only safe answer is to notice it and hand the mode back.
+     *
+     * Detection: a display whose density tracks the mode keeps the SAME
+     * screenWidthDp across the switch; a display whose density is frozen
+     * reports a screenWidthDp that moved with the pixels. When that happens
+     * the pin is released and resolution matching stays off for the rest of
+     * the process (re-enabling it would just flash the same broken layout).
+     */
+    private var resolutionMatchUnsupported = false
+    private var resModeScaleCheckJob: kotlinx.coroutines.Job? = null
+
+    private fun verifyDisplayScaleAfterModeSwitch(widthDpBefore: Int) {
+        if (widthDpBefore <= 0) return
+        resModeScaleCheckJob?.cancel()
+        resModeScaleCheckJob = lifecycleScope.launch {
+            // The HDMI re-handshake plus the configuration delivery take a
+            // couple of seconds on these boxes; sample once it has settled.
+            kotlinx.coroutines.delay(3000L)
+            if (!resolutionModeApplied) return@launch
+            val widthDpNow = resources.configuration.screenWidthDp
+            if (widthDpNow <= 0) return@launch
+            val drift = kotlin.math.abs(widthDpNow - widthDpBefore).toFloat() / widthDpBefore
+            if (drift <= 0.15f) return@launch
+            Log.w(
+                TAG,
+                "GH#113 display density did not follow the mode change " +
+                    "(screenWidthDp $widthDpBefore -> $widthDpNow); " +
+                    "disabling resolution matching for this session",
+            )
+            resolutionMatchUnsupported = true
+            restoreDisplayMode()
+        }
+    }
+
     /** GH #40: hand the mode choice back to the system (native/UI mode). */
     private fun restoreDisplayMode() {
         if (!resolutionModeApplied) return
         Log.i(TAG, "GH#40 restore display mode")
+        resModeScaleCheckJob?.cancel()
+        resModeScaleCheckJob = null
         window.attributes = window.attributes.apply { preferredDisplayModeId = 0 }
         resolutionModeApplied = false
     }
@@ -1008,11 +1056,16 @@ class MainActivity : ComponentActivity() {
             // Appearance > Rounded corners on logos and artwork. One local,
             // read by every logo / program-art surface (core/ui/ArtworkCorners.kt).
             val roundedArtwork by appPreferences.roundedArtwork.collectAsState(initial = true)
+            val roundedArtworkGuide by appPreferences.roundedArtworkGuide.collectAsState(initial = false)
             CompositionLocalProvider(
                 LocalAppTextScale provides textScale,
                 com.aeriotv.android.ui.scale.LocalSubtextScale provides subtextScale,
                 com.aeriotv.android.ui.theme.LocalTextContrast provides textContrast,
-                com.aeriotv.android.core.ui.LocalRoundedArtwork provides roundedArtwork,
+                com.aeriotv.android.core.ui.LocalRoundedArtwork provides
+                    com.aeriotv.android.core.ui.RoundedArtwork(
+                        list = roundedArtwork,
+                        guide = roundedArtworkGuide,
+                    ),
             ) {
             ProvideAppTextScale {
             AerioTVTheme(

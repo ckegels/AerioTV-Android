@@ -87,7 +87,12 @@ fun PlaylistsScreen(
     val playlists: List<PlaylistEntity> by viewModel.allPlaylists
         .collectAsStateWithLifecycle(initialValue = emptyList<PlaylistEntity>())
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val activeId = state.playlist?.id
+    // LIVE from the DAO, not the UiState snapshot: the selection indicator
+    // has to move to the newly active row the moment the switch commits,
+    // rather than after its channel fetch returns (Logan 2026-09-16).
+    val activeIdLive by viewModel.activeIdLive
+        .collectAsStateWithLifecycle(initialValue = state.playlist?.id)
+    val activeId = activeIdLive
     val isTv = rememberIsTvDevice()
 
     var pendingDelete by remember { mutableStateOf<PlaylistEntity?>(null) }

@@ -692,6 +692,7 @@ class AerioExoPlayerHolder @Inject constructor(
     /** Wrap a freshly built live source for [followStreamSwitch]. Non raw-TS
      *  sources pass through untouched. */
     private fun wrapForSwitchSkip(url: String, source: MediaSource): MediaSource {
+        releaseAudioHold("source rebuilt")
         if (!isRawTsUrl(url)) {
             switchSkipSource = null
             return source
@@ -902,6 +903,59 @@ class AerioExoPlayerHolder @Inject constructor(
         true
     }
 
+    // ---- post-jump audio hold ----
+    // AMD 2026-09-16: on a jump the audio renderer plays the new stream from
+    // any point, while the video decoder needs its first keyframe to arrive and
+    // decode. That gap is exactly the reported "audio switched, picture frozen".
+    // Mute (never pause: the picture holds on the last frame and the buffer
+    // keeps draining normally) until the video renderer actually renders a
+    // frame, bounded by SWITCH_AUDIO_HOLD_MS.
+    private var switchAudioHoldVolume: Float? = null
+    private var switchAudioHoldJob: Job? = null
+    private var switchAudioHoldAtMs = 0L
+
+    private fun renderedVideoFrames(): Long =
+        player?.videoDecoderCounters?.let { it.renderedOutputBufferCount.toLong() } ?: -1L
+
+    private fun holdAudioForFirstVideoFrame() {
+        val p = player ?: return
+        if (switchAudioHoldVolume != null) return
+        val baseline = renderedVideoFrames()
+        if (baseline < 0L) return // no video renderer: nothing to wait for
+        switchAudioHoldVolume = p.volume
+        switchAudioHoldAtMs = SystemClock.elapsedRealtime()
+        p.volume = 0f
+        switchAudioHoldJob?.cancel()
+        switchAudioHoldJob = watchdogScope.launch {
+            while (isActive) {
+                delay(SWITCH_AUDIO_HOLD_POLL_MS)
+                val now = SystemClock.elapsedRealtime()
+                if (player == null || renderedVideoFrames() > baseline) {
+                    releaseAudioHold("first video frame")
+                    return@launch
+                }
+                if (now - switchAudioHoldAtMs >= SWITCH_AUDIO_HOLD_MS) {
+                    releaseAudioHold("timeout, leaving it to stall recovery")
+                    return@launch
+                }
+            }
+        }
+    }
+
+    /** Main thread. Restores the volume the hold muted; a no-op otherwise. */
+    private fun releaseAudioHold(reason: String) {
+        val v = switchAudioHoldVolume ?: return
+        switchAudioHoldVolume = null
+        switchAudioHoldJob?.cancel()
+        switchAudioHoldJob = null
+        player?.volume = v
+        Log.i(
+            TAG,
+            "[SWITCH] audio hold released after " +
+                "${SystemClock.elapsedRealtime() - switchAudioHoldAtMs}ms ($reason)",
+        )
+    }
+
     /** Main thread: outcome of a [SwitchSkipMediaSource] skip. */
     private fun onSwitchSkipResult(result: SwitchSkipMediaSource.Result) {
         when (result) {
@@ -912,14 +966,17 @@ class AerioExoPlayerHolder @Inject constructor(
                         "(dropped ${result.droppedMs}ms old buffer)",
                 )
                 switchJumpGraceUntilMs = SystemClock.elapsedRealtime() + SWITCH_JUMP_GRACE_MS
+                holdAudioForFirstVideoFrame()
                 // Resume on what is loaded; never hold for a full gate here.
                 releaseResumeGate("stream switch jump")
                 lastPositionAdvanceAtMs = SystemClock.elapsedRealtime()
             }
             SwitchSkipMediaSource.Result.AlreadyPast ->
                 Log.i(TAG, "[SWITCH] playhead already past the boundary; nothing to drop")
-            is SwitchSkipMediaSource.Result.Abandoned ->
+            is SwitchSkipMediaSource.Result.Abandoned -> {
                 Log.i(TAG, "[SWITCH] old buffer skip abandoned (${result.reason}); playing it out")
+                releaseAudioHold("skip abandoned")
+            }
         }
     }
 
@@ -3767,12 +3824,19 @@ class AerioExoPlayerHolder @Inject constructor(
          *  before playback counts as running on the new stream's bytes. */
         private const val SWITCH_PAST_BUFFER_MS = 1_000L
         /** New-stream media that must be loaded past the boundary before old
-         *  samples are dropped, so the keyframe and a cushion are already there. */
-        private const val SWITCH_SKIP_MIN_NEW_DATA_MS = 2_500L
+         *  samples are dropped. Small by design (AMD 2026-09-16): the earliest
+         *  switch onto the new stream is the intent, and the keyframe gate in
+         *  [SwitchSkipMediaSource] is what guarantees a clean decoder start, so
+         *  there is no reason to play out a 16 to 22 s old buffer first. */
+        private const val SWITCH_SKIP_MIN_NEW_DATA_MS = 750L
         /** A skip that has not seen new data by now is abandoned (old buffer plays out). */
         private const val SWITCH_SKIP_TIMEOUT_MS = 30_000L
         /** Underruns inside this window after a jump do not arm the resume gate. */
         private const val SWITCH_JUMP_GRACE_MS = 5_000L
+        /** Longest the new stream's audio is muted waiting for its first video
+         *  frame after a switch jump; on timeout the normal stall recovery owns it. */
+        private const val SWITCH_AUDIO_HOLD_MS = 3_000L
+        private const val SWITCH_AUDIO_HOLD_POLL_MS = 100L
         /** After a switch follow, only a player error or a confirmed dead
          *  session may reopen the channel. */
         private const val SWITCH_WINDOW_MS = 30_000L

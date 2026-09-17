@@ -132,6 +132,13 @@ fun ProgramArtSlot(
      * when the container itself is square (Logan 2026-09-16).
      */
     containerCorner: Dp = ProgramArtSlot.corner,
+    /**
+     * Which Appearance toggle governs this slot. Null = "Rounded corners in
+     * List view" (the Program Info card). The guide's preview/hero banner
+     * passes "Rounded corners in Guide view", so the program art there rounds
+     * and squares together with the guide rail logos (Logan 2026-09-16).
+     */
+    rounded: Boolean? = null,
     fallback: @Composable (() -> Unit)? = null,
 ) {
     // Default to 16:9 until the real aspect lands, so the slot reserves a
@@ -170,7 +177,7 @@ fun ProgramArtSlot(
                     // The slot is sized TO the art, so the art fills it edge to
                     // edge: the shared tile rule, capped at 25% of the shorter
                     // side, not a per-surface clip.
-                    .clip(artworkTileShape(containerCorner, minOf(width, slotHeight))),
+                    .clip(artworkTileShape(containerCorner, minOf(width, slotHeight), rounded = rounded)),
             )
         } else {
             fallback?.invoke()

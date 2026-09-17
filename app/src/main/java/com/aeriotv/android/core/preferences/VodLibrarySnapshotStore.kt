@@ -118,6 +118,17 @@ class VodLibrarySnapshotStore @Inject constructor(
         }.onFailure { Log.w(TAG, "snapshot save failed: ${it.message}") }
     }
 
+    /**
+     * Delete the snapshot file for [identity]. Called ONLY when the playlist
+     * that owns it is deleted; a playlist switch leaves every other
+     * playlist's snapshot exactly where it is so switching back is instant.
+     */
+    suspend fun delete(identity: String) = withContext(Dispatchers.IO) {
+        runCatching { file(identity).delete() }
+            .onFailure { Log.w(TAG, "snapshot delete failed: ${it.message}") }
+        Unit
+    }
+
     companion object {
         /** Current snapshot schema; see [Snapshot.schema]. */
         const val SCHEMA = 1

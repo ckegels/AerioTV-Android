@@ -596,13 +596,8 @@ private fun LiveTvHeaderActions(
             }
         }
     }
-    if (onJumpToDay != null) {
-        LiveTvPhoneCircle(
-            icon = Icons.Filled.CalendarMonth,
-            contentDescription = "Jump to day",
-            onClick = { onActionTaken(); onJumpToDay() },
-        )
-    }
+    // Jump to day lives on the clock long press; a separate calendar
+    // button here duplicated it (Logan 2026-09-16).
     if (canToggleViewMode) {
         LiveTvPhoneCircle(
             icon = if (showingGuide) Icons.Filled.ViewList else Icons.Filled.CalendarMonth,

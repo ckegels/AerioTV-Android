@@ -188,6 +188,17 @@ fun MediaTabContent(
         }
     }
     LaunchedEffect(Unit) { viewModel.ensureLoaded() }
+    // Tell the sweep the library is on screen: a foreground sweep then runs
+    // unpaced with a few pages in flight, and falls back to the paced walk as
+    // soon as the user leaves (Logan 2026-09-16). Keyed on LocalTabIsActive,
+    // NOT on composition: MainScaffold keeps every visited tab composed and
+    // merely hides it, so a DisposableEffect(Unit) here would report the tab
+    // as on screen for the rest of the session.
+    val tabIsActive = com.aeriotv.android.feature.main.LocalTabIsActive.current
+    androidx.compose.runtime.DisposableEffect(tabIsActive) {
+        if (tabIsActive) viewModel.setLibraryVisible(true)
+        onDispose { if (tabIsActive) viewModel.setLibraryVisible(false) }
+    }
     val compact = rememberLiveTvFormFactor().widthClass == WindowWidthSizeClass.Compact
     val hiddenGroups by (if (kind == MediaKind.Movies) settingsVm.hiddenMovieGroups else settingsVm.hiddenSeriesGroups)
         .collectAsStateWithLifecycle(initialValue = emptySet())
@@ -244,7 +255,15 @@ fun MediaTabContent(
         val groupsOnly = next - com.aeriotv.android.feature.ondemand.HIDDEN_CATEGORY
         if (kind == MediaKind.Movies) settingsVm.setHiddenMovieGroups(groupsOnly) else settingsVm.setHiddenSeriesGroups(groupsOnly)
     }
-    val isLoading = if (kind == MediaKind.Movies) state.isLoading else state.isLoadingSeries
+    // "Updating" is driven by the SWEEP, not just the first-page load: on both
+    // the phone (the pull-to-refresh spinner) and TV (the "Updating" line) the
+    // indicator is up for as long as the sweep is walking the server
+    // (Logan 2026-09-16).
+    val isLoading = if (kind == MediaKind.Movies) {
+        state.isLoading || state.sweepingMovies
+    } else {
+        state.isLoadingSeries || state.sweepingSeries
+    }
     val isSearching = query.isNotBlank()
 
     // The library build (title cleanup, diacritic folding and the sort over

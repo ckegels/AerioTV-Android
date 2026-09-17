@@ -189,15 +189,30 @@ class AppPreferences @Inject constructor(
     }
 
     /**
-     * Settings > Appearance > "Rounded corners on logos and artwork".
-     * Channel logos and program artwork are rounded to match the corner
-     * radius of the card or cell they sit in; off makes them square.
+     * Settings > Appearance > "Rounded corners in List view". Channel logos
+     * and program artwork on the LIST and card surfaces are rounded to match
+     * the corner radius of the card they sit in; off makes them square.
      * Movies / TV Shows / DVR poster art is a separate surface and is NOT
      * affected. Default ON. See core/ui/ArtworkCorners.kt.
+     *
+     * MIGRATION: this deliberately keeps reading the original single-toggle
+     * key ("ui_rounded_artwork"), so whatever the user already chose carries
+     * straight over into the List toggle and nobody's setting changes.
      */
     val roundedArtwork: Flow<Boolean> = store.data.map { it[KEY_ROUNDED_ARTWORK] ?: true }
     suspend fun setRoundedArtwork(value: Boolean) {
         store.edit { it[KEY_ROUNDED_ARTWORK] = value }
+    }
+
+    /**
+     * Settings > Appearance > "Rounded corners in Guide view". Covers ONLY the
+     * guide rail logos, at the rail's own small radius. Default OFF: the rail
+     * has always drawn square logos and that stays the out-of-box look.
+     */
+    val roundedArtworkGuide: Flow<Boolean> =
+        store.data.map { it[KEY_ROUNDED_ARTWORK_GUIDE] ?: false }
+    suspend fun setRoundedArtworkGuide(value: Boolean) {
+        store.edit { it[KEY_ROUNDED_ARTWORK_GUIDE] = value }
     }
 
     /**
@@ -1919,6 +1934,7 @@ class AppPreferences @Inject constructor(
         val KEY_SHOW_CHANNEL_NAMES = booleanPreferencesKey("ui_show_channel_names")
         val KEY_SHOW_PROGRAM_SUBTITLES = booleanPreferencesKey("ui_show_program_subtitles")
         val KEY_ROUNDED_ARTWORK = booleanPreferencesKey("ui_rounded_artwork")
+        val KEY_ROUNDED_ARTWORK_GUIDE = booleanPreferencesKey("ui_rounded_artwork_guide")
         val KEY_TIME_FORMAT = stringPreferencesKey("ui_time_format")
         val KEY_HIDDEN_EPG_BADGES = stringPreferencesKey("ui_hidden_epg_badges")
         val KEY_SHOW_EPG_BADGES_TV = booleanPreferencesKey("ui_show_epg_badges_tv")

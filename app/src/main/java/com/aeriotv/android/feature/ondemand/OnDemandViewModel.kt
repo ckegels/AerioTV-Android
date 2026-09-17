@@ -98,6 +98,15 @@ class OnDemandViewModel @Inject constructor(
 
     data class UiState(
         val isLoading: Boolean = false,
+        /**
+         * A catalog SWEEP is walking the server right now (Logan 2026-09-16).
+         * Separate from [isLoading], which drops as soon as the first page has
+         * painted: the Movies / TV Shows "Updating" indicator is driven from
+         * THIS, so it stays up for as long as the sweep is actually running on
+         * both the phone and TV.
+         */
+        val sweepingMovies: Boolean = false,
+        val sweepingSeries: Boolean = false,
         val error: String? = null,
         // ALWAYS EMPTY since GH #109: the library lives in the Room catalog
         // (VodCatalogStore) and the grids read it through [library]. Kept only
@@ -953,9 +962,15 @@ class OnDemandViewModel @Inject constructor(
                 .drop(1)
                 .collect {
                     resetVodState()
-                    initialLoadsStarted = true
-                    refresh()
-                    refreshSeries()
+                    // Go back through the STORED-CATALOG path, not straight to
+                    // a sweep (Logan 2026-09-16): every playlist keeps its own
+                    // vod_title / vod_sweep_state rows, so the newly active
+                    // playlist opens from Room instantly and only re-sweeps
+                    // when its own cadence gate says it is due. A deleted
+                    // playlist's rows are gone by now, so this correctly falls
+                    // through to a fresh sweep for whatever became active.
+                    initialLoadsStarted = false
+                    startInitialLoads()
                 }
         }
         // Per-half capability changes on the SAME playlist (a re-probe after the
@@ -1001,9 +1016,33 @@ class OnDemandViewModel @Inject constructor(
         // "Refresh Everything" (PlaylistViewModel.refreshEverything): the active
         // id is UNCHANGED, so the observeActiveId().drop(1) collector above never
         // fires. The VodResetBus bridges that gap and runs the same nuclear reset.
+        //
+        // Unlike a playlist switch, this one is destructive on purpose (Logan
+        // 2026-09-16): the ACTIVE playlist's stored catalog is deleted (its
+        // vod_title / vod_sweep_state / vod_sweep_lane rows across every
+        // identity it owns, plus its snapshot metadata) and rebuilt from
+        // scratch, so nothing stale can paint. Only the active playlist is
+        // touched; every other playlist keeps its catalog. The forced sweep is
+        // the ordinary foreground one, so a kind whose capability is denied
+        // stays empty instead of being walked.
         viewModelScope.launch {
             vodResetBus.resets.collect {
                 resetVodState()
+                val active = playlistRepository.activePlaylist()
+                if (active != null) {
+                    runCatching {
+                        catalogStore.deleteForPlaylistId(active.id)
+                        snapshotStore.delete(snapshotStore.identity(active))
+                        catalogStore.clearRowCache()
+                    }.onFailure {
+                        Log.w(TAG, "[VOD-CAT] refresh everything: catalog wipe failed", it)
+                    }
+                    Log.i(
+                        TAG,
+                        "[VOD-CAT] refresh everything: catalog cleared for playlist=${active.id}, " +
+                            "full sweep starting",
+                    )
+                }
                 initialLoadsStarted = true
                 refresh()
                 refreshSeries()
@@ -1459,6 +1498,12 @@ class OnDemandViewModel @Inject constructor(
             movieSweepJob?.cancel()
         }
         movieSweepIsBackground = background
+        // The "Updating" indicator on Movies / TV Shows is driven from this
+        // flag, so it stays up for exactly as long as a sweep is walking the
+        // server, rather than dropping with isLoading at the first painted
+        // page (Logan 2026-09-16). Cleared by job identity below, so the
+        // completion of a job this call preempted cannot clear the new one.
+        _state.update { it.copy(sweepingMovies = true) }
         movieSweepJob = viewModelScope.launch(sweepContext(background)) {
             // Opportunistic capability probe on entering On Demand with a
             // stale / unprobed snapshot, so a just-granted VOD permission takes
@@ -1562,6 +1607,11 @@ class OnDemandViewModel @Inject constructor(
             ensureDispatcharrCategories(playlist, invalidate = true)
             sweepDispatcharrCatalog(playlist, isMovie = true, background = background)
         }
+        movieSweepJob?.let { job ->
+            job.invokeOnCompletion {
+                if (movieSweepJob === job) _state.update { st -> st.copy(sweepingMovies = false) }
+            }
+        }
     }
 
     /** Foreground series sweep; see [refresh]. */
@@ -1577,6 +1627,12 @@ class OnDemandViewModel @Inject constructor(
             seriesSweepJob?.cancel()
         }
         seriesSweepIsBackground = background
+        // The "Updating" indicator on Movies / TV Shows is driven from this
+        // flag, so it stays up for exactly as long as a sweep is walking the
+        // server, rather than dropping with isLoading at the first painted
+        // page (Logan 2026-09-16). Cleared by job identity below, so the
+        // completion of a job this call preempted cannot clear the new one.
+        _state.update { it.copy(sweepingSeries = true) }
         seriesSweepJob = viewModelScope.launch(sweepContext(background)) {
             val playlist = playlistRepository.activePlaylist()
             val sourceType = playlist?.sourceType?.let { SourceType.entries.firstOrNull { st -> st.name == it } }
@@ -1644,6 +1700,11 @@ class OnDemandViewModel @Inject constructor(
             // same cycle (the usual case); only starts one if none exists.
             ensureDispatcharrCategories(playlist)
             sweepDispatcharrCatalog(playlist, isMovie = false, background = background)
+        }
+        seriesSweepJob?.let { job ->
+            job.invokeOnCompletion {
+                if (seriesSweepJob === job) _state.update { st -> st.copy(sweepingSeries = false) }
+            }
         }
     }
 
@@ -1728,55 +1789,83 @@ class OnDemandViewModel @Inject constructor(
         var aborted = false
         var firstPainted = false
         while (active.isNotEmpty()) {
-            val lane = active.removeFirst()
-            val query = lane.nextQuery ?: continue
-            pace(background)
-            val url = dispatcharrClient.vodListUrl(base, isMovie, query)
-            val page = try {
-                fetchPageWithRetry("VOD $label lane='${lane.lane}'") {
-                    fetchAndStoreLanePage(playlist, identity, isMovie, plan.generation, lane.lane, url)
+            // FAST MODE (Logan 2026-09-16): a foreground sweep with the Movies
+            // or TV Shows page actually on screen is the user waiting for the
+            // grid, so it runs with NO artificial pause and up to
+            // SWEEP_FOREGROUND_LANES pages in flight (never more than three
+            // concurrent requests, page_size stays 100). Anything else - a
+            // quiet background sweep, or a foreground sweep whose tab the user
+            // has left - keeps the paced, strictly one-at-a-time walk.
+            val fast = !background && aLibraryIsOnScreen()
+            val batch = buildList {
+                while (size < (if (fast) SWEEP_FOREGROUND_LANES else 1) && active.isNotEmpty()) {
+                    val candidate = active.removeFirst()
+                    if (candidate.nextQuery != null) add(candidate)
                 }
-            } catch (u: DispatcharrError.Unauthorized) {
-                // The broker already tried to recover the key; every other
-                // lane would 401 too. Stop, keep every position for next time.
-                warnUnlessCancelled("VOD $label sweep: unauthorized; stopping (positions kept)", u)
-                aborted = true
-                null
+            }
+            if (batch.isEmpty()) continue
+            if (!fast) pace(background)
+            val results = coroutineScope {
+                batch.map { lane ->
+                    async {
+                        val url = dispatcharrClient.vodListUrl(base, isMovie, lane.nextQuery!!)
+                        var failure: Throwable? = null
+                        val fetched = try {
+                            fetchPageWithRetry("VOD $label lane='${lane.lane}'") {
+                                fetchAndStoreLanePage(playlist, identity, isMovie, plan.generation, lane.lane, url)
+                            }
+                        } catch (u: DispatcharrError.Unauthorized) {
+                            failure = u
+                            null
+                        }
+                        Triple(lane, fetched, failure)
+                    }
+                }.awaitAll()
+            }
+            for ((lane, page, failure) in results) {
+                if (failure != null) {
+                    // The broker already tried to recover the key; every other
+                    // lane would 401 too. Stop, keep every position for next
+                    // time.
+                    warnUnlessCancelled("VOD $label sweep: unauthorized; stopping (positions kept)", failure)
+                    aborted = true
+                    continue
+                }
+                if (page == null) {
+                    // Retries exhausted: keep the lane on this page for the
+                    // next sweep and move on to the other lanes.
+                    catalogStore.saveLane(lane.copy(failures = lane.failures + 1))
+                    continue
+                }
+                written += page.written
+                val pages = (pagesThisRun[lane.lane] ?: 0) + 1
+                pagesThisRun[lane.lane] = pages
+                Log.i(
+                    TAG,
+                    "[VOD-CAT] page written kind=$label lane='${lane.lane}' page=$pages " +
+                        "rows=${page.written} runningTotal=$written serverCount=${page.count}",
+                )
+                // A server whose `next` never ends must not walk forever.
+                val next = page.nextQuery?.takeIf { pages < LANE_PAGE_SAFETY }
+                val updated = lane.copy(
+                    nextQuery = next, failures = 0,
+                    hasContent = lane.hasContent || page.count > 0 || page.nonEmpty,
+                )
+                catalogStore.saveLane(updated)
+                if (next != null && !aborted) active.addLast(updated)
+                if (!background && page.written > 0) {
+                    if (!firstPainted) {
+                        firstPainted = true
+                        if (startedEmpty) {
+                            _state.update { if (isMovie) it.copy(isLoading = false, error = null) else it.copy(isLoadingSeries = false, seriesError = null) }
+                        }
+                        catalogChanged(isMovie, force = true)
+                    } else {
+                        catalogChanged(isMovie, force = false)
+                    }
+                }
             }
             if (aborted) break
-            if (page == null) {
-                // Retries exhausted: keep the lane on this page for the next
-                // sweep and move on to the other lanes.
-                catalogStore.saveLane(lane.copy(failures = lane.failures + 1))
-                continue
-            }
-            written += page.written
-            val pages = (pagesThisRun[lane.lane] ?: 0) + 1
-            pagesThisRun[lane.lane] = pages
-            Log.i(
-                TAG,
-                "[VOD-CAT] page written kind=$label lane='${lane.lane}' page=$pages " +
-                    "rows=${page.written} runningTotal=$written serverCount=${page.count}",
-            )
-            // A server whose `next` never ends must not walk forever.
-            val next = page.nextQuery?.takeIf { pages < LANE_PAGE_SAFETY }
-            val updated = lane.copy(
-                nextQuery = next, failures = 0,
-                hasContent = lane.hasContent || page.count > 0 || page.nonEmpty,
-            )
-            catalogStore.saveLane(updated)
-            if (next != null) active.addLast(updated)
-            if (!background && page.written > 0) {
-                if (!firstPainted) {
-                    firstPainted = true
-                    if (startedEmpty) {
-                        _state.update { if (isMovie) it.copy(isLoading = false, error = null) else it.copy(isLoadingSeries = false, seriesError = null) }
-                    }
-                    catalogChanged(isMovie, force = true)
-                } else {
-                    catalogChanged(isMovie, force = false)
-                }
-            }
         }
         val lanes = catalogStore.lanes(identity, kind)
         val unfinished = lanes.filter { it.nextQuery != null }
@@ -3293,6 +3382,26 @@ class OnDemandViewModel @Inject constructor(
      * quiet refresh, the ViewModel's own (main) context for a user-triggered
      * one, where the page-by-page paint is the point.
      */
+    /**
+     * How many Movies / TV Shows libraries are on screen right now.
+     *
+     * A FOREGROUND sweep with a library on screen is the user waiting for the
+     * grid to fill, so it runs unpaced and with a small number of pages in
+     * flight (Logan 2026-09-16). With nothing on screen there is no one
+     * waiting, so it falls back to the paced walk that keeps the box free for
+     * playback. A counter rather than a boolean: the two tabs can overlap
+     * while one is being swapped for the other.
+     */
+    private val visibleLibraries = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** Called by the Movies / TV Shows pages as they enter and leave. */
+    fun setLibraryVisible(visible: Boolean) {
+        if (visible) visibleLibraries.incrementAndGet()
+        else visibleLibraries.updateAndGet { (it - 1).coerceAtLeast(0) }
+    }
+
+    private fun aLibraryIsOnScreen(): Boolean = visibleLibraries.get() > 0
+
     private fun sweepContext(background: Boolean) =
         if (background) BackgroundSweep.dispatcher else kotlin.coroutines.EmptyCoroutineContext
 
@@ -3354,6 +3463,15 @@ class OnDemandViewModel @Inject constructor(
 
         /** Minimum gap between progressive grid rebuilds during a sweep. */
         const val CATALOG_PUBLISH_THROTTLE_MS = 2_000L
+
+        /**
+         * Catalog pages in flight while a library is on screen (Logan
+         * 2026-09-16). Small on purpose: NEVER more than three concurrent
+         * requests against the server, which is the same in-flight cap the
+         * per-copy provider fetches use. The paced background walk stays
+         * strictly one at a time.
+         */
+        const val SWEEP_FOREGROUND_LANES = 3
 
         /** Titles kept in UiState.catalogMovies / catalogSeries. */
         const val CATALOG_LOOKUP_CACHE = 200

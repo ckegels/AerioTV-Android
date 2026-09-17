@@ -136,10 +136,17 @@ fun AppearanceSettingsScreen(
     val customAccentHex by viewModel.customAccentHex.collectAsStateWithLifecycle(initialValue = "")
     val showChannelLogos by viewModel.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
     val roundedArtwork by viewModel.roundedArtwork.collectAsStateWithLifecycle(initialValue = true)
+    val roundedArtworkGuide by viewModel.roundedArtworkGuide.collectAsStateWithLifecycle(initialValue = false)
     val showChannelNumbers by viewModel.showChannelNumbers.collectAsStateWithLifecycle(initialValue = true)
     val showChannelNames by viewModel.showChannelNames.collectAsStateWithLifecycle(initialValue = true)
     val showProgramSubtitles by viewModel.showProgramSubtitles.collectAsStateWithLifecycle(initialValue = true)
     val timeFormat by viewModel.timeFormat.collectAsStateWithLifecycle(initialValue = "system")
+
+    // TV has no Live TV List view (Logan 2026-09-16, see core.ui.TvListView),
+    // so the list-only appearance options are hidden and the list-facing copy
+    // is written for the Guide's channel column instead.
+    val isTv = rememberIsTvDevice()
+    val listViewShown = !isTv || com.aeriotv.android.core.ui.TvListView.ENABLED
 
     var pickerTarget by remember { mutableStateOf<ProgramCategory?>(null) }
     var accentPickerOpen by remember { mutableStateOf(false) }
@@ -298,7 +305,10 @@ fun AppearanceSettingsScreen(
                 // density-tunable surfaces (Movies & Series, Live TV List).
                 settingsCard(
                     header = "Display Scale",
-                    footer = "Independent scale for Movies & Series and Live TV List. 100% matches the default; 85-175% lets you trade density for readability (150%+ shows fewer, larger items - handy on a TV across the room). Changes apply live.",
+                    footer = if (listViewShown)
+                        "Independent scale for Movies & Series and Live TV List. 100% matches the default; 85-175% lets you trade density for readability (150%+ shows fewer, larger items - handy on a TV across the room). Changes apply live."
+                    else
+                        "Independent scale for Movies & Series and Live TV. 100% matches the default; 85-175% lets you trade density for readability (150%+ shows fewer, larger items - handy on a TV across the room). Changes apply live.",
                 ) {
                     // Plan B5 also asks for these two side by side once the
                     // pane clears 560dp. MEASURED AND REJECTED (2026-08-05):
@@ -319,7 +329,7 @@ fun AppearanceSettingsScreen(
                     )
                     DividerRow()
                     ScaleSliderRow(
-                        label = "Live TV List",
+                        label = if (listViewShown) "Live TV List" else "Live TV",
                         value = scaleLiveTV,
                         onValueChange = viewModel::setDisplayScaleLiveTV,
                     )
@@ -346,19 +356,28 @@ fun AppearanceSettingsScreen(
                 // for the same reason: the master toggle is binary and gets
                 // its own footer, the palette grid is browse-and-tweak.
                 settingsCard(
-                    header = "Channel List",
-                    footer = "Turn logos or numbers off to give long channel names more row width. Applies to the Live TV list and the Guide.",
+                    header = if (listViewShown) "Channel List" else "Guide Presentation",
+                    footer = if (listViewShown)
+                        "Turn logos or numbers off to give long channel names more row width. Applies to the Live TV list and the Guide."
+                    else
+                        "Turn logos or numbers off to give long channel names more room in the Guide's channel column.",
                 ) {
                     ToggleRow(
                         title = "Show Channel Logos",
-                        subtitle = "Display each channel's logo in the Live TV list.",
+                        subtitle = if (listViewShown)
+                            "Display each channel's logo in the Live TV list."
+                        else
+                            "Display each channel's logo in the Guide's channel column.",
                         checked = showChannelLogos,
                         onCheckedChange = viewModel::setShowChannelLogos,
                     )
                     DividerRow()
                     ToggleRow(
                         title = "Show Channel Numbers",
-                        subtitle = "Display each channel's number in the Live TV list and Guide.",
+                        subtitle = if (listViewShown)
+                            "Display each channel's number in the Live TV list and Guide."
+                        else
+                            "Display each channel's number in the Guide's channel column.",
                         checked = showChannelNumbers,
                         onCheckedChange = viewModel::setShowChannelNumbers,
                     )
@@ -372,7 +391,10 @@ fun AppearanceSettingsScreen(
                     DividerRow()
                     ToggleRow(
                         title = "Show Program Subtitles",
-                        subtitle = "Display the episode or match name under each program title in the Guide and Live TV list. Turn off if your EPG repeats the description there.",
+                        subtitle = if (listViewShown)
+                            "Display the episode or match name under each program title in the Guide and Live TV list. Turn off if your EPG repeats the description there."
+                        else
+                            "Display the episode or match name under each program title in the Guide. Turn off if your EPG repeats the description there.",
                         checked = showProgramSubtitles,
                         onCheckedChange = viewModel::setShowProgramSubtitles,
                     )
@@ -382,12 +404,21 @@ fun AppearanceSettingsScreen(
                 // radius of the card or cell they sit in; off squares them.
                 settingsCard(
                     header = "Artwork",
-                    footer = "Applies to channel logos and program artwork throughout the app.",
+                    footer = "Rounds channel logos and program artwork to match the card " +
+                        "or cell they sit in. Artwork that floats on a transparent " +
+                        "background stays square either way.",
                 ) {
-                    ToggleRow(
-                        title = "Rounded corners on logos and artwork",
+                    // List-only (ui_rounded_artwork): hidden where there is no
+                    // List view. The pref and its stored value are untouched.
+                    if (listViewShown) ToggleRow(
+                        title = "Rounded corners in List view",
                         checked = roundedArtwork,
                         onCheckedChange = viewModel::setRoundedArtwork,
+                    )
+                    ToggleRow(
+                        title = "Rounded corners in Guide view",
+                        checked = roundedArtworkGuide,
+                        onCheckedChange = viewModel::setRoundedArtworkGuide,
                     )
                 }
 

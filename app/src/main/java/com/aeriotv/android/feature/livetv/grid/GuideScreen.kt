@@ -254,7 +254,27 @@ fun GuideScreen(
     val subtextGrowth = com.aeriotv.android.ui.scale.LocalSubtextScale.current.let { s ->
         1f + (s - 1f).coerceAtLeast(0f) * (if (!isTv && isPhoneIdiom) GUIDE_PHONE_SUBTEXT_SHARE else GUIDE_SUBTEXT_SHARE)
     }
-    val rowHeight = (if (isTv) (if (previewMode) 48.dp else 55.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth
+    // PHYSICAL PARITY WITH APPLE TV (Logan 2026-09-17). Apple TV points are
+    // about 2x the Streamer's dp on the same physical screen (1080 pt tall vs
+    // 540 dp), so Apple's 132 pt row is 66 dp here and its 22 pt band is 11 dp.
+    // The TV base heights ARE those totals, band included: the band is carved
+    // out of the row, never added on top of it. Preview mode is Apple's 96 pt
+    // row, which is 48 dp here and is the mode Logan compares against, so the
+    // Streamer shows the same seven rows as the Apple TV guide does
+    // (measured 2026-09-17).
+    //
+    // THE TV ROW DOES NOT GROW FOR THE BAND (Logan 2026-09-16, Streamer).
+    // The band is CARVED OUT of the row the guide already had, exactly as
+    // Apple TV does it: Apple's 132 pt row is the row INCLUDING its band, not
+    // 132 pt plus a band. Adding the 22 dp band on top here took the Streamer
+    // row from 96 px to 140 px and dropped the guide from 7 visible channels
+    // to under 5, because the Android TV guide viewport is proportionally
+    // shorter than Apple's (the header, the filter row and the tab bar take
+    // more of it), so the row count, not the row height, is what has to match.
+    // The phone / tablet column still takes its small net growth: there the
+    // band replaces a number line that used to sit under the logo.
+    val rowHeight = (if (isTv) (if (previewMode) 48.dp else 66.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth +
+        (if (isTv) 0.dp else com.aeriotv.android.feature.livetv.grid.GUIDE_PHONE_ROW_BAND_GROWTH)
     val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
 
     // Clock: 30 s tick for the now-line and the airing tint.

@@ -178,6 +178,11 @@ class PlaylistRepository @Inject constructor(
     // URL; a credential edit has to drop them or catch-up keeps playing as
     // the previous user.
     private val catchupResolver: com.aeriotv.android.core.playback.CatchupPlaybackResolver,
+    // Playlist DELETE is the only caller: it drops that playlist's VOD
+    // catalog rows and its snapshot metadata file. Both depend on nothing
+    // but the database / context, so there is no cycle back to here.
+    private val vodCatalogStore: com.aeriotv.android.core.data.vod.VodCatalogStore,
+    private val vodSnapshotStore: com.aeriotv.android.core.preferences.VodLibrarySnapshotStore,
 ) {
 
     /** Last successful cast-profile re-resolve per playlist id, so the launch
@@ -808,10 +813,16 @@ class PlaylistRepository @Inject constructor(
      * the TTL.
      */
     suspend fun probeAllCapabilities(force: Boolean = false) {
-        for (playlist in dao.allOnce()) {
-            if (!playlist.isDispatcharrDirectConnect()) continue
-            runCatching { probeCapabilities(playlist.id, force) }
-        }
+        // ACTIVE PLAYLIST ONLY (Logan 2026-09-16). A saved-but-inactive
+        // playlist is not being used by anything on screen, and probing it
+        // meant every launch and every foreground fired a users/me (plus a
+        // system_settings read) against every server the user has ever
+        // saved. Those rows are probed when they are SET ACTIVE
+        // (switchActive), and the cold-launch / foreground rules then apply
+        // to the newly active one.
+        val playlist = dao.firstActive() ?: return
+        if (!playlist.isDispatcharrDirectConnect()) return
+        runCatching { probeCapabilities(playlist.id, force) }
     }
 
     suspend fun refresh(playlist: PlaylistEntity): Result<List<M3UChannel>> = runCatching {
@@ -2587,6 +2598,20 @@ class PlaylistRepository @Inject constructor(
      */
     suspend fun switchActive(playlistId: String): Result<Pair<PlaylistEntity, List<M3UChannel>>> = runCatching {
         dao.switchActive(playlistId)
+        // Capability probing is ACTIVE-PLAYLIST ONLY, so the row that just
+        // became active is probed here: it may never have been probed at
+        // all, or its snapshot may be hours old from when it was last
+        // active.
+        //
+        // FORCED, exactly like a cold launch (Logan 2026-09-16). The old
+        // TTL-respecting call kept a snapshot up to 6 h old, so a permission
+        // granted or revoked on the server WHILE THIS PLAYLIST WAS INACTIVE
+        // was not seen until the TTL expired or the app was force closed
+        // (the Movies tab only came back after a relaunch). An inactive
+        // playlist is never probed, so its snapshot's age says nothing about
+        // whether it is still true: a switch is the one moment we must ask.
+        runCatching { probeCapabilities(playlistId, force = true) }
+            .onFailure { Log.w(TAG_CAPS, "switch-active capability probe failed", it) }
         val entity = dao.byId(playlistId)
             ?: throw IllegalStateException("Playlist $playlistId vanished after switch")
         val base = effectiveBaseUrl(entity)
@@ -2617,11 +2642,39 @@ class PlaylistRepository @Inject constructor(
         updated to channels
     }
 
+    /**
+     * Delete a playlist AND everything cached under its id.
+     *
+     * This is the ONLY place a playlist's caches are destroyed. A playlist
+     * switch keeps every other playlist's data intact (Logan 2026-09-16), so
+     * the cleanup that used to be implicit has to be explicit here or the
+     * rows would outlive the playlist forever.
+     */
     suspend fun deletePlaylist(playlistId: String): Result<Unit> = runCatching {
         // Drop any in-memory JWT pair for the row we're removing so the
         // warmup coordinator stops trying to refresh a dead playlist on
         // the next foreground.
         dispatcharrTokenStore.clear(playlistId)
+        // Session capability guesses recorded from this playlist's 403s.
+        CapabilityCorrections.clear(playlistId)
+        // The VOD snapshot file is keyed by the playlist's IDENTITY, which is
+        // derived from the row, so compute it BEFORE the row is gone.
+        val row = dao.byId(playlistId)
+        // Guide + coverage, channel snapshot, VOD catalog (all identities),
+        // VOD snapshot metadata file. Each is best-effort: a failure to clean
+        // one store must not abort the delete itself.
+        runCatching { purgeEpgCache(playlistId) }
+            .onFailure { Log.w("PlaylistRepo", "delete: EPG purge failed", it) }
+        runCatching { channelSnapshotDao.deleteForPlaylist(playlistId) }
+            .onFailure { Log.w("PlaylistRepo", "delete: channel snapshot purge failed", it) }
+        runCatching { vodCatalogStore.deleteForPlaylistId(playlistId) }
+            .onFailure { Log.w("PlaylistRepo", "delete: VOD catalog purge failed", it) }
+        if (row != null) {
+            runCatching { vodSnapshotStore.delete(vodSnapshotStore.identity(row)) }
+                .onFailure { Log.w("PlaylistRepo", "delete: VOD snapshot purge failed", it) }
+        }
+        // Reminders, watch progress and local recordings are ON DELETE
+        // CASCADE against this row, so the DAO delete takes them with it.
         dao.deleteById(playlistId)
     }
 

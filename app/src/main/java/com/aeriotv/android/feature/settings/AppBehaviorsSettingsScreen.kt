@@ -193,7 +193,12 @@ fun AppBehaviorsSettingsScreen(
                 }
             }
 
-            SettingsSection(
+            // TV drops the List view entirely (Logan 2026-09-16, see
+            // core.ui.TvListView), so there is nothing to choose between and
+            // this section is hidden there. The persisted key and every option
+            // stay intact, so flipping the flag brings the choice back with the
+            // user's stored value.
+            if (!isTv || com.aeriotv.android.core.ui.TvListView.ENABLED) SettingsSection(
                 header = "Default Live TV View",
                 footer = "Which layout Live TV opens in. Automatic uses the List on " +
                     "phones and the Guide on TV and larger tablets. On phones you " +

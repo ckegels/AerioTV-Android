@@ -153,21 +153,30 @@ fun GuidePreviewBanner(
         var url: String? = null
         val pid = p.dispatcharrProgramId
         val playlist = entry.appPreferences()
-        // Program detail icon (Direct Connect) first.
+        // Program detail icon (Direct Connect) first. Same order and the same
+        // URL rules as Apple's GuidePreviewArtCache (Logan 2026-09-17: the
+        // two platforms showed different art for the same program).
+        var detailSkipped = false
         if (pid != null) {
-            url = runCatching {
-                withContext(Dispatchers.IO) {
-                    val broker = entry.dispatcharrAuth()
-                    val client = entry.dispatcharrClient()
-                    val base = ActivePlaylistBase.baseUrl ?: return@withContext null
-                    val playlistId = ActivePlaylistBase.playlistId ?: return@withContext null
-                    broker.withApiKeyRetry(playlistId) { k ->
-                        client.getProgramDetail(base, k, pid).bestPosterString?.let { raw ->
-                            if (raw.startsWith("/")) base.trimEnd('/') + raw else raw
+            val base = ActivePlaylistBase.baseUrl
+            val playlistId = ActivePlaylistBase.playlistId
+            if (base == null || playlistId == null) {
+                // The playlist globals are not set yet on the first focus
+                // after launch. Do not cache a miss for that; retry next time.
+                detailSkipped = true
+            } else {
+                url = runCatching {
+                    withContext(Dispatchers.IO) {
+                        val broker = entry.dispatcharrAuth()
+                        val client = entry.dispatcharrClient()
+                        broker.withApiKeyRetry(playlistId) { k ->
+                            client.getProgramDetail(base, k, pid).bestPosterString?.let { raw ->
+                                resolvePreviewArtUrl(raw, base)
+                            }
                         }
                     }
-                }
-            }.getOrNull()
+                }.getOrNull()
+            }
         }
         if (url == null && p.title.isNotBlank() && playlist.programPostersTmdbEnabled.first()) {
             val apiKey = playlist.tmdbApiKey.first()
@@ -175,10 +184,15 @@ fun GuidePreviewBanner(
                 val isMovie = p.category.lowercase().let { it.contains("movie") || it.contains("film") }
                 url = runCatching {
                     withContext(Dispatchers.IO) {
+                        // One typed search hit (Apple's lookupArt): landscape
+                        // backdrop first, poster only when there is no
+                        // backdrop. No second poster-only search, which is
+                        // what produced portrait art here while Apple showed
+                        // the landscape card.
                         val tmdb = entry.tmdbService()
-                        val d = tmdb.detailsForTitle(cleanPreviewTitle(p.title), isMovie, apiKey)
-                        d?.backdropPath?.takeIf { it.isNotBlank() }?.let { tmdb.imageUrlFor(it, "w780") }
-                            ?: tmdb.posterUrlForTitle(cleanPreviewTitle(p.title), apiKey)
+                        val art = tmdb.lookupArt(cleanPreviewTitle(p.title), isMovie, apiKey)
+                        art?.backdrop?.takeIf { it.isNotBlank() }?.let { tmdb.imageUrlFor(it, "w780") }
+                            ?: art?.poster?.takeIf { it.isNotBlank() }?.let { tmdb.imageUrlFor(it, "w500") }
                     }
                 }.getOrNull()
             }
@@ -187,7 +201,8 @@ fun GuidePreviewBanner(
         // Sports events ("Tomorrow at 21:00 - Villarreal v Real Betis") match
         // nothing on TMDB, but the feed ships a real picture for them.
         if (url == null) url = p.iconUrl?.takeIf { it.isNotBlank() }
-        previewArt[key] = url
+        // A miss caused by the skipped detail step is not final.
+        if (url != null || !detailSkipped) previewArt[key] = url
     }
     val art = artKey?.let { previewArt[it] }
     val artKnown = artKey != null && previewArt.containsKey(artKey)
@@ -201,6 +216,8 @@ fun GuidePreviewBanner(
     val clockMode = rememberClockMode()
     val fmt = remember(clockMode) { ClockFormat.guideShort(clockMode) }
     val showBadges = LocalShowEpgBadges.current
+    // Appearance > "Rounded corners in Guide view" (default OFF).
+    val guideRounded = com.aeriotv.android.core.ui.LocalRoundedArtwork.current.guide
 
     Row(
         modifier = modifier
@@ -222,9 +239,12 @@ fun GuidePreviewBanner(
         // as art of a different aspect arrives.
         ProgramArtSlot(
             model = art,
-            // The hero banner is a flat surface, not a rounded card, so the
-            // art follows it and stays square (Logan 2026-09-16).
-            containerCorner = 0.dp,
+            // GUIDE surface: the program art here follows Appearance >
+            // "Rounded corners in Guide view", at the SAME radius as the guide
+            // rail logos, so logos and program art match (Logan 2026-09-16).
+            // Off means both are square.
+            containerCorner = GUIDE_ART_CORNER,
+            rounded = guideRounded,
             modifier = Modifier.onGloballyPositioned {
                 com.aeriotv.android.feature.player.MiniPlayerChrome
                     .bannerArtBottomPx.value = it.boundsInRoot().bottom
@@ -237,7 +257,16 @@ fun GuidePreviewBanner(
                         // of the 180x101 slot, so keep that share at any scale.
                         modifier = Modifier
                             .width(ProgramArtSlot.maxWidth * 0.75f)
-                            .height(ProgramArtSlot.height * 0.75f),
+                            .height(ProgramArtSlot.height * 0.75f)
+                            // Same guide rule for the channel-logo fallback.
+                            .clip(
+                                com.aeriotv.android.core.ui.artworkTileShape(
+                                    container = GUIDE_ART_CORNER,
+                                    shorterSide = ProgramArtSlot.height * 0.75f,
+                                    model = channel.tvgLogo,
+                                    rounded = guideRounded,
+                                ),
+                            ),
                     )
                 }
             },
@@ -272,16 +301,22 @@ fun GuidePreviewBanner(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     val range = fmt.format(Date(program.startMillis)) + " - " + fmt.format(Date(program.endMillis))
                     Text(range, fontSize = 10.sp.subtext(), fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant, maxLines = 1)
-                    // Date-coded seasons ("S2026 E905") are not episode identity.
-                    val se = seasonEpisodeLabel(program.season, program.episode)?.takeIf { (program.season ?: 0) < 1900 }
-                    if (se != null) {
-                        Text("·", fontSize = 10.sp.subtext(), color = colors.tertiary)
-                        Text(se, fontSize = 10.sp.subtext(), fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant)
-                    }
                     if (program.startMillis <= nowMs && nowMs < program.endMillis) {
                         val left = ((program.endMillis - nowMs) / 60_000L).toInt().coerceAtLeast(1)
                         Text("·", fontSize = 10.sp.subtext(), color = colors.tertiary)
                         Text(if (left >= 60) "${left / 60} h ${left % 60} min left" else "$left min left", fontSize = 10.sp.subtext(), fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant)
+                    }
+                    // SEASON / EPISODE lives HERE now, in the meta line, right
+                    // after the time left and before the LIVE / NEW badges
+                    // (Logan 2026-09-17). It is plain text in the same small
+                    // style as the time, never a pill, and the guide program
+                    // cells no longer draw it at all. Date-coded seasons
+                    // ("S2026 E917") are shown too: they are what the provider
+                    // sends and Logan wants them readable here.
+                    val se = seasonEpisodeLabel(program.season, program.episode)
+                    if (se != null) {
+                        Text("·", fontSize = 10.sp.subtext(), color = colors.tertiary)
+                        Text(se, fontSize = 10.sp.subtext(), fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant)
                     }
                     if (showBadges) EpgFlagsRow(flags = program.epgFlags(), compact = true)
                 }
@@ -338,3 +373,25 @@ object ActivePlaylistBase {
 
 /** Width/height below which banner art counts as a portrait poster. */
 internal const val PORTRAIT_ART_MAX_ASPECT = 0.8f
+
+/**
+ * The radius the guide's program art rounds to when Appearance > "Rounded
+ * corners in Guide view" is on: the SAME 6 dp the guide rail logos use, so
+ * logos and program art in the guide share one silhouette (Logan 2026-09-16).
+ */
+private val GUIDE_ART_CORNER = 6.dp
+
+/**
+ * Mirrors Apple's `VODService.resolveImageURL`: absolute URLs pass through,
+ * a flat single-segment image path is a TMDB path and goes to the TMDB
+ * image host, anything else is relative to the playlist origin.
+ */
+internal fun resolvePreviewArtUrl(raw: String, base: String, size: String = "w780"): String? {
+    if (raw.isBlank()) return null
+    if (raw.startsWith("http://") || raw.startsWith("https://")) return raw
+    val leading = raw.removePrefix("/")
+    val isImage = leading.endsWith(".jpg") || leading.endsWith(".jpeg") ||
+        leading.endsWith(".png") || leading.endsWith(".webp")
+    if (isImage && !leading.contains("/")) return "https://image.tmdb.org/t/p/$size/$leading"
+    return base.trimEnd('/') + "/" + leading
+}

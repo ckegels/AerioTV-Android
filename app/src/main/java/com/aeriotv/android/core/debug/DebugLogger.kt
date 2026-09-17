@@ -188,6 +188,12 @@ class DebugLogger @Inject constructor(
             Level.WARN -> Log.w(tag, message, throwable)
             Level.ERROR -> Log.e(tag, message, throwable)
         }
+        // Always feed the crash ring, even with file logging off: a crash
+        // report is worthless without the lines that led up to it, and the
+        // user who crashes on launch never gets to turn logging on.
+        CrashReporter.record(
+            "${TIMESTAMP_FMT.format(Date())} ${level.tag}/$tag: ${LogSanitizer.redact(message)}",
+        )
         if (!enabled.get()) return
         // When the logcat stream is draining this process into the file, the
         // line we just echoed to android.util.Log is already on its way to

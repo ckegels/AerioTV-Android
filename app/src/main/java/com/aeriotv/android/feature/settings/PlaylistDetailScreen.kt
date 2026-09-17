@@ -94,7 +94,11 @@ fun PlaylistDetailScreen(
     // channel/EPG store, so running them while viewing a DIFFERENT playlist
     // would act on the wrong source and leave the store disagreeing with the
     // page. Set Active is the call to action instead; refresh once it is live.
-    val isActivePlaylist = playlist != null && playlist.id == state.playlist?.id
+    // LIVE from the DAO, not the UiState snapshot (Logan 2026-09-16): "Set
+    // Active" has to become "Active Playlist" the moment the switch commits.
+    val activeIdLive by viewModel.activeIdLive
+        .collectAsStateWithLifecycle(initialValue = state.playlist?.id)
+    val isActivePlaylist = playlist != null && playlist.id == activeIdLive
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmRefreshAll by remember { mutableStateOf(false) }
 

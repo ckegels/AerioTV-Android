@@ -99,11 +99,18 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setShowProgramSubtitles(value) }
     }
 
-    /** Appearance > Rounded corners on logos and artwork (default ON). */
+    /** Appearance > Rounded corners in List view (default ON). */
     val roundedArtwork: StateFlow<Boolean> = prefs.roundedArtwork
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     fun setRoundedArtwork(value: Boolean) {
         viewModelScope.launch { prefs.setRoundedArtwork(value) }
+    }
+
+    /** Appearance > Rounded corners in Guide view (default OFF). */
+    val roundedArtworkGuide: StateFlow<Boolean> = prefs.roundedArtworkGuide
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    fun setRoundedArtworkGuide(value: Boolean) {
+        viewModelScope.launch { prefs.setRoundedArtworkGuide(value) }
     }
     fun setShowChannelNumbers(value: Boolean) {
         viewModelScope.launch { prefs.setShowChannelNumbers(value) }

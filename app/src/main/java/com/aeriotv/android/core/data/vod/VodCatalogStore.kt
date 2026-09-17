@@ -236,6 +236,30 @@ class VodCatalogStore @Inject constructor(
         }
     }
 
+    /**
+     * Drop every catalog row this playlist owns, across ALL of its
+     * identities (a URL / account change mints a new key for the same id).
+     *
+     * Called from the playlist delete path and from "Refresh Everything"
+     * (which wipes the ACTIVE playlist's catalog and rebuilds it from
+     * scratch). A playlist SWITCH must never call this: the previous
+     * playlist's catalog is what makes switching back instant.
+     */
+    suspend fun deleteForPlaylistId(playlistId: String) = withContext(Dispatchers.IO) {
+        writeLock.withLock {
+            val keys = (dao.titlePlaylistKeys() + dao.knownPlaylistKeys()).toSet()
+                .filter { playlistIdOf(it) == playlistId }
+            for (k in keys) {
+                db.withTransaction {
+                    dao.deleteTitlesFor(k); dao.deleteStateFor(k); dao.deleteLanesFor(k)
+                }
+            }
+            if (keys.isNotEmpty()) {
+                Log.i(TAG, "[VOD-DB] dropped ${keys.size} catalog identities for deleted playlist ${playlistId.take(8)}")
+            }
+        }
+    }
+
     /** identity() is "v1|<playlistId>|<url>|..."; null for an unknown shape. */
     private fun playlistIdOf(key: String): String? = key.split('|').getOrNull(1)
 

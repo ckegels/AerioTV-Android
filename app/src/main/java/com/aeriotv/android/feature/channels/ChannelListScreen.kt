@@ -1038,6 +1038,11 @@ internal fun ChannelRow(
     val leadColumnWidth = when {
         !showLogo -> numberColumnWidth
         growLogoFull -> ROW_LOGO_FULL_WIDTH
+        // TV: the number column sits BESIDE the logo rather than under it, so
+        // the leading column has to carry both (the stacked phone width plus
+        // the measured number column and its gap).
+        isTv && showNumber ->
+            ROW_LEAD_WIDTH + numberColumnWidth + com.aeriotv.android.core.ui.CHANNEL_BADGE_NUMBER_GAP
         else -> ROW_LEAD_WIDTH.coerceAtLeast(numberColumnWidth)
     }
     // Shared by the phone menu item and the TV dialog action: record the
@@ -1171,6 +1176,11 @@ internal fun ChannelRow(
                         fallbackStyle = MaterialTheme.typography.labelMedium
                             .copy(fontWeight = FontWeight.Bold),
                         fallbackColor = MaterialTheme.colorScheme.textAccent,
+                        // TV: number in its own column on the LEFT, logo
+                        // centered beside it. The list row keeps the channel
+                        // name in its text column, so on TV the badge is
+                        // number-left plus logo-center with no name line.
+                        numberOnLeft = isTv,
                     )
                     Spacer(Modifier.width(12.dp))
                 }

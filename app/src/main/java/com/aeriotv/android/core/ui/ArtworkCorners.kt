@@ -23,12 +23,28 @@ import androidx.compose.ui.unit.dp
  * a container that is not itself rounded stays square. When the switch is OFF
  * every one of these images is square (0 dp).
  *
- * Default is ON.
+ * TWO toggles since 2026-09-16 (Logan), one mechanism:
+ *  - "Rounded corners in List view" (default ON, today's behavior) covers the
+ *    Live TV list rows and every other card surface on the shared rule: the
+ *    in-player info card, the recent channels picker, the mini player, the
+ *    cast tile, the multiview picker, Program Info art and the hero banner.
+ *  - "Rounded corners in Guide view" (default OFF) covers ONLY the guide rail
+ *    logos, at the rail's own small 6 dp radius.
+ *
+ * Both run through the same corner-alpha tile rule and the same 25 percent
+ * cap; they differ only in which surfaces they switch on.
  *
  * Deliberately NOT applied to Movies / TV Shows / DVR poster art: that is a
  * separate surface with its own design.
  */
-val LocalRoundedArtwork = staticCompositionLocalOf { true }
+data class RoundedArtwork(
+    /** List rows and every other card surface. Default ON. */
+    val list: Boolean = true,
+    /** The guide rail logos, and nothing else. Default OFF. */
+    val guide: Boolean = false,
+)
+
+val LocalRoundedArtwork = staticCompositionLocalOf { RoundedArtwork() }
 
 /**
  * The corner radius an image should use inside a container whose own corner
@@ -38,7 +54,7 @@ val LocalRoundedArtwork = staticCompositionLocalOf { true }
 @Composable
 @ReadOnlyComposable
 fun artworkCorner(container: Dp): Dp =
-    if (LocalRoundedArtwork.current) container else 0.dp
+    if (LocalRoundedArtwork.current.list) container else 0.dp
 
 /**
  * [artworkCorner] as a Shape, for the common `Modifier.clip(...)` call site.

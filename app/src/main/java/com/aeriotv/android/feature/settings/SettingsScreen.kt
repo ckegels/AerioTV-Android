@@ -140,7 +140,11 @@ fun SettingsScreen(
     val updaterEnabled = updateVm.isEnabled
     val state by viewModel.state.collectAsStateWithLifecycle()
     val playlists by viewModel.allPlaylists.collectAsStateWithLifecycle(initialValue = emptyList())
-    val activeId = state.playlist?.id
+    // LIVE from the DAO, not the UiState snapshot (Logan 2026-09-16): the
+    // radio button must fill in on the new row as soon as the switch commits.
+    val activeIdLive by viewModel.activeIdLive
+        .collectAsStateWithLifecycle(initialValue = state.playlist?.id)
+    val activeId = activeIdLive
 
 
     val packageInfo = remember {
