@@ -255,12 +255,9 @@ fun SettingsScreen(
                         onClick = onSectionClick,
                         footer = group.footer,
                         valueFor = { section ->
-                            when (section) {
-                                SettingsSection.Sync -> if (syncEnabled) "On" else "Off"
-                                SettingsSection.About -> versionName
-                                else -> null
-                            }
+                            if (section == SettingsSection.About) versionName else null
                         },
+                        syncEnabled = syncEnabled,
                     )
                 }
             }
@@ -538,6 +535,7 @@ private fun SettingsSectionGroup(
     onClick: (SettingsSection) -> Unit,
     footer: String? = null,
     valueFor: (SettingsSection) -> String? = { null },
+    syncEnabled: Boolean = false,
 ) {
     Column {
         // A blank header means the group carries no label (the closing
@@ -557,6 +555,7 @@ private fun SettingsSectionGroup(
                 SectionNavRow(
                     section = section,
                     value = valueFor(section),
+                    syncEnabled = syncEnabled,
                     onClick = { onClick(section) },
                 )
             }
@@ -573,13 +572,14 @@ private fun SectionNavRow(
     section: SettingsSection,
     onClick: () -> Unit,
     value: String? = null,
+    syncEnabled: Boolean = false,
 ) {
     // Phase B1: delegates to the shared row so the root gets the same
     // border+scale+wash focus treatment as every subpage (the old
     // groupRowFocus was noticeably weaker on TV).
     SettingsNavRow(
         title = section.title,
-        subtitle = section.subtitle,
+        subtitle = settingsSectionSubtitle(section, syncEnabled),
         icon = section.icon,
         value = value,
         onClick = onClick,
@@ -887,8 +887,12 @@ enum class SettingsSection(
         icon = Icons.Filled.SettingsRemote,
     ),
     Sync(
+        // Subtitle comes from [settingsSectionSubtitle]: the row reads the live
+        // On / Off state instead of a description. Apple does the same, and the
+        // long string truncated on the Android TV rail. The description lives on
+        // the Sync page's own Drive Sync footer.
         title = "Sync",
-        subtitle = "Sync playlists, preferences, and watch progress",
+        subtitle = null,
         icon = Icons.Filled.Cloud,
     ),
     AppUpdates(
@@ -907,3 +911,15 @@ enum class SettingsSection(
         icon = Icons.Outlined.Info,
     ),
 }
+
+/**
+ * Subtitle for a section row in the root list, the tablet sidebar and the TV
+ * rail. Everything but Sync uses its static enum subtitle; Sync reports whether
+ * Drive sync is currently on.
+ */
+fun settingsSectionSubtitle(section: SettingsSection, syncEnabled: Boolean): String? =
+    if (section == SettingsSection.Sync) {
+        if (syncEnabled) "On" else "Off"
+    } else {
+        section.subtitle
+    }

@@ -149,6 +149,8 @@ fun SettingsTwoPaneHost(
     pushed: SettingsRoute?,
     sections: List<SettingsSectionGroupSpec>,
     activePlaylistName: String?,
+    /** Drives the Sync row's On / Off subtitle; see settingsSectionSubtitle. */
+    syncEnabled: Boolean,
     takeover: (SettingsRoute) -> Boolean,
     detail: @Composable (SettingsRoute) -> Unit,
 ) {
@@ -166,6 +168,7 @@ fun SettingsTwoPaneHost(
             onSelect = onSelect,
             sections = sections,
             activePlaylistName = activePlaylistName,
+            syncEnabled = syncEnabled,
             modifier = Modifier.width(SidebarWidth),
         )
         VerticalDivider(
@@ -202,6 +205,7 @@ private fun SettingsSidebar(
     onSelect: (SettingsRoute) -> Unit,
     sections: List<SettingsSectionGroupSpec>,
     activePlaylistName: String?,
+    syncEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -248,7 +252,7 @@ private fun SettingsSidebar(
             items(items = group.sections, key = { "row-${it.name}" }) { section ->
                 SettingsNavRow(
                     title = section.title,
-                    subtitle = section.subtitle,
+                    subtitle = settingsSectionSubtitle(section, syncEnabled),
                     icon = section.icon,
                     onClick = { onSelect(SettingsRoute.Section(section)) },
                     selected = selection is SettingsRoute.Section &&
@@ -313,6 +317,8 @@ fun SettingsTvRailHost(
     pushed: SettingsRoute?,
     sections: List<SettingsSectionGroupSpec>,
     activePlaylistName: String?,
+    /** Drives the Sync row's On / Off subtitle; see settingsSectionSubtitle. */
+    syncEnabled: Boolean,
     takeover: (SettingsRoute) -> Boolean,
     detail: @Composable (SettingsRoute) -> Unit,
 ) {
@@ -389,6 +395,7 @@ fun SettingsTvRailHost(
             selection = selection,
             sections = sections,
             activePlaylistName = activePlaylistName,
+            syncEnabled = syncEnabled,
             onFocusRoute = { pending = it },
             onClickRoute = { route ->
                 pending = route
@@ -454,6 +461,7 @@ private fun SettingsTvRail(
     selection: SettingsRoute,
     sections: List<SettingsSectionGroupSpec>,
     activePlaylistName: String?,
+    syncEnabled: Boolean,
     onFocusRoute: (SettingsRoute) -> Unit,
     onClickRoute: (SettingsRoute) -> Unit,
     railFocus: FocusRequester,
@@ -462,12 +470,18 @@ private fun SettingsTvRail(
     // Flatten to one list so the selected index (for initial scroll + focus) is
     // a simple lookup rather than a per-section calculation. About arrives from
     // the closing section group like any other row.
-    val rows = remember(sections, activePlaylistName) {
+    val rows = remember(sections, activePlaylistName, syncEnabled) {
         buildList {
             add(Triple(SettingsRoute.Playlists as SettingsRoute, "Playlists", activePlaylistName))
             sections.forEach { group ->
                 group.sections.forEach { section ->
-                    add(Triple(SettingsRoute.Section(section), section.title, section.subtitle))
+                    add(
+                        Triple(
+                            SettingsRoute.Section(section),
+                            section.title,
+                            settingsSectionSubtitle(section, syncEnabled),
+                        ),
+                    )
                 }
             }
         }

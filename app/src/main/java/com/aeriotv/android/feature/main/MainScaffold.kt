@@ -2289,6 +2289,10 @@ private fun SettingsTabContent(
     val inPane = twoPane && route == null
     val updaterEnabled = hiltViewModel<com.aeriotv.android.feature.update.UpdateViewModel>()
         .isEnabled
+    // Sidebar / rail Sync row reads On or Off rather than a description.
+    val syncEnabled by hiltViewModel<com.aeriotv.android.feature.settings.SettingsViewModel>()
+        .syncMasterEnabled
+        .collectAsStateWithLifecycle(initialValue = false)
     val addPlaylistStep: AddPlaylistStep = when (val r = route) {
         is SettingsRoute.AddPlaylist -> when (val st = r.step) {
             is AddPlaylistWizardStep.ChooseType -> AddPlaylistStep.ChooseType
@@ -2504,6 +2508,7 @@ private fun SettingsTabContent(
                     updaterEnabled = updaterEnabled,
                 ),
                 activePlaylistName = playlistState.playlist?.name,
+                syncEnabled = syncEnabled,
                 // Plan B2: the TV takeover set. These keep the whole screen so
                 // their keyboard / IME plumbing is untouched.
                 takeover = ::isSettingsTakeover,
@@ -2526,6 +2531,7 @@ private fun SettingsTabContent(
                     updaterEnabled = updaterEnabled,
                 ),
                 activePlaylistName = playlistState.playlist?.name,
+                syncEnabled = syncEnabled,
                 // Log lines want the whole width; everything else fits a pane.
                 takeover = { it is SettingsRoute.LogViewer || it is SettingsRoute.Licenses },
                 detail = { renderRoute(it) },
