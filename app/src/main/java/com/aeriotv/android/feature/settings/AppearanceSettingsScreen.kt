@@ -459,7 +459,9 @@ private fun AppearanceModeHeaderRow() {
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 2.dp),
+        // 20dp above matches the gap between top-level settings cards; at 12dp
+        // the eyebrow sat flush against the divider (screenshot pass).
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 6.dp),
     )
 }
 

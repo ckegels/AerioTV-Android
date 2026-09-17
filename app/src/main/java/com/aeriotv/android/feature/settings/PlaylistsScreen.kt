@@ -396,7 +396,12 @@ private fun SwipeablePlaylistRow(
     androidx.compose.material3.SwipeToDismissBox(
         state = dismissState,
         backgroundContent = {
-            Box(
+            // Only paint the red action WHILE a swipe is in progress. The
+            // playlist row's own fill is translucent, so an always-drawn
+            // background bled through every settled row (screenshot pass).
+            if (dismissState.dismissDirection !=
+                androidx.compose.material3.SwipeToDismissBoxValue.Settled
+            ) Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))

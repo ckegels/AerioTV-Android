@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
@@ -42,6 +43,7 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -70,7 +72,9 @@ import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 import com.aeriotv.android.ui.settings.SettingsNavRow
 import com.aeriotv.android.feature.whatsnew.WhatsNewSheetOnDemand
+import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
+import com.aeriotv.android.ui.settings.settingsShowsBackArrow
 import com.aeriotv.android.ui.settings.settingsPaneWidth
 import com.aeriotv.android.ui.settings.settingsEyebrowStyle
 import com.aeriotv.android.ui.settings.settingsFootnoteStyle
@@ -122,6 +126,8 @@ enum class SettingsRootContent(val title: String) {
 @Composable
 fun SettingsScreen(
     onSectionClick: (SettingsSection) -> Unit,
+    /** Back affordance for the pushed About page; unused by the root list. */
+    onBack: () -> Unit = {},
     onOpenPlaylistDetail: (String) -> Unit = {},
     onOpenPlaylists: () -> Unit = {},
     onAddPlaylist: () -> Unit = {},
@@ -179,6 +185,20 @@ fun SettingsScreen(
                     fontWeight = FontWeight.Bold,
                 )
             },
+            navigationIcon = {
+                // About is a pushed page like any other sub-screen, so it gets
+                // the same back arrow (TV and pane hosts suppress it, as there
+                // the remote's BACK or the rail beside it does the popping).
+                if (content == SettingsRootContent.AboutOnly && settingsShowsBackArrow()) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
                 titleContentColor = MaterialTheme.colorScheme.onBackground,
@@ -204,8 +224,10 @@ fun SettingsScreen(
                 start = 16.dp,
                 end = 16.dp,
                 top = 12.dp,
-                // TV: keep the last About row above the ~5% bottom overscan band.
-                bottom = if (rememberIsTvDevice()) 28.dp else 12.dp,
+                // TV: keep the last row above the ~5% bottom overscan band.
+                // Phones reserve the floating tab pill / cast controls the same
+                // way every other scrolling surface does.
+                bottom = if (rememberIsTvDevice()) 28.dp else LocalTabBarBottomInset.current,
             ),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
@@ -612,7 +634,7 @@ private fun AboutSection(
                 .clip(RoundedCornerShape(14.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)),
         ) {
-            AboutInfoRow("Device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim())
+            AboutInfoRow("Device", deviceDisplayName())
             RowDivider()
             AboutInfoRow("System", "Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
             RowDivider()
@@ -810,6 +832,22 @@ private fun RowDivider() {
     )
 }
 
+/**
+ * Marketing name for this device. Several makers already prefix the model with
+ * the brand ("Google TV Streamer" on a Google box), so blindly joining the two
+ * printed "Google Google TV Streamer" in the About panel.
+ */
+private fun deviceDisplayName(): String {
+    val manufacturer = android.os.Build.MANUFACTURER.orEmpty().trim()
+    val model = android.os.Build.MODEL.orEmpty().trim()
+    return when {
+        model.isEmpty() -> manufacturer
+        manufacturer.isEmpty() -> model
+        model.startsWith(manufacturer, ignoreCase = true) -> model
+        else -> "$manufacturer $model"
+    }
+}
+
 private fun formatInstallTime(ms: Long): String {
     if (ms <= 0L) return "Unknown"
     return DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(ms))
@@ -822,7 +860,7 @@ private fun buildAboutClipboard(
     updatedAt: Long,
 ): String = buildString {
     appendLine("AerioTV diagnostics")
-    appendLine("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim())
+    appendLine("Device: ${deviceDisplayName()}")
     appendLine("System: Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
     appendLine("App Version: $versionName ($versionCode)")
     appendLine("First Installed: ${formatInstallTime(installedAt)}")

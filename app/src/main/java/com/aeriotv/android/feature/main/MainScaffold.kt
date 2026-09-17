@@ -2430,6 +2430,7 @@ private fun SettingsTabContent(
         )
         is SettingsRoute.About -> SettingsScreen(
             onSectionClick = { nav.push(SettingsRoute.Section(it)) },
+            onBack = { nav.pop() },
             onOpenLicenses = { nav.push(SettingsRoute.Licenses) },
             viewModel = playlistVm,
             content = SettingsRootContent.AboutOnly,
@@ -2541,6 +2542,7 @@ private fun SettingsTabContent(
             // so the copy cannot drift from what the pane hosts already show.
             SettingsSection.About -> SettingsScreen(
                 onSectionClick = { nav.push(SettingsRoute.Section(it)) },
+                onBack = { nav.pop() },
                 onOpenLicenses = { nav.push(SettingsRoute.Licenses) },
                 viewModel = playlistVm,
                 content = SettingsRootContent.AboutOnly,

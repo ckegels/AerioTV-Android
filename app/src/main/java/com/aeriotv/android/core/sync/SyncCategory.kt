@@ -25,7 +25,7 @@ enum class SyncCategory(
     ),
     Reminders(
         displayName = "Reminders",
-        subtitle = "Scheduled programme reminders",
+        subtitle = "Scheduled program reminders",
         fileName = "reminders.v1.json",
         storageSuffix = "reminders",
     ),
