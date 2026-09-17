@@ -2268,12 +2268,6 @@ internal fun Modifier.collapsibleChrome(visibleFraction: Float): Modifier = this
  * (plan B2's TV takeover set). Shared so the focus contract and the rail host
  * cannot disagree about what counts as a takeover.
  */
-/**
- * Shortest top segment that can still hold the tabletop category row (title
- * plus one row of items). Below this the posture falls back to side by side.
- */
-private val MinTabletopSidebarHeight = 160.dp
-
 private fun isSettingsTakeover(route: SettingsRoute): Boolean =
     route is SettingsRoute.LogViewer ||
         route is SettingsRoute.Licenses ||
@@ -2568,12 +2562,9 @@ private fun SettingsTabContent(
     //
     //  - VERTICAL crease: the window splits left/right, so the existing
     //    side-by-side layout just moves its boundary to the hinge.
-    //  - HORIZONTAL crease, HALF_OPENED (tabletop): the window is physically
-    //    bent across the middle. Side by side would run that bend through BOTH
-    //    panes, so the host stacks instead: categories above, detail below.
-    //  - HORIZONTAL crease, FLAT: nothing is bent, so the ordinary vertical
-    //    split is kept; only an OCCLUDING hinge changes anything, by taking
-    //    the hairline away.
+    //  - HORIZONTAL crease, ANY state: Settings keeps the full display side by
+    //    side (Logan's call), so the split is the ordinary fixed one; only an
+    //    OCCLUDING hinge changes anything, by taking the hairline away.
     //
     // The host's Row/Column starts at the window's leading/top edge, which is
     // the same origin the feature bounds use. Recomposing on a new FoldInfo
@@ -2581,18 +2572,6 @@ private fun SettingsTabContent(
     // untouched, and `twoPane` does not flip, so no posture mapping runs.
     val fold = com.aeriotv.android.ui.adaptive.rememberFoldInfo()
     val settingsSplit = when {
-        fold != null &&
-            fold.axis == com.aeriotv.android.ui.adaptive.FoldAxis.HORIZONTAL &&
-            fold.isHalfOpened &&
-            // A top segment too short to hold the category row is worse than
-            // the bend it avoids; fall through to side by side.
-            fold.start >= MinTabletopSidebarHeight ->
-            SettingsPaneSplit(
-                stacked = true,
-                sidebarExtent = fold.start,
-                gap = fold.gap,
-                drawDivider = !fold.needsBlankGap,
-            )
         fold != null &&
             fold.axis == com.aeriotv.android.ui.adaptive.FoldAxis.VERTICAL &&
             fold.start > 0.dp ->

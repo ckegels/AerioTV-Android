@@ -15,14 +15,9 @@
 //    RIGHT (book posture, and the same device lying flat). The side-by-side
 //    Settings layout simply moves its boundary onto the hinge.
 //
-//  - HORIZONTAL, HALF_OPENED: tabletop. The crease runs left to right and the
-//    window is physically bent across the middle, so a side-by-side boundary
-//    would run a fold through BOTH panes. Settings stacks instead: sidebar in
-//    the top segment, detail in the bottom one.
-//
-//  - HORIZONTAL, FLAT: the device is open flat and held in landscape. There is
-//    no bend to work around, so the ordinary vertical split is kept and the
-//    feature only matters if its hinge physically occludes pixels.
+//  - HORIZONTAL, any state: the crease runs left to right. Settings keeps the
+//    full display side by side (Logan's call), so the layout is unchanged and
+//    the feature only matters if its hinge physically occludes pixels.
 //
 // [FoldInfo] is recomputed from every WindowLayoutInfo emission, so posture,
 // orientation and bounds changes all reach the layout at runtime.
@@ -66,8 +61,6 @@ enum class FoldAxis {
  */
 data class FoldInfo(
     val axis: FoldAxis,
-    /** Tabletop / book posture: the device is bent, not flat. */
-    val isHalfOpened: Boolean,
     /** The feature splits the window into two logically separate areas. */
     val isSeparating: Boolean,
     /**
@@ -144,7 +137,6 @@ fun rememberFoldInfo(): FoldInfo? {
     return with(density) {
         FoldInfo(
             axis = if (vertical) FoldAxis.VERTICAL else FoldAxis.HORIZONTAL,
-            isHalfOpened = f.state == FoldingFeature.State.HALF_OPENED,
             isSeparating = f.isSeparating,
             isOccluding = f.occlusionType == FoldingFeature.OcclusionType.FULL,
             start = (if (vertical) bounds.left else bounds.top).toDp(),
