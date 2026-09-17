@@ -155,6 +155,17 @@ class AerioExoPlayerHolder @Inject constructor(
      *  built source). Keeps the two from disagreeing if a capability probe or a
      *  playlist switch republishes the selector between them. */
     @Volatile private var lastBuiltNativeHls: Boolean = false
+
+    /** Short-window native-HLS join hold: playback is held (audio muted, the
+     *  loading surface still up) until the cushion can survive the thin window
+     *  the cold channel published. 0 / null = not holding. */
+    private var shortWindowHoldArmedAtMs = 0L
+    private var shortWindowHoldVolume: Float? = null
+    private var shortWindowHoldLoggedAtMs = 0L
+
+    /** Set for the length of one tune when [NativeHlsColdStart] abandoned the
+     *  previous native-HLS attempt, so the retry opens on the TS path. */
+    @Volatile private var tuneForcedToTs: Boolean = false
     /** In-memory mirror of AppPreferences.liveStartBufferMs so [playUrl] can
      *  read the learned hold-back without blocking the channel-tap path. */
     @Volatile private var cachedLiveStartBuffers:
@@ -528,6 +539,67 @@ class AerioExoPlayerHolder @Inject constructor(
         resumeGateActive = false
         resumeGateArmedAtMs = 0L
         resumeGateLoggedTargetMs = 0L
+    }
+
+    /**
+     * Native HLS, short window only. A cold Dispatcharr channel publishes about
+     * six fast-start segments (roughly 15 s) and #EXT-X-START:TIME-OFFSET=-10
+     * joins about 2 s from the live edge, so the first frame paints and then
+     * freezes while the player tries to build a cushion. Hold the A/V start
+     * gate here instead: audio stays muted and the loading surface stays up
+     * until there is real media ahead. A warm join lists a full window, so
+     * [NativeHlsColdStart.isShortWindow] is false and nothing here runs.
+     */
+    private fun armShortWindowHold() {
+        if (!lastBuiltNativeHls) return
+        if (shortWindowHoldVolume != null) return
+        if (!NativeHlsColdStart.isShortWindow()) return
+        val p = player ?: return
+        val target = NativeHlsColdStart.shortWindowTargetAheadMs()
+        if (target <= 0L) return
+        if (bufferedAheadMs(p) >= target) return
+        shortWindowHoldArmedAtMs = SystemClock.elapsedRealtime()
+        shortWindowHoldLoggedAtMs = 0L
+        shortWindowHoldVolume = p.volume
+        p.volume = 0f
+        p.playWhenReady = false
+    }
+
+    /** Drive the short-window hold from the 1 s watchdog poll. */
+    private fun tickShortWindowHold(p: ExoPlayer, now: Long) {
+        if (shortWindowHoldVolume == null) return
+        val target = NativeHlsColdStart.shortWindowTargetAheadMs()
+        val ahead = bufferedAheadMs(p)
+        val heldMs = now - shortWindowHoldArmedAtMs
+        if (ahead >= target) {
+            releaseShortWindowHold("buffered ${ahead}ms >= ${target}ms after ${heldMs}ms")
+            return
+        }
+        if (heldMs >= NativeHlsColdStart.SHORT_WINDOW_MAX_HOLD_MS) {
+            releaseShortWindowHold("hold cap reached with ${ahead}ms ahead")
+            return
+        }
+        if (now - shortWindowHoldLoggedAtMs < 1_000L) return
+        shortWindowHoldLoggedAtMs = now
+        Log.i(
+            TAG,
+            "[HLS] short window (${"%.1f".format(NativeHlsColdStart.joinWindowMs() / 1000.0)}s): " +
+                "waiting for ${"%.1f".format(target / 1000.0)}s ahead " +
+                "(now ${"%.1f".format(ahead / 1000.0)}s)",
+        )
+    }
+
+    /** Let the held audio and video go. A no-op when nothing is holding. */
+    private fun releaseShortWindowHold(reason: String) {
+        val volume = shortWindowHoldVolume ?: return
+        shortWindowHoldVolume = null
+        shortWindowHoldArmedAtMs = 0L
+        shortWindowHoldLoggedAtMs = 0L
+        player?.let {
+            it.volume = volume
+            it.playWhenReady = true
+        }
+        Log.i(TAG, "[HLS] short window hold released: $reason")
     }
 
     /** Buffered media ahead of the playhead, the quantity the gate measures. */
@@ -1604,6 +1676,8 @@ class AerioExoPlayerHolder @Inject constructor(
 
         override fun onRenderedFirstFrame() {
             videoFrameRendered = true
+            NativeHlsColdStart.disarm("first frame")
+            armShortWindowHold()
             noFrameHealAttempts = 0
             // GH #107: video that has been painting steadily for a while means
             // the surface and codec are genuinely healthy again, so the rebuild
@@ -2005,8 +2079,21 @@ class AerioExoPlayerHolder @Inject constructor(
                 // segment download before the first frame.
                 HlsMediaSource.Factory(dataSourceFactory)
                     // A Dispatcharr 503 must reach our own handler on the
-                    // FIRST answer, exactly as on the TS path.
-                    .setLoadErrorHandlingPolicy(Live503LoadErrorPolicy())
+                    // FIRST answer, exactly as on the TS path. The native-HLS
+                    // subclass also reports 4xx / 5xx to NativeHlsColdStart.
+                    .setLoadErrorHandlingPolicy(NativeHlsLoadErrorPolicy())
+                    // Cold start: watch the client playlist grow, at no extra
+                    // request, and hold Media3's own stuck detector off until
+                    // our own 30 s window is spent.
+                    .setPlaylistParserFactory(NativeHlsColdStartParserFactory())
+                    .setPlaylistTrackerFactory { hlsDataSourceFactory, loadErrorPolicy, parserFactory ->
+                        androidx.media3.exoplayer.hls.playlist.DefaultHlsPlaylistTracker(
+                            hlsDataSourceFactory,
+                            loadErrorPolicy,
+                            parserFactory,
+                            NativeHlsColdStart.PLAYLIST_STUCK_COEFFICIENT,
+                        )
+                    }
                     .createMediaSource(mediaItem)
             }
             isRawTsUrl(url) -> {
@@ -2419,7 +2506,15 @@ class AerioExoPlayerHolder @Inject constructor(
         // Resolve the live engine ONCE per tune, before the player is acquired:
         // the renderers factory is built from it, and the [TUNE] line below has
         // to name the engine the source is actually built with.
+        if (kind == "live") tuneForcedToTs = NativeHlsColdStart.consumeForceTs()
         val nativeHlsTune = kind == "live" && effectiveLiveUrl(url) != url
+        releaseShortWindowHold("new tune")
+        if (nativeHlsTune) {
+            NativeHlsColdStart.arm(title)
+        } else {
+            NativeHlsColdStart.disarm("ts tune")
+            NativeHlsColdStart.endTune()
+        }
         desiredVideoJoiningMs = if (nativeHlsTune) {
             0L
         } else {
@@ -2751,6 +2846,8 @@ class AerioExoPlayerHolder @Inject constructor(
      */
     internal fun effectiveLiveUrl(url: String): String {
         if (!isDispatcharrLiveTsUrl(url)) return url
+        // A cold start that ran out of patience pinned THIS tune to TS.
+        if (tuneForcedToTs) return url
         if (LiveEngineSelector.engine() != LiveEngine.NativeHls) return url
         return withNativeHls(url)
     }
@@ -2783,6 +2880,9 @@ class AerioExoPlayerHolder @Inject constructor(
      *  command("stop"). */
     fun stop() {
         val p = player ?: return
+        NativeHlsColdStart.disarm("stop")
+        NativeHlsColdStart.endTune()
+        releaseShortWindowHold("stop")
         // A deliberate stop outranks any waiting clean-end reconnect.
         cleanEndJob?.cancel()
         cleanEndJob = null
@@ -3030,6 +3130,33 @@ class AerioExoPlayerHolder @Inject constructor(
                 // Issue #17: give a live Dispatcharr channel a MUCH longer ceiling
                 // (the held-open connection is where the proxy fails a dead source
                 // over to a working one server-side); VOD/other keep the tight net.
+                // Native HLS: trace the cushion every second for the first 30 s
+                // of a tune. This is where a short-window join shows itself,
+                // and it is the one trace a field log needs to tell "the
+                // playlist never grew" apart from "the window was too thin".
+                val sinceTuneMs = NativeHlsColdStart.sinceTuneMs()
+                if (sinceTuneMs in 0..30_000L) {
+                    Log.i(
+                        TAG,
+                        "[HLS-BUF] +${sinceTuneMs / 1000}s pos=${p.currentPosition} " +
+                            "buffered=${p.bufferedPosition} ahead=${bufferedAheadMs(p)}",
+                    )
+                }
+                tickShortWindowHold(p, now)
+
+                // Native HLS cold start: a cold Dispatcharr channel can leave
+                // its per-client playlist thin for well over 12 s while the
+                // provider connects. While that playlist is still growing we
+                // wait (up to 30 s); when the growth stops for 12 s, the total
+                // is spent, or a 4xx / 5xx arrived, the attempt is abandoned
+                // here and re-primed on the TS path. Warm channels render a
+                // frame long before any of this and disarm it.
+                if (NativeHlsColdStart.isExpired()) {
+                    if (!forceReload("hls-cold-start")) markStreamUnavailable()
+                    continue
+                }
+                if (NativeHlsColdStart.isWaiting()) continue
+
                 val coldStartUrl = lastPlayUrl
                 val coldStartIsLive = coldStartUrl != null && isRawTsUrl(coldStartUrl)
                 val coldStartCeilingMs =

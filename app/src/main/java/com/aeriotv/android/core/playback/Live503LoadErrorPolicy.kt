@@ -23,7 +23,7 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
  * are still absorbed by Media3 exactly as before.
  */
 @UnstableApi
-class Live503LoadErrorPolicy : DefaultLoadErrorHandlingPolicy() {
+open class Live503LoadErrorPolicy : DefaultLoadErrorHandlingPolicy() {
 
     override fun getRetryDelayMsFor(
         loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo,
