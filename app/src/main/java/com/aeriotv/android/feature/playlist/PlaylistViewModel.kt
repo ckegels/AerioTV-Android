@@ -1631,10 +1631,19 @@ class PlaylistViewModel @Inject constructor(
         dispatcharrProfileId: Int?,
         vodEnabled: Boolean = true,
         epgRetentionDays: Int = 7,
+        /**
+         * Overrides the stored source type. Only Edit Playlist's Dispatcharr
+         * Authentication toggle passes it: flipping between Username &
+         * Password and API Key IS a source-type change, and without this the
+         * new credentials would be written under the old type and ignored.
+         * Null keeps whatever the row already has.
+         */
+        sourceTypeOverride: SourceType? = null,
     ) {
         viewModelScope.launch {
             val active = repository.activePlaylist() ?: return@launch
-            val sourceType = SourceType.entries.firstOrNull { it.name == active.sourceType }
+            val sourceType = sourceTypeOverride
+                ?: SourceType.entries.firstOrNull { it.name == active.sourceType }
                 ?: SourceType.M3uUrl
             _state.update { it.copy(isLoading = true, error = null) }
             val request = PlaylistRepository.SaveRequest(
@@ -1659,6 +1668,7 @@ class PlaylistViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     playlist = active.copy(
+                        sourceType = sourceType.name,
                         name = request.name ?: active.name,
                         urlString = request.url.trimEnd('/'),
                         lanUrlString = request.lanUrl?.trimEnd('/'),

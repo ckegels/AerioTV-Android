@@ -138,20 +138,33 @@ fun EditPlaylistScreen(
                 SourceType.M3uUrl, SourceType.XtreamCodes -> epgUrl
                 else -> null
             },
+            // Dispatcharr credentials follow the Authentication section's
+            // MODE toggle, not the type the row happened to be created with:
+            // the toggle is how a Dispatcharr playlist moves between API key
+            // and username/password (Apple parity), and effectiveSourceType
+            // below persists the matching type.
             apiKey = when {
-                sourceType == SourceType.DispatcharrApiKey -> apiKey
-                sourceType == SourceType.DispatcharrUserPass &&
-                    dispatcharrMode == DispatcharrMode.ApiKey -> apiKey
+                isDispatcharr -> apiKey.takeIf { dispatcharrMode == DispatcharrMode.ApiKey }
                 else -> null
             },
-            username = when (sourceType) {
-                SourceType.DispatcharrUserPass, SourceType.XtreamCodes -> username
+            username = when {
+                isDispatcharr -> username.takeIf {
+                    dispatcharrMode == DispatcharrMode.UsernamePassword
+                }
+                sourceType == SourceType.XtreamCodes -> username
                 else -> null
             },
-            password = when (sourceType) {
-                SourceType.DispatcharrUserPass, SourceType.XtreamCodes -> password
+            password = when {
+                isDispatcharr -> password.takeIf {
+                    dispatcharrMode == DispatcharrMode.UsernamePassword
+                }
+                sourceType == SourceType.XtreamCodes -> password
                 else -> null
             },
+            sourceTypeOverride = if (isDispatcharr) {
+                if (dispatcharrMode == DispatcharrMode.ApiKey) SourceType.DispatcharrApiKey
+                else SourceType.DispatcharrUserPass
+            } else null,
             dispatcharrProfileId = if (isDispatcharr) selectedProfileId else null,
             vodEnabled = vodEnabled,
             epgRetentionDays = epgRetentionDays,
@@ -262,49 +275,17 @@ fun EditPlaylistScreen(
                 }
             }
 
-            // Local Network gets its own section (unified settings layout,
-            // 2026-07): the same grouping iOS/tvOS use, with the footer
-            // explaining the automatic LAN/WAN switch.
-            item {
-                Section(
-                    header = "Local Network",
-                    footer = "Used automatically whenever the server answers at this address " +
-                        "(checked at launch, on network changes, and after edits). Leave blank " +
-                        "to always use the server URL.",
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        SettingsTextField(
-                            label = "Local URL (optional)",
-                            value = lanUrl,
-                            onValueChange = { lanUrl = it },
-                            placeholder = "http://192.168.1.10:9191",
-                            keyboardOptions = aerioTextFieldKeyboardOptions(
-                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
-                                imeAction = androidx.compose.ui.text.input.ImeAction.Next,
-                            ),
-                        )
-                    }
-                }
-            }
-
             when (sourceType) {
-                SourceType.DispatcharrApiKey -> item {
-                    Section(header = "Authentication") {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            SettingsTextField(
-                                label = "API Key",
-                                value = apiKey,
-                                onValueChange = { apiKey = it },
-                                secure = true,
-                                secureLabel = "API key",
-                                keyboardOptions = aerioTextFieldKeyboardOptions(
-                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
-                                ),
-                            )
-                        }
-                    }
-                }
-                SourceType.DispatcharrUserPass -> item {
+                // Apple parity: ONE Authentication section for either
+                // Dispatcharr type. The mode toggle is how a Dispatcharr
+                // playlist moves between username/password and an API key, so
+                // it has to be here for an existing API-key playlist too - it
+                // used to appear only on rows created as username/password,
+                // which is why an API-key playlist showed a lone unlabeled
+                // field and no way back.
+                SourceType.DispatcharrApiKey,
+                SourceType.DispatcharrUserPass,
+                -> item {
                     Section(header = "Authentication") {
                         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                             SegmentedToggle(
@@ -341,6 +322,9 @@ fun EditPlaylistScreen(
                                     onValueChange = { apiKey = it },
                                     secure = true,
                                     secureLabel = "API key",
+                                    keyboardOptions = aerioTextFieldKeyboardOptions(
+                                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                                    ),
                                 )
                             }
                         }
@@ -373,6 +357,32 @@ fun EditPlaylistScreen(
                 }
                 SourceType.M3uUrl -> { /* no auth */ }
             }
+
+            // Local Network gets its own section (unified settings layout,
+            // 2026-07): the same grouping iOS/tvOS use, with the footer
+            // explaining the automatic LAN/WAN switch.
+            item {
+                Section(
+                    header = "Local Network",
+                    footer = "Used automatically whenever the server answers at this address " +
+                        "(checked at launch, on network changes, and after edits). Leave blank " +
+                        "to always use the server URL.",
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        SettingsTextField(
+                            label = "Local URL (optional)",
+                            value = lanUrl,
+                            onValueChange = { lanUrl = it },
+                            placeholder = "http://192.168.1.10:9191",
+                            keyboardOptions = aerioTextFieldKeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                            ),
+                        )
+                    }
+                }
+            }
+
 
             // Per-playlist On Demand opt-in (iOS Edit Server "Fetch VOD from
             // this playlist" toggle). Surfaces only for source types that

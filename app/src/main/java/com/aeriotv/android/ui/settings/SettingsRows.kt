@@ -114,6 +114,20 @@ fun settingsCardFill(): Color = MaterialTheme.colorScheme.surface
 fun settingsDividerColor(): Color =
     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f)
 
+/**
+ * THE hairline between two rows inside a grouped card, for rows that are laid
+ * out by hand rather than through [settingsRowCard] (the Playlists and About
+ * cards). One implementation, one color, always inset to the text start.
+ */
+@Composable
+fun SettingsRowDivider(startInset: androidx.compose.ui.unit.Dp = SettingsCardMetrics.dividerInset) {
+    androidx.compose.material3.HorizontalDivider(
+        thickness = 1.dp,
+        color = settingsDividerColor(),
+        modifier = Modifier.padding(start = startInset),
+    )
+}
+
 /** Dim tint used by footers, chevrons and secondary values. */
 @Composable
 fun settingsDimTint(): Color =

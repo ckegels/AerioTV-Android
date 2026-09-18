@@ -267,8 +267,12 @@ fun SettingsScreen(
                         rows = group.sections,
                         onClick = onSectionClick,
                         footer = group.footer,
-                        valueFor = { section ->
-                            if (section == SettingsSection.About) versionName else null
+                        // Apple shows the build as the About row's SUBTITLE,
+                        // not as a trailing value.
+                        subtitleOverride = { section ->
+                            if (section == SettingsSection.About) {
+                                "$versionName (${packageInfo?.longVersionCode ?: 0L})"
+                            } else null
                         },
                         syncEnabled = syncEnabled,
                     )
@@ -595,7 +599,7 @@ private fun SettingsSectionGroup(
     rows: List<SettingsSection>,
     onClick: (SettingsSection) -> Unit,
     footer: String? = null,
-    valueFor: (SettingsSection) -> String? = { null },
+    subtitleOverride: (SettingsSection) -> String? = { null },
     syncEnabled: Boolean = false,
 ) {
     Column {
@@ -610,11 +614,13 @@ private fun SettingsSectionGroup(
                 .clip(RoundedCornerShape(com.aeriotv.android.ui.settings.SettingsCardMetrics.cardCorner))
                 .background(com.aeriotv.android.ui.settings.settingsCardFill()),
         ) {
-            rows.forEachIndexed { index, section ->
-                if (index > 0) RowDivider()
+            rows.forEach { section ->
+                // No RowDivider here: SettingsNavRow draws the hairline itself,
+                // inset to the TITLE start (past the icon tile). Drawing both
+                // was what made some rows look full-width and others inset.
                 SectionNavRow(
                     section = section,
-                    value = valueFor(section),
+                    subtitleOverride = subtitleOverride(section),
                     syncEnabled = syncEnabled,
                     onClick = { onClick(section) },
                 )
@@ -628,7 +634,7 @@ private fun SettingsSectionGroup(
 private fun SectionNavRow(
     section: SettingsSection,
     onClick: () -> Unit,
-    value: String? = null,
+    subtitleOverride: String? = null,
     syncEnabled: Boolean = false,
 ) {
     // Phase B1: delegates to the shared row so the root gets the same
@@ -636,9 +642,8 @@ private fun SectionNavRow(
     // groupRowFocus was noticeably weaker on TV).
     SettingsNavRow(
         title = section.title,
-        subtitle = settingsSectionSubtitle(section, syncEnabled),
+        subtitle = subtitleOverride ?: settingsSectionSubtitle(section, syncEnabled),
         icon = section.icon,
-        value = value,
         onClick = onClick,
     )
 }
@@ -854,11 +859,8 @@ private fun SectionFooter(text: String) {
 
 @Composable
 private fun RowDivider() {
-    HorizontalDivider(
-        thickness = 1.dp,
-        color = com.aeriotv.android.ui.settings.settingsDividerColor(),
-        modifier = Modifier.padding(start = 16.dp),
-    )
+    // One implementation app-wide (ui/settings/SettingsRows.kt).
+    com.aeriotv.android.ui.settings.SettingsRowDivider()
 }
 
 /**

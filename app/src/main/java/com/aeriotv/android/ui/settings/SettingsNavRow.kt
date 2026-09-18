@@ -163,10 +163,12 @@ fun SettingsNavRow(
                     if (isTv) {
                         Modifier
                     } else {
-                        // Phase 3b: Apple's 40dp rounded accent tile.
+                        // Phase 3b: Apple's 40dp rounded tile is a DIM accent
+                        // fill with the glyph in the accent itself, not a
+                        // solid bright chip (Logan's restraint rule).
                         Modifier
                             .clip(RoundedCornerShape(SettingsCardMetrics.iconTileCorner))
-                            .background(MaterialTheme.colorScheme.primary)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
                     },
                 ),
             contentAlignment = Alignment.Center,
@@ -174,7 +176,7 @@ fun SettingsNavRow(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = if (isTv) MaterialTheme.colorScheme.primary else Color.White,
+                tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(iconGlyph),
             )
         }
