@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -55,6 +57,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
+import com.aeriotv.android.ui.settings.dpadFocusRing
 import androidx.compose.ui.unit.dp
 import com.aeriotv.android.ui.scale.Dialog
 import sh.calvin.reorderable.ReorderableItem
@@ -159,6 +162,13 @@ fun ManageGroupsSheet(
     sortMode: GroupSortMode = GroupSortMode.Default,
     onSortModeChange: (GroupSortMode) -> Unit = {},
     onReorder: (List<String>) -> Unit = {},
+    /**
+     * Live TV's default group (the group the app opens on), or blank for
+     * "last used". Null hides the whole affordance, which is what every
+     * non-Live-TV caller (On Demand, Movies, DVR) wants.
+     */
+    defaultGroup: String? = null,
+    onSetDefault: ((String) -> Unit)? = null,
 ) {
     var working by remember(hiddenGroups) { mutableStateOf(hiddenGroups.toMutableSet()) }
     val manualReorder = reorderEnabled && sortMode == GroupSortMode.Manual
@@ -296,6 +306,12 @@ fun ManageGroupsSheet(
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    GroupDefaultAction(
+                        group = PlaylistViewModel.ALL_GROUPS,
+                        defaultGroup = defaultGroup,
+                        onSetDefault = onSetDefault,
                     )
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
@@ -370,6 +386,11 @@ fun ManageGroupsSheet(
                                     fontWeight = if (group == PlaylistViewModel.ALL_GROUPS) FontWeight.SemiBold else FontWeight.Normal,
                                     modifier = Modifier.weight(1f),
                                 )
+                                GroupDefaultAction(
+                                    group = group,
+                                    defaultGroup = defaultGroup,
+                                    onSetDefault = onSetDefault,
+                                )
                                 Icon(
                                     imageVector = Icons.Filled.Menu,
                                     contentDescription = "Drag to reorder",
@@ -390,7 +411,13 @@ fun ManageGroupsSheet(
                     contentPadding = PaddingValues(vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(0.dp),
                 ) {
-                    items(allGroups, key = { it }) { group ->
+                    // All Channels is the pinned row above; listing it again
+                    // here showed it twice (harmless until each row grew a
+                    // Set as Default star, which made the duplicate confusing).
+                    items(
+                        allGroups.filterNot { it == PlaylistViewModel.ALL_GROUPS },
+                        key = { it },
+                    ) { group ->
                         val visible = group !in working
                         Row(
                             modifier = Modifier
@@ -421,6 +448,12 @@ fun ManageGroupsSheet(
                                 text = groupDisplayName(group),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            GroupDefaultAction(
+                                group = group,
+                                defaultGroup = defaultGroup,
+                                onSetDefault = onSetDefault,
                             )
                         }
                     }
@@ -464,6 +497,10 @@ fun TvGroupPicker(
      *  instant; the world updates once, after close. `order` is null when the
      *  user never completed a manual move. */
     onCommit: (hidden: Set<String>, order: List<String>?) -> Unit = { _, _ -> },
+    /** Live TV's default group, and the action that sets it. See the touch
+     *  sheet's identical pair; null hides the affordance. */
+    defaultGroup: String? = null,
+    onSetDefault: ((String) -> Unit)? = null,
 ) {
     val manualReorder = reorderEnabled && sortMode == GroupSortMode.Manual
     var workingHidden by remember { mutableStateOf(hiddenGroups) }
@@ -650,6 +687,12 @@ fun TvGroupPicker(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        GroupDefaultAction(
+                            group = PlaylistViewModel.ALL_GROUPS,
+                            defaultGroup = defaultGroup,
+                            onSetDefault = onSetDefault,
                         )
                     }
                     HorizontalDivider(
@@ -761,10 +804,50 @@ fun TvGroupPicker(
                                 color = if (visible || isMoving) MaterialTheme.colorScheme.textAccent
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            if (!isMoving) {
+                                GroupDefaultAction(
+                                    group = group,
+                                    defaultGroup = defaultGroup,
+                                    onSetDefault = onSetDefault,
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * "Set as Default" marker for one group row in Manage Groups (Apple parity,
+ * Logan 2026-09-17: the default group is managed here, not in Settings).
+ * A filled star marks the current default; tapping an unmarked group makes it
+ * the default and tapping the marked one clears it back to "last used".
+ */
+@Composable
+internal fun GroupDefaultAction(
+    group: String,
+    defaultGroup: String?,
+    onSetDefault: ((String) -> Unit)?,
+) {
+    if (onSetDefault == null) return
+    val isDefault = defaultGroup == group
+    Spacer(Modifier.width(8.dp))
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .dpadFocusRing(RoundedCornerShape(50))
+            .clickable { onSetDefault(group) }
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (isDefault) Icons.Filled.Star else Icons.Outlined.StarBorder,
+            contentDescription = if (isDefault) "Default group" else "Set as Default",
+            tint = if (isDefault) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }

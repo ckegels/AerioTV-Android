@@ -76,8 +76,6 @@ fun LiveTvSettingsScreen(
     val roundedArtworkGuide by viewModel.roundedArtworkGuide.collectAsStateWithLifecycle(initialValue = false)
     val defaultLiveTVView by viewModel.defaultLiveTVView.collectAsStateWithLifecycle(initialValue = "")
     val liveTvLayout by viewModel.liveTvLayout.collectAsStateWithLifecycle(initialValue = "basic")
-    val defaultGroupToken by viewModel.defaultGroupToken.collectAsStateWithLifecycle()
-    val defaultGroupOptions by viewModel.defaultGroupOptions.collectAsStateWithLifecycle()
     val phoneGroupSelector by viewModel.phoneGroupSelector.collectAsStateWithLifecycle(initialValue = "sidebar")
     val guideGroupSelector by viewModel.guideGroupSelector.collectAsStateWithLifecycle(initialValue = "pills")
     val showEpgBadges by viewModel.showEpgBadges(isTv).collectAsStateWithLifecycle(initialValue = true)
@@ -207,38 +205,11 @@ fun LiveTvSettingsScreen(
                 }
 
                 // MARK: Groups
-                item("groups") {
-                    SettingsSection(
-                        header = "Groups",
-                        footer = "The Live TV group the app opens on for this playlist. " +
-                            "Recently Watched is the last 25 channels you played, newest " +
-                            "first; picking it also shows it in Manage Groups. A group " +
-                            "that later disappears from the playlist falls back " +
-                            "automatically.",
-                    ) {
-                        val fixedTokens = listOf(
-                            com.aeriotv.android.feature.playlist.PlaylistViewModel.ALL_GROUPS,
-                            com.aeriotv.android.feature.playlist.PlaylistViewModel.FAVORITES_GROUP,
-                            com.aeriotv.android.feature.playlist.PlaylistViewModel.RECENT_GROUP,
-                        )
-                        val allToken =
-                            com.aeriotv.android.feature.playlist.PlaylistViewModel.ALL_GROUPS
-                        SettingsPickerRow(
-                            title = "Default Group",
-                            options = (fixedTokens + defaultGroupOptions).map { token ->
-                                SettingsPickerOption(
-                                    token,
-                                    com.aeriotv.android.feature.livetv.groupDisplayName(token),
-                                )
-                            },
-                            // Nothing stored reads as All Channels, which is
-                            // where a first launch lands.
-                            selected = if (defaultGroupToken.isBlank()) allToken else defaultGroupToken,
-                            onSelect = viewModel::setDefaultGroupToken,
-                        )
-                    }
-                }
-
+                //
+                // The Default Group picker moved to Live TV's Manage Groups
+                // sheet (Logan 2026-09-17, Apple parity): the group list, the
+                // hide/show checks and the default all live in one place now.
+                // Group Selection below is all this section carries.
                 item("group-selection") {
                     // Phase 3: one picker on both inputs. TV used to open a
                     // TvActionMenuDialog from a value row and touch listed the

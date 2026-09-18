@@ -189,40 +189,9 @@ class SettingsViewModel @Inject constructor(
     private val activePlaylistId: StateFlow<String?> = playlistRepository.observeActiveId()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    /** The playlist's provider group names, minus the user's hidden ones. */
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val defaultGroupOptions: StateFlow<List<String>> =
-        kotlinx.coroutines.flow.combine(activePlaylistId, hiddenGroups) { id, hidden -> id to hidden }
-            .mapLatest { (id, hidden) ->
-                if (id.isNullOrBlank()) emptyList()
-                else playlistRepository.cachedGroupTitles(id).filterNot { it in hidden }
-            }
-            .flowOn(kotlinx.coroutines.Dispatchers.IO)
-            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val defaultGroupToken: StateFlow<String> = activePlaylistId
-        .flatMapLatest { id ->
-            if (id.isNullOrBlank()) kotlinx.coroutines.flow.flowOf("") else prefs.defaultGroupToken(id)
-        }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
-
-    /**
-     * Empty token stores nothing, which reads as All Channels in the picker.
-     * Picking Recently Watched also checks it in Manage Groups (Logan
-     * 2026-09-14): a default the user can never see would open on an empty
-     * group list.
-     */
-    fun setDefaultGroupToken(token: String) {
-        val id = activePlaylistId.value
-        if (id.isNullOrBlank()) return
-        viewModelScope.launch {
-            prefs.setDefaultGroupToken(id, token)
-            if (token == com.aeriotv.android.feature.playlist.PlaylistViewModel.RECENT_GROUP) {
-                prefs.setRecentGroupVisible(id, true)
-            }
-        }
-    }
+    // The Default Group picker (options, token and setter) moved to Live TV's
+    // Manage Groups sheet (Logan 2026-09-17): PlaylistViewModel owns the same
+    // per-playlist preference now, so nothing reads it from here.
 
     /**
      * Whether the synthetic "Recently Watched" group is shown, per playlist

@@ -1143,6 +1143,7 @@ fun GuideScreen(
         )
     }
 
+    val defaultGroupToken by viewModel.defaultGroupToken.collectAsStateWithLifecycle()
     if (showManageGroups) {
         if (isTv) {
             TvGroupPicker(
@@ -1169,6 +1170,8 @@ fun GuideScreen(
                 // Only meaningful with the Sidebar Menu group selector.
                 sidebarLayout = if (groupSelector == "sidebar") guideSidebarLayout else null,
                 onSidebarLayoutChange = { settingsVm.setGuideSidebarLayout(it) },
+                defaultGroup = defaultGroupToken,
+                onSetDefault = viewModel::setDefaultGroup,
                 onCommit = { hidden, order ->
                     com.aeriotv.android.feature.livetv.applyManagedGroups(
                         hidden, hiddenGroups, recentGroupVisible,
@@ -1192,6 +1195,8 @@ fun GuideScreen(
                 reorderEnabled = true, sortMode = groupSortMode,
                 onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
                 onReorder = { settingsVm.setGroupOrder(it) },
+                defaultGroup = defaultGroupToken,
+                onSetDefault = viewModel::setDefaultGroup,
             )
         }
     }

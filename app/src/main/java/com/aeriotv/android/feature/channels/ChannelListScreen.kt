@@ -778,6 +778,7 @@ fun ChannelListScreen(
             onDismiss = { recordTarget = null },
         )
     }
+    val defaultGroupToken by viewModel.defaultGroupToken.collectAsStateWithLifecycle()
     if (manageGroupsOpen) {
         ManageGroupsSheet(
             allGroups = allGroupsRaw,
@@ -794,6 +795,8 @@ fun ChannelListScreen(
             sortMode = groupSortMode,
             onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
             onReorder = { settingsVm.setGroupOrder(it) },
+            defaultGroup = defaultGroupToken,
+            onSetDefault = viewModel::setDefaultGroup,
         )
     }
 }

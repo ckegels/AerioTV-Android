@@ -32,6 +32,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -1848,6 +1850,41 @@ class PlaylistViewModel @Inject constructor(
      * the active row flips.
      */
     val activeIdLive: Flow<String?> = repository.observeActiveId()
+
+    /**
+     * GH #81 default group, now owned by Live TV's Manage Groups sheet rather
+     * than a Settings picker (Logan 2026-09-17). Same per-playlist preference
+     * key Live TV already reads for its launch group, so behavior is unchanged.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val defaultGroupToken: StateFlow<String> = activeIdLive
+        .flatMapLatest { id: String? ->
+            if (id.isNullOrBlank()) kotlinx.coroutines.flow.flowOf("")
+            else appPreferences.defaultGroupToken(id)
+        }
+        .stateIn(
+            viewModelScope,
+            kotlinx.coroutines.flow.SharingStarted.Eagerly,
+            "",
+        )
+
+    /**
+     * Set (or clear, with a blank token) the group Live TV opens on. Picking
+     * Recently Watched also makes it visible, exactly as the old Settings
+     * picker did: a default the user cannot see would open on nothing.
+     */
+    fun setDefaultGroup(token: String) {
+        val id = state.value.playlist?.id ?: return
+        if (id.isBlank()) return
+        viewModelScope.launch {
+            val current = appPreferences.defaultGroupTokenOnce(id)
+            // Tapping the marked group again clears the default (back to
+            // "last used"), which is how Apple's sheet behaves.
+            val next = if (current == token) "" else token
+            appPreferences.setDefaultGroupToken(id, next)
+            if (next == RECENT_GROUP) appPreferences.setRecentGroupVisible(id, true)
+        }
+    }
 
     /** Make [playlistId] active and load its channels. Mirrors the bootstrap
      * load-and-render flow, but skipping the JWT exchange the first-load does
