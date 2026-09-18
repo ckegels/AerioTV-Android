@@ -410,29 +410,10 @@ private fun DevSectionGroup(
     footer: String? = null,
     content: @Composable () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = header.uppercase(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)),
-        ) { content() }
-        if (footer != null) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = footer,
-                style = MaterialTheme.typography.labelSmall.subtext(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-        }
+    Column {
+        com.aeriotv.android.ui.settings.SettingsSectionHeader(header)
+        com.aeriotv.android.ui.settings.SettingsCard { content() }
+        if (footer != null) com.aeriotv.android.ui.settings.SettingsSectionFooter(footer)
     }
 }
 

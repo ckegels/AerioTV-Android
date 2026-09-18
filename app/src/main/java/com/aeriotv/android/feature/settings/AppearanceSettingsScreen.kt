@@ -59,7 +59,7 @@ import com.aeriotv.android.core.category.parseHex
 import com.aeriotv.android.ui.adaptive.rememberViewport
 import com.aeriotv.android.ui.settings.LocalSettingsInPane
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
-import com.aeriotv.android.ui.settings.OnOffIndicator
+import com.aeriotv.android.ui.settings.SettingsToggleAffordance
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
@@ -343,35 +343,10 @@ internal fun LazyListScope.settingsCard(
     content: @Composable () -> Unit,
 ) {
     item {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                text = header.uppercase(),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
-                    .border(
-                        1.dp,
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-                        RoundedCornerShape(12.dp),
-                    ),
-            ) {
-                content()
-            }
-            if (footer != null) {
-                Text(
-                    text = footer,
-                    style = MaterialTheme.typography.bodySmall.subtext(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
-            }
+        Column {
+            com.aeriotv.android.ui.settings.SettingsSectionHeader(header)
+            com.aeriotv.android.ui.settings.SettingsCard { content() }
+            if (footer != null) com.aeriotv.android.ui.settings.SettingsSectionFooter(footer)
         }
     }
 }
@@ -584,7 +559,7 @@ private fun CustomAccentRow(
             )
             Spacer(Modifier.size(8.dp))
         }
-        OnOffIndicator(on = enabled)
+        SettingsToggleAffordance(checked = enabled, onCheckedChange = onToggle)
     }
 }
 
@@ -709,7 +684,7 @@ internal fun ToggleRow(
             }
         }
         Spacer(Modifier.size(12.dp))
-        OnOffIndicator(on = checked)
+        SettingsToggleAffordance(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

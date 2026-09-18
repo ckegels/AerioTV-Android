@@ -3,6 +3,7 @@ package com.aeriotv.android.feature.settings
 import com.aeriotv.android.ui.scale.subtext
 import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -228,7 +229,7 @@ fun SettingsScreen(
                 // way every other scrolling surface does.
                 bottom = if (rememberIsTvDevice()) 28.dp else LocalTabBarBottomInset.current,
             ),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            verticalArrangement = Arrangement.spacedBy(com.aeriotv.android.ui.settings.SettingsCardMetrics.sectionSpacing),
         ) {
             // MARK: Playlists
             if (content != SettingsRootContent.AboutOnly) item("playlists") {
@@ -362,13 +363,12 @@ private fun PlaylistsSection(
     Column {
         if (showHeader) {
             SectionHeader("Playlists")
-            Spacer(Modifier.height(6.dp))
         }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)),
+                .clip(RoundedCornerShape(com.aeriotv.android.ui.settings.SettingsCardMetrics.cardCorner))
+                .background(com.aeriotv.android.ui.settings.settingsCardFill()),
         ) {
             if (playlists.isEmpty()) {
                 Box(
@@ -403,7 +403,7 @@ private fun PlaylistsSection(
                     .onFocusChanged { addFocused = it.isFocused }
                     .groupRowFocus(addFocused)
                     .clickable(onClick = onAdd)
-                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
@@ -429,7 +429,7 @@ private fun PlaylistsSection(
                         .onFocusChanged { manageFocused = it.isFocused }
                         .groupRowFocus(manageFocused)
                         .clickable(onClick = onManage)
-                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -447,7 +447,6 @@ private fun PlaylistsSection(
             }
         }
         if (playlists.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
             // One rule now, so one string. Input-appropriate verbs only: a
             // remote has no "tap".
             val verb = if (paneHost) "Select" else "Tap"
@@ -476,7 +475,7 @@ private fun PlaylistRow(
                 .onFocusChanged { focused = it.isFocused }
                 .groupRowFocus(focused)
                 .clickable(onClick = onTap)
-                .padding(horizontal = 14.dp, vertical = 14.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Radio-button active marker - filled cyan dot inside a ring on
@@ -573,9 +572,20 @@ internal fun middleTruncate(text: String, max: Int): String {
  * same accent wash the sub-screen rows use. No-op while unfocused (touch).
  */
 @Composable
-private fun Modifier.groupRowFocus(focused: Boolean): Modifier = this.background(
-    if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
-)
+private fun Modifier.groupRowFocus(focused: Boolean): Modifier = this
+    .clip(RoundedCornerShape(com.aeriotv.android.ui.settings.SettingsCardMetrics.rowCorner))
+    .background(
+        if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
+    )
+    .then(
+        if (focused) {
+            Modifier.border(
+                com.aeriotv.android.ui.settings.SettingsFocusRingWidth,
+                MaterialTheme.colorScheme.primary,
+                RoundedCornerShape(com.aeriotv.android.ui.settings.SettingsCardMetrics.rowCorner),
+            )
+        } else Modifier,
+    )
 
 // MARK: - Generic grouped section
 
@@ -593,13 +603,12 @@ private fun SettingsSectionGroup(
         // Developer / About group).
         if (header.isNotBlank()) {
             SectionHeader(header)
-            Spacer(Modifier.height(6.dp))
         }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)),
+                .clip(RoundedCornerShape(com.aeriotv.android.ui.settings.SettingsCardMetrics.cardCorner))
+                .background(com.aeriotv.android.ui.settings.settingsCardFill()),
         ) {
             rows.forEachIndexed { index, section ->
                 if (index > 0) RowDivider()
@@ -611,10 +620,7 @@ private fun SettingsSectionGroup(
                 )
             }
         }
-        footer?.let {
-            Spacer(Modifier.height(8.dp))
-            SectionFooter(it)
-        }
+        footer?.let { SectionFooter(it) }
     }
 }
 
@@ -655,13 +661,12 @@ private fun AboutSection(
     Column {
         if (showHeader) {
             SectionHeader("About")
-            Spacer(Modifier.height(6.dp))
         }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)),
+                .clip(RoundedCornerShape(com.aeriotv.android.ui.settings.SettingsCardMetrics.cardCorner))
+                .background(com.aeriotv.android.ui.settings.settingsCardFill()),
         ) {
             AboutInfoRow("Device", deviceDisplayName())
             RowDivider()
@@ -720,7 +725,7 @@ private fun AboutInfoRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -753,7 +758,7 @@ private fun AboutVersionRow(value: String, onClick: () -> Unit) {
             .onFocusChanged { focused = it.isFocused }
             .groupRowFocus(focused)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -797,7 +802,7 @@ private fun AboutActionRow(
             .onFocusChanged { focused = it.isFocused }
             .groupRowFocus(focused)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -829,13 +834,8 @@ private fun AboutActionRow(
 
 @Composable
 private fun SectionHeader(text: String) {
-    Text(
-        text = text.uppercase(),
-        style = settingsEyebrowStyle(),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(horizontal = 4.dp),
-    )
+    // Phase 3b: one header style app-wide (uppercase, letter-spaced, accent).
+    com.aeriotv.android.ui.settings.SettingsSectionHeader(text)
 }
 
 @Composable
@@ -847,17 +847,17 @@ private fun SectionFooter(text: String) {
         // have quietly enlarged frozen phone canon.
         style = (if (rememberIsTvDevice()) settingsFootnoteStyle()
         else MaterialTheme.typography.labelSmall).subtext(),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-        modifier = Modifier.padding(horizontal = 4.dp),
+        color = com.aeriotv.android.ui.settings.settingsDimTint(),
+        modifier = Modifier.padding(horizontal = 16.dp),
     )
 }
 
 @Composable
 private fun RowDivider() {
     HorizontalDivider(
-        thickness = 0.5.dp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.20f),
-        modifier = Modifier.padding(start = 14.dp),
+        thickness = 1.dp,
+        color = com.aeriotv.android.ui.settings.settingsDividerColor(),
+        modifier = Modifier.padding(start = 16.dp),
     )
 }
 

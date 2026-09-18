@@ -131,11 +131,14 @@ fun SettingsTextField(
 @Composable
 fun settingsTextFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedBorderColor = MaterialTheme.colorScheme.primary,
-    unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+    unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
     disabledBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
     focusedTextColor = MaterialTheme.colorScheme.onBackground,
     unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
     cursorColor = MaterialTheme.colorScheme.primary,
-    focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
-    unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+    // Phase 3b: the field is an INSET well inside the lighter grouped card,
+    // so it takes the page background rather than the card fill.
+    focusedContainerColor = MaterialTheme.colorScheme.background,
+    unfocusedContainerColor = MaterialTheme.colorScheme.background,
+    disabledContainerColor = MaterialTheme.colorScheme.background,
 )

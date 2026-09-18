@@ -50,7 +50,7 @@ import com.aeriotv.android.core.category.CustomCategoryEntry
 import com.aeriotv.android.core.category.ProgramCategory
 import com.aeriotv.android.core.category.parseHex
 import com.aeriotv.android.ui.settings.settingsFormWidth
-import com.aeriotv.android.ui.settings.OnOffIndicator
+import com.aeriotv.android.ui.settings.SettingsToggleAffordance
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.dpadFocusWash
@@ -297,7 +297,7 @@ private fun AdditionalBucketRow(
                 .clickable(onClick = onPick),
         )
         Spacer(Modifier.width(10.dp))
-        OnOffIndicator(on = enabled)
+        SettingsToggleAffordance(checked = enabled, onCheckedChange = onToggle)
     }
 }
 

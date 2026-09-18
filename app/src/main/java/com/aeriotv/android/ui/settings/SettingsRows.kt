@@ -27,6 +27,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -41,6 +43,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
@@ -72,49 +81,126 @@ import androidx.compose.ui.unit.dp
  */
 val SettingsFocusRingWidth = 2.dp
 
-/** Uppercase accent section header (tvOS `tvSettingsHeader`). */
+/**
+ * Phase 3b: the Apple grouped-card metrics. A Settings section is ONE rounded
+ * card on the page background, rows stacked inside it with hairline dividers
+ * inset to the text start. Nothing draws a per-row card or outline any more.
+ */
+object SettingsCardMetrics {
+    /** Corner radius of the grouped section card. */
+    val cardCorner = 16.dp
+    /** Corner radius of the focus ring drawn on a focused row INSIDE the card. */
+    val rowCorner = 10.dp
+    /** Side gutter from the page edge to the card. */
+    val gutter = 16.dp
+    /** Vertical space between two sections (header to previous footer). */
+    val sectionSpacing = 24.dp
+    /** Divider inset for a plain row (text starts at the row inset). */
+    val dividerInset = 16.dp
+    /** Divider inset for a row with a 40dp leading icon tile. */
+    val iconRowDividerInset = 68.dp
+    /** Leading icon tile on root navigation rows. */
+    val iconTile = 40.dp
+    val iconTileCorner = 10.dp
+    val iconGlyph = 20.dp
+}
+
+/** The grouped card fill: the theme surface, a shade lighter than the page. */
+@Composable
+fun settingsCardFill(): Color = MaterialTheme.colorScheme.surface
+
+/** Hairline divider color between rows inside a grouped card. */
+@Composable
+fun settingsDividerColor(): Color =
+    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f)
+
+/** Dim tint used by footers, chevrons and secondary values. */
+@Composable
+fun settingsDimTint(): Color =
+    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f)
+
+/**
+ * Uppercase, letter-spaced ACCENT section header above each card (Apple's
+ * grouped-list header).
+ */
 @Composable
 fun SettingsSectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text.uppercase(),
-        style = settingsEyebrowStyle(),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = settingsEyebrowStyle().copy(letterSpacing = 0.9.sp),
+        color = MaterialTheme.colorScheme.textAccent,
         fontWeight = FontWeight.SemiBold,
-        modifier = modifier.padding(start = 6.dp, top = 4.dp, bottom = 2.dp),
+        modifier = modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
     )
 }
 
-/** Footer caption under a section (tvOS settings footnote). */
+/** Footer caption under a section card, in the dim tint. */
 @Composable
 fun SettingsSectionFooter(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = settingsFootnoteStyle().subtext(),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier.padding(start = 6.dp, end = 6.dp, top = 2.dp),
+        color = settingsDimTint(),
+        modifier = modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp),
     )
 }
 
 /**
- * The teal-focus card chrome shared by every settings row. Apply BEFORE the
- * content padding. `focused` flips the fill/border/scale; it's only ever true
- * under D-pad focus, so phones (which never focus these) just render the calm
- * resting card.
+ * The grouped card container: one rounded, unoutlined surface holding a column
+ * of rows. Drop row helpers straight inside; each row paints its own hairline
+ * top divider (all but the first) and its own focus ring.
  */
 @Composable
-fun Modifier.settingsRowCard(focused: Boolean): Modifier {
+fun SettingsCard(modifier: Modifier = Modifier, content: ColumnScopeContent) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(SettingsCardMetrics.cardCorner))
+            .background(settingsCardFill()),
+        content = { content() },
+    )
+}
+
+/**
+ * Row chrome INSIDE a grouped card (Phase 3b). At rest a row draws nothing but
+ * a hairline top divider, inset to the text start, which it suppresses when it
+ * is the first row in the card (it checks its own offset, so no call site has
+ * to count). Under D-pad focus the row background lifts slightly and takes the
+ * app-wide 2dp accent ring. Never white, never a scale bump.
+ */
+@Composable
+fun Modifier.settingsRowCard(
+    focused: Boolean,
+    dividerInset: androidx.compose.ui.unit.Dp = SettingsCardMetrics.dividerInset,
+): Modifier {
     val primary = MaterialTheme.colorScheme.primary
-    val rest = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
-    // Phase 3: NO scale bump. A 1.02x pop on every focused row made long TV
-    // settings pages feel like they were breathing; the accent ring alone is
-    // the app-wide focus signal (same one the guide grid draws).
+    val divider = settingsDividerColor()
+    var isFirst by remember { mutableStateOf(true) }
+    val insetPx = with(LocalDensity.current) { dividerInset.toPx() }
+    val hairline = with(LocalDensity.current) { 1.dp.toPx() }
+    val shape = RoundedCornerShape(SettingsCardMetrics.rowCorner)
     return this
-        .clip(RoundedCornerShape(12.dp))
-        .background(if (focused) primary.copy(alpha = 0.18f) else rest)
+        .onPlaced { coords ->
+            val parentY = coords.parentLayoutCoordinates?.positionInRoot()?.y ?: 0f
+            val first = (coords.positionInRoot().y - parentY) <= 0.5f
+            if (first != isFirst) isFirst = first
+        }
+        .drawBehind {
+            if (!isFirst && !focused) {
+                drawLine(
+                    color = divider,
+                    start = Offset(insetPx, 0f),
+                    end = Offset(size.width, 0f),
+                    strokeWidth = hairline,
+                )
+            }
+        }
+        .clip(shape)
+        .background(if (focused) primary.copy(alpha = 0.16f) else Color.Transparent)
         .border(
-            width = if (focused) 2.dp else 1.dp,
-            color = primary.copy(alpha = if (focused) 0.65f else 0.10f),
-            shape = RoundedCornerShape(12.dp),
+            width = if (focused) SettingsFocusRingWidth else 0.dp,
+            color = if (focused) primary else Color.Transparent,
+            shape = shape,
         )
 }
 
@@ -251,7 +337,41 @@ fun SettingsToggleRow(
             }
         }
         Spacer(Modifier.width(12.dp))
-        OnOffIndicator(on = checked && enabled)
+        // Phase 3b: touch gets the Material switch in the accent (what Apple's
+        // phone/tablet Settings show). TV keeps the tvOS "dot + On/Off" text:
+        // a Switch has no D-pad affordance at 10 feet.
+        SettingsToggleAffordance(
+            checked = checked && enabled,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+        )
+    }
+}
+
+/**
+ * The trailing control on a toggle row. Touch gets the Material switch in the
+ * accent (what Apple's phone and tablet Settings show); TV keeps the tvOS
+ * "dot + On/Off" text, which a Switch cannot replace at 10 feet.
+ */
+@Composable
+fun SettingsToggleAffordance(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+) {
+    if (rememberIsTvDevice()) {
+        OnOffIndicator(on = checked)
+    } else {
+        Switch(
+            checked = checked,
+            onCheckedChange = { if (enabled) onCheckedChange(it) },
+            enabled = enabled,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                checkedBorderColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
     }
 }
 
@@ -399,8 +519,9 @@ fun SettingsInfoRow(
 }
 
 /**
- * A section: uppercase header, a column of per-row cards (spaced, NOT grouped
- * into one card), and an optional footer. Drop the row helpers above inside.
+ * A section: uppercase accent header, ONE rounded card holding the rows with
+ * hairline dividers between them, and an optional footer in the dim tint.
+ * Drop the row helpers above inside.
  */
 @Composable
 fun SettingsSection(
@@ -409,9 +530,9 @@ fun SettingsSection(
     footer: String? = null,
     content: ColumnScopeContent,
 ) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SettingsSectionHeader(header)
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { content() }
+    Column(modifier = modifier) {
+        if (header.isNotBlank()) SettingsSectionHeader(header)
+        SettingsCard { content() }
         if (footer != null) SettingsSectionFooter(footer)
     }
 }

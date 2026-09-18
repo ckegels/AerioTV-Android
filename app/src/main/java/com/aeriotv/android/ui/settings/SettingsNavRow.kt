@@ -96,11 +96,11 @@ fun SettingsNavRow(
     // TV values come from TvSettingsMetrics, which is Apple's tvOS ladder
     // halved for the 960x540dp canvas - see that file for why halving is the
     // correct conversion. Touch keeps the phone/tablet values.
-    val iconBox = if (isTv) TvSettingsMetrics.railIconWidth else 34.dp
-    val iconGlyph = if (isTv) TvSettingsMetrics.railIconGlyph else 18.dp
+    val iconBox = if (isTv) TvSettingsMetrics.railIconWidth else SettingsCardMetrics.iconTile
+    val iconGlyph = if (isTv) TvSettingsMetrics.railIconGlyph else SettingsCardMetrics.iconGlyph
     val gap = if (isTv) TvSettingsMetrics.railIconGap else 12.dp
-    val padH = if (isTv) 10.dp else 14.dp
-    val padV = if (isTv) 2.dp else 14.dp
+    val padH = if (isTv) 10.dp else 16.dp
+    val padV = if (isTv) 2.dp else 12.dp
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -115,7 +115,9 @@ fun SettingsNavRow(
                         .background(
                             when {
                                 focused -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                                selected -> MaterialTheme.colorScheme.secondaryContainer
+                                // Phase 3b: selection is a quiet accent wash,
+                                // not Material's off-palette secondaryContainer.
+                                selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
                                 else -> Color.Transparent
                             },
                         )
@@ -130,12 +132,18 @@ fun SettingsNavRow(
                         )
                 } else {
                     Modifier
-                        .settingsRowCard(focused = focused)
+                        .settingsRowCard(
+                            focused = focused,
+                            // Apple insets the hairline to where the TITLE
+                            // starts, i.e. past the leading icon tile.
+                            dividerInset = if (isTv) SettingsCardMetrics.dividerInset
+                            else SettingsCardMetrics.iconRowDividerInset,
+                        )
                         .then(
                             if (selected && !focused) {
                                 Modifier.background(
-                                    MaterialTheme.colorScheme.secondaryContainer,
-                                    RoundedCornerShape(12.dp),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                                    RoundedCornerShape(SettingsCardMetrics.rowCorner),
                                 )
                             } else Modifier,
                         )
@@ -155,9 +163,10 @@ fun SettingsNavRow(
                     if (isTv) {
                         Modifier
                     } else {
+                        // Phase 3b: Apple's 40dp rounded accent tile.
                         Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+                            .clip(RoundedCornerShape(SettingsCardMetrics.iconTileCorner))
+                            .background(MaterialTheme.colorScheme.primary)
                     },
                 ),
             contentAlignment = Alignment.Center,
@@ -165,7 +174,7 @@ fun SettingsNavRow(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = if (isTv) MaterialTheme.colorScheme.primary else Color.White,
                 modifier = Modifier.size(iconGlyph),
             )
         }
@@ -186,8 +195,7 @@ fun SettingsNavRow(
                         )
                     } else it
                 },
-                color = if (selected && !focused) MaterialTheme.colorScheme.onSecondaryContainer
-                else MaterialTheme.colorScheme.onBackground,
+                color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Medium,
                 maxLines = if (isTv) 1 else Int.MAX_VALUE,
                 overflow = TextOverflow.Ellipsis,
@@ -204,10 +212,10 @@ fun SettingsNavRow(
                             lineHeight = TvSettingsMetrics.railSubtitleLineHeight,
                         )
                     } else {
-                        MaterialTheme.typography.bodySmall
+                        MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 17.sp)
                     },
-                    color = if (selected && !focused) MaterialTheme.colorScheme.onSecondaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (isTv) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.secondary,
                     // tvOS truncates here rather than wrapping; matching it is
                     // what keeps the rail row a single fixed height. TOUCH keeps
                     // wrapping - the tablet sidebar deliberately shows Sync's
@@ -231,7 +239,7 @@ fun SettingsNavRow(
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = settingsDimTint(),
             )
         }
     }
