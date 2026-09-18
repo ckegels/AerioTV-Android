@@ -21,13 +21,22 @@
 package com.aeriotv.android.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -162,4 +171,76 @@ fun settingsItemsSummary(enabled: List<String>, total: Int, maxItems: Int = 3): 
     enabled.isEmpty() -> "None"
     enabled.size <= maxItems -> enabled.joinToString(", ")
     else -> settingsCountSummary(enabled.size, total)
+}
+
+/**
+ * TV stepper row: label left, current value on the right of the label, and
+ * D-pad LEFT / RIGHT walking [options]. One focusable row instead of six
+ * selection rows, which is what a six-option choice is worth on a remote
+ * (Logan on the Streamer; Apple's Settings does the same).
+ *
+ * A stored value that is not in [options] (an older custom setting) is shown
+ * as-is and kept until the user steps away from it: stepping then moves to the
+ * nearest option in that direction.
+ *
+ * Touch never sees this - the callers keep the pushed picker page there.
+ */
+@Composable
+fun SettingsIntStepperRow(
+    title: String,
+    options: List<Int>,
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    format: (Int) -> String = { it.toString() },
+) {
+    val sorted = remember(options) { options.sorted() }
+    fun step(delta: Int) {
+        if (sorted.isEmpty()) return
+        val index = sorted.indexOf(value)
+        val next = when {
+            index >= 0 -> sorted[(index + delta).coerceIn(0, sorted.lastIndex)]
+            // Custom value: the nearest option in the direction of travel.
+            delta > 0 -> sorted.firstOrNull { it > value } ?: sorted.last()
+            else -> sorted.lastOrNull { it < value } ?: sorted.first()
+        }
+        if (next != value) onValueChange(next)
+    }
+    SettingsRowContainer(
+        // OK on the row steps forward and wraps, so the control is usable
+        // from a remote that only clicks.
+        onClick = { step(if (value == sorted.lastOrNull()) -sorted.lastIndex else 1) },
+        modifier = modifier.onKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+            when (event.key) {
+                Key.DirectionLeft -> { step(-1); true }
+                Key.DirectionRight -> { step(1); true }
+                else -> false
+            }
+        },
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = title,
+                style = settingsRowTitleStyle(),
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = settingsFootnoteStyle(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = format(value),
+            style = settingsRowValueStyle(),
+            color = MaterialTheme.colorScheme.textAccent,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
 }

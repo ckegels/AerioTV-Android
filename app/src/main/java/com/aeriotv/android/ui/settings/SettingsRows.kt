@@ -190,14 +190,27 @@ fun Modifier.settingsRowCard(
     val primary = MaterialTheme.colorScheme.primary
     val divider = settingsDividerColor()
     var isFirst by remember { mutableStateOf(true) }
+    var isLast by remember { mutableStateOf(true) }
     val insetPx = with(LocalDensity.current) { dividerInset.toPx() }
     val hairline = with(LocalDensity.current) { 1.dp.toPx() }
-    val shape = RoundedCornerShape(SettingsCardMetrics.rowCorner)
+    // The focus fill and ring of the FIRST and LAST rows have to follow the
+    // card's own radius, or the card's clip shaves their square corners off
+    // (Logan on the Streamer). Interior rows keep the tighter row radius.
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) SettingsCardMetrics.cardCorner else SettingsCardMetrics.rowCorner,
+        topEnd = if (isFirst) SettingsCardMetrics.cardCorner else SettingsCardMetrics.rowCorner,
+        bottomStart = if (isLast) SettingsCardMetrics.cardCorner else SettingsCardMetrics.rowCorner,
+        bottomEnd = if (isLast) SettingsCardMetrics.cardCorner else SettingsCardMetrics.rowCorner,
+    )
     return this
         .onPlaced { coords ->
-            val parentY = coords.parentLayoutCoordinates?.positionInRoot()?.y ?: 0f
-            val first = (coords.positionInRoot().y - parentY) <= 0.5f
+            val parent = coords.parentLayoutCoordinates
+            val top = coords.positionInRoot().y - (parent?.positionInRoot()?.y ?: 0f)
+            val first = top <= 0.5f
+            val last = parent == null ||
+                top + coords.size.height >= parent.size.height - 0.5f
             if (first != isFirst) isFirst = first
+            if (last != isLast) isLast = last
         }
         .drawBehind {
             if (!isFirst && !focused) {

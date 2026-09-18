@@ -60,6 +60,8 @@ import com.aeriotv.android.ui.settings.SettingsSection
 import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.dpadFocusWash
+import com.aeriotv.android.ui.settings.SettingsIntStepperRow
+import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.settings.settingsRowCard
 import com.aeriotv.android.ui.tv.dpadFocusEscape
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
@@ -151,21 +153,42 @@ fun DvrSettingsScreen(
                     // Phase 3: these were DropdownMenus anchored to a value
                     // row, which a remote could not sensibly drive. Same
                     // options, same keys, through the shared picker.
-                    val rolls = ROLL_OPTIONS.map { SettingsPickerOption(it, formatRoll(it)) }
-                    SettingsPickerRow(
-                        title = "Start Early",
-                        inlineTitle = true,
-                        options = rolls,
-                        selected = preRoll,
-                        onSelect = settingsVm::setDvrDefaultPreRollMins,
-                    )
-                    SettingsPickerRow(
-                        title = "End Late",
-                        inlineTitle = true,
-                        options = rolls,
-                        selected = postRoll,
-                        onSelect = settingsVm::setDvrDefaultPostRollMins,
-                    )
+                    // TV: six option rows each is far too much list for a
+                    // remote, so each buffer is ONE stepper row driven by
+                    // D-pad Left/Right (Logan on the Streamer; Apple matches).
+                    // Touch keeps the pushed picker page.
+                    if (rememberIsTvDevice()) {
+                        SettingsIntStepperRow(
+                            title = "Start Early",
+                            options = ROLL_OPTIONS,
+                            value = preRoll,
+                            onValueChange = settingsVm::setDvrDefaultPreRollMins,
+                            format = ::formatRoll,
+                        )
+                        SettingsIntStepperRow(
+                            title = "End Late",
+                            options = ROLL_OPTIONS,
+                            value = postRoll,
+                            onValueChange = settingsVm::setDvrDefaultPostRollMins,
+                            format = ::formatRoll,
+                        )
+                    } else {
+                        val rolls = ROLL_OPTIONS.map { SettingsPickerOption(it, formatRoll(it)) }
+                        SettingsPickerRow(
+                            title = "Start Early",
+                            inlineTitle = true,
+                            options = rolls,
+                            selected = preRoll,
+                            onSelect = settingsVm::setDvrDefaultPreRollMins,
+                        )
+                        SettingsPickerRow(
+                            title = "End Late",
+                            inlineTitle = true,
+                            options = rolls,
+                            selected = postRoll,
+                            onSelect = settingsVm::setDvrDefaultPostRollMins,
+                        )
+                    }
                 }
             }
 
