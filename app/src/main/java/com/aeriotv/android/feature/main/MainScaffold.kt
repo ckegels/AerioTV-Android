@@ -2339,7 +2339,7 @@ private fun SettingsTabContent(
     // focus wherever it was (the tab pill on a cold launch).
     var deepLinkPaneFocus by remember { mutableIntStateOf(0) }
     LaunchedEffect(pendingSettingsPage, twoPane, tvRail, playlistState.playlist?.id) {
-        val page = pendingSettingsPage ?: return@LaunchedEffect
+        val page = pendingSettingsPage?.page ?: return@LaunchedEffect
         val activeId = playlistState.playlist?.id
         // No playlist yet: leave the request pending and retry when one lands.
         if (activeId == null && settingsDeepLinkPageNeedsPlaylist(page)) return@LaunchedEffect

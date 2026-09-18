@@ -402,11 +402,17 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // OUR scheme wins. A warm aeriotv:// link must never be swallowed by
+        // Cast's MediaManager: when it claimed the intent the app simply did
+        // nothing and a force-stop was the only way to make a deep link work
+        // again. Cast load intents never carry the aeriotv scheme.
+        val isAerioLink = intent.data?.scheme.equals("aeriotv", ignoreCase = true) ||
+            intent.data?.scheme.equals("aerio", ignoreCase = true)
         // Cast Connect (GH #33): a Cast LAUNCH arriving while the app is already
         // up lands here (singleTop). Let MediaManager consume it first; if it was
         // a cast load the receiver's load callback fires and drives playback via
         // the loadRequests collector, so we skip deep-link parsing for it.
-        if (castReceiver.handleIntent(intent)) return
+        if (!isAerioLink && castReceiver.handleIntent(intent)) return
         // singleTop means a second LAUNCH/aeriotv:// intent arrives here
         // instead of recreating the activity. Capture the URI for the
         // Compose tree.

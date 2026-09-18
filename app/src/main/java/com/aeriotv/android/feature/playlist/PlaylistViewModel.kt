@@ -291,12 +291,24 @@ class PlaylistViewModel @Inject constructor(
      * it with [consumeSettingsPage]. It also survives the wait for the active
      * playlist that the playlist-detail / edit-playlist pages need.
      */
-    private val _settingsPageRequest = MutableStateFlow<String?>(null)
-    val settingsPageRequest: StateFlow<String?> = _settingsPageRequest.asStateFlow()
+    private val _settingsPageRequest = MutableStateFlow<SettingsPageRequest?>(null)
+    val settingsPageRequest: StateFlow<SettingsPageRequest?> = _settingsPageRequest.asStateFlow()
+
+    /**
+     * One request, carrying a [seq] so two requests for the SAME page are two
+     * distinct values. A StateFlow conflates equal values, so a bare page
+     * string meant a second `aeriotv://settings/livetv` (or any link arriving
+     * while that page was already open) emitted nothing and the warm app never
+     * navigated - the bug that made a force-stop the only way to re-link.
+     */
+    data class SettingsPageRequest(val page: String, val seq: Long)
+
+    private var settingsPageSeq = 0L
 
     /** Open Settings on [page] (screenshot deep link). */
     fun requestSettingsPage(page: String) {
-        _settingsPageRequest.value = page
+        settingsPageSeq += 1
+        _settingsPageRequest.value = SettingsPageRequest(page, settingsPageSeq)
     }
 
     /** Clear the pending settings deep link once it has been applied. */
