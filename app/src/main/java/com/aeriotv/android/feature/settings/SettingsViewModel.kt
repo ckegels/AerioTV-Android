@@ -189,9 +189,18 @@ class SettingsViewModel @Inject constructor(
     private val activePlaylistId: StateFlow<String?> = playlistRepository.observeActiveId()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    // The Default Group picker (options, token and setter) moved to Live TV's
-    // Manage Groups sheet (Logan 2026-09-17): PlaylistViewModel owns the same
-    // per-playlist preference now, so nothing reads it from here.
+    // The Default Group PICKER (options and setter) moved to Live TV's Manage
+    // Groups sheet (Logan 2026-09-17); PlaylistViewModel owns the write. The
+    // token is still exposed read-only for surfaces that have SettingsViewModel
+    // but no PlaylistViewModel, such as the player's channel-list overlay,
+    // which marks the default group with a pin (Apple ChannelListView.swift).
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val defaultGroupToken: StateFlow<String> = activePlaylistId
+        .flatMapLatest { id ->
+            if (id.isNullOrBlank()) kotlinx.coroutines.flow.flowOf("")
+            else prefs.defaultGroupToken(id)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /**
      * Whether the synthetic "Recently Watched" group is shown, per playlist
@@ -204,6 +213,26 @@ class SettingsViewModel @Inject constructor(
             else prefs.recentGroupVisible(id)
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * Set (or clear, with the same token again) the group Live TV opens on.
+     * Mirrors PlaylistViewModel.setDefaultGroup exactly, including the
+     * Recently Watched visibility side effect, for surfaces that hold a
+     * SettingsViewModel but no PlaylistViewModel (the player's channel-list
+     * overlay, where a long press on a group row sets the default).
+     */
+    fun setDefaultGroupToken(token: String) {
+        viewModelScope.launch {
+            val id = activePlaylistId.value
+            if (id.isNullOrBlank()) return@launch
+            val current = prefs.defaultGroupTokenOnce(id)
+            val next = if (current == token) "" else token
+            prefs.setDefaultGroupToken(id, next)
+            if (next == com.aeriotv.android.feature.playlist.PlaylistViewModel.RECENT_GROUP) {
+                prefs.setRecentGroupVisible(id, true)
+            }
+        }
+    }
 
     fun setRecentGroupVisible(visible: Boolean) {
         val id = activePlaylistId.value

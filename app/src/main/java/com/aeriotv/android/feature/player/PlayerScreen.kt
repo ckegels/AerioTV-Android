@@ -757,6 +757,7 @@ fun PlayerScreen(
     // Same visible-group derivation as the guide pills (source order ->
     // Manage Groups sort -> hidden filter), so both surfaces always agree.
     val hiddenGroups by settingsVm.hiddenGroups.collectAsStateWithLifecycle(initialValue = emptySet())
+    val defaultGroupToken by settingsVm.defaultGroupToken.collectAsStateWithLifecycle(initialValue = "")
     val groupSortModeRaw by settingsVm.groupSortMode.collectAsStateWithLifecycle(initialValue = "Default")
     val groupOrderPref by settingsVm.groupOrder.collectAsStateWithLifecycle(initialValue = emptyList())
     val overlayGroups = remember(channels, hiddenGroups, groupSortModeRaw, groupOrderPref) {
@@ -1751,6 +1752,8 @@ fun PlayerScreen(
         if (channelListVisible) {
             ChannelListOverlaySection(
                 initialGroup = initialGroup,
+                defaultGroupToken = defaultGroupToken,
+                onSetDefaultGroup = settingsVm::setDefaultGroupToken,
                 overlayGroups = overlayGroups,
                 hiddenGroups = hiddenGroups,
                 channels = channels,
@@ -2069,6 +2072,8 @@ fun PlayerScreen(
 @Composable
 private fun ChannelListOverlaySection(
     initialGroup: String,
+    defaultGroupToken: String,
+    onSetDefaultGroup: (String) -> Unit,
     overlayGroups: List<String>,
     hiddenGroups: Set<String>,
     channels: List<M3UChannel>,
@@ -2089,6 +2094,8 @@ private fun ChannelListOverlaySection(
     ChannelListOverlay(
         groups = overlayGroups,
         activeGroup = active,
+        defaultToken = defaultGroupToken,
+        onSetDefault = onSetDefaultGroup,
         channelsFor = { token ->
             if (token == com.aeriotv.android.feature.playlist.PlaylistViewModel.ALL_GROUPS) {
                 channels.filter { it.groupTitle !in hiddenGroups }

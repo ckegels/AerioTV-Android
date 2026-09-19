@@ -17,14 +17,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,25 +44,42 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.SourceType
+import com.aeriotv.android.core.network.dispatcharrDefaultUserAgent
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.ui.settings.SettingsActionRow
+import com.aeriotv.android.ui.settings.SettingsPickerOption
+import com.aeriotv.android.ui.settings.SettingsPickerRow
+import com.aeriotv.android.ui.settings.SettingsSection
+import com.aeriotv.android.ui.settings.SettingsSubPageHost
 import com.aeriotv.android.ui.settings.SettingsTextField
+import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsHeaderTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
-import com.aeriotv.android.ui.settings.dpadFocusWash
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
+import com.aeriotv.android.feature.onboarding.SettingUpScreen
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
-import com.aeriotv.android.ui.tv.dpadFocusEscape
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
+import kotlinx.coroutines.launch
 
 /**
- * Edit Playlist sub-screen. Mirrors iOS Edit Playlist modal: Cancel header
- * left, "Edit Playlist" title, Save header right. Three sections - Connection,
- * Authentication (with segmented control for Dispatcharr User+Pass vs API Key),
- * EPG Source (M3U only). Save calls [PlaylistViewModel.saveEdits] which reuses
- * the bootstrap load path with `existingId` so the row's UUID stays stable.
+ * Edit Playlist sub-screen. Mirrors Apple's Edit Playlist form field for field
+ * (Features/Settings/EditServerSheet.swift): Cancel header left, "Edit
+ * Playlist" title, Save header right on touch, a Save row at the end of the
+ * form on TV.
+ *
+ * Phase 3 (Logan 2026-09-18): every field and cell is a SHARED Settings
+ * component now, so the form and the rest of Settings are one surface -
+ * [SettingsSection] cards, [SettingsTextField] fields (accent 2dp focus, never
+ * white), [SettingsPickerRow] for Guide Days and Channel Profile (a pushed
+ * sub-page on touch, inline options on TV) and a [SettingsToggleRow] for the On
+ * Demand opt-in. Section order follows Apple's: Connection, Authentication,
+ * EPG Source, Local Network, User-Agent, On Demand, Guide Days, Channel
+ * Profile.
+ *
+ * Save calls [PlaylistViewModel.saveEdits] which reuses the bootstrap load path
+ * with `existingId` so the row's UUID stays stable.
  *
  * Source type is NOT editable here - changing it would invalidate the auth
  * fields shape. iOS gates that behind a separate "Change Source Type" flow
@@ -87,6 +105,9 @@ fun EditPlaylistScreen(
     var apiKey by remember(playlist?.id) { mutableStateOf(playlist?.apiKey.orEmpty()) }
     var username by remember(playlist?.id) { mutableStateOf(playlist?.username.orEmpty()) }
     var password by remember(playlist?.id) { mutableStateOf(playlist?.password.orEmpty()) }
+    // Per-playlist Dispatcharr User-Agent (Apple `customUserAgent`). Blank =
+    // the app default; the field's placeholder and helper both show it.
+    var userAgent by remember(playlist?.id) { mutableStateOf(playlist?.customUserAgent.orEmpty()) }
     // Per-playlist On Demand opt-in (iOS ServerConnection.vodEnabled). Default
     // true so existing rows that pre-date the column still behave as before;
     // re-seeds when the user switches between playlists in this screen.
@@ -113,6 +134,13 @@ fun EditPlaylistScreen(
     var selectedProfileId by remember(playlist?.id) {
         mutableStateOf(playlist?.dispatcharrProfileId)
     }
+    // Refresh Session (Apple parity): re-mints the Direct Connect JWT pair and
+    // re-reads the account's api_key. State lives here, not in the ViewModel:
+    // the message is a transient acknowledgement for this screen only.
+    var refreshingSession by remember(playlist?.id) { mutableStateOf(false) }
+    var sessionMessage by remember(playlist?.id) { mutableStateOf<String?>(null) }
+    var sessionFailed by remember(playlist?.id) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     // Pull the server's channel profiles once the Dispatcharr row is loaded so
     // the picker can list them. Re-runs if the user navigates to a different
     // playlist while this screen is alive.
@@ -120,9 +148,47 @@ fun EditPlaylistScreen(
         if (isDispatcharr) viewModel.loadDispatcharrProfiles()
     }
 
-    val canSave = url.trim().isNotEmpty() && name.trim().isNotEmpty() && !state.isLoading
+    // Save is now AWAITED (Logan 2026-09-18: changed credentials, saved, the
+    // old username was still on the detail page). The repository restores the
+    // previous row when the login or the channel fetch that follows a
+    // credential change fails, and this screen used to pop on the same frame
+    // Save was tapped, so that rollback was invisible and read as a lost edit.
+    var saving by remember(playlist?.id) { mutableStateOf(false) }
+    var saveError by remember(playlist?.id) { mutableStateOf<String?>(null) }
+    // Logan 2026-09-18: a successful save takes several seconds and the top-bar
+    // "Saving..." label was far too subtle for it. Rather than invent another
+    // progress affordance, the save reuses the staged loading screen the add
+    // flow already shows ("Setting Up"), titled "Saving Changes" and driven by
+    // the REAL repository stages. It covers the form, so nothing can be edited
+    // mid-save and there is no Back affordance; on success the screen pops as
+    // before, on failure it gets out of the way and the form shows Save Failed
+    // with the typed values intact.
+    val saveStage by viewModel.saveStage.collectAsStateWithLifecycle()
+    val savePlan by viewModel.savePlan.collectAsStateWithLifecycle()
+    // ...and ONLY when this save really has a network stage. A rename, a Guide
+    // Days change or an On Demand toggle writes one row and pops, so the staged
+    // screen would be a lie and a flash (Logan 2026-09-18).
+    val saveHasProgress by viewModel.saveHasProgress.collectAsStateWithLifecycle()
+    // Logan 2026-09-18: a 401 from the credential change left the form open
+    // with the reason rendered off screen (top of the list on phone, the whole
+    // form away from the TV Save row), so Save read as a dead button. The
+    // message now sits next to whichever Save the platform uses, the list
+    // scrolls it into view, the IME is dismissed so it cannot be covered, and
+    // it clears the moment the user touches a field or re-taps Save.
+    val clearSaveError = { if (saveError != null) saveError = null }
+    val canSave = url.trim().isNotEmpty() && name.trim().isNotEmpty() &&
+        !state.isLoading && !saving
     val isTv = rememberIsTvDevice()
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val performSave = {
+        saving = true
+        saveError = null
+        // Off with the IME before the result lands: a floating keyboard covers
+        // the bottom half of the form on phones and most of it on TV.
+        keyboard?.hide()
+        if (!isTv) focusManager.clearFocus()
         viewModel.saveEdits(
             name = name,
             url = url,
@@ -168,10 +234,36 @@ fun EditPlaylistScreen(
             dispatcharrProfileId = if (isDispatcharr) selectedProfileId else null,
             vodEnabled = vodEnabled,
             epgRetentionDays = epgRetentionDays,
+            // Dispatcharr-only field; other source types never send one, so the
+            // stored value is left alone rather than blanked.
+            customUserAgent = if (isDispatcharr) userAgent.trim() else null,
+            onResult = { failure ->
+                saving = false
+                saveError = failure
+                if (failure == null) onBack()
+            },
         )
-        onBack()
     }
 
+    // Back is ignored for the few seconds a save is in flight, on phone system
+    // back and on the TV remote alike: the staged screen is not a page to leave,
+    // and a failure re-enables the form by itself, so nobody gets trapped.
+    androidx.activity.compose.BackHandler(enabled = saving && saveHasProgress) {}
+    if (saving && saveHasProgress) {
+        SettingUpScreen(
+            title = "Saving Changes",
+            // Before the first reported stage, show the plan's first step as the
+            // one in flight. Never a hardcoded "Verifying credentials...": this
+            // save may not verify anything.
+            saveStage = saveStage ?: savePlan.stages.firstOrNull()
+                ?: com.aeriotv.android.core.data.repository.PlaylistRepository
+                    .SaveStage.LoadingChannels,
+            savePlan = savePlan,
+        )
+        return
+    }
+
+    SettingsSubPageHost {
     TvKeyboardOnOkHost {
     Column(modifier = Modifier.fillMaxSize()) {
         CenterAlignedTopAppBar(
@@ -231,25 +323,49 @@ fun EditPlaylistScreen(
         androidx.compose.runtime.CompositionLocalProvider(
             androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringIntoViewSpec,
         ) {
+        // Bring the failure into view. Phone: Save is the top-bar action, so
+        // the message sits at the top of the form and the list scrolls there.
+        // TV: Save is the last row, the message is the row above it, and focus
+        // stays on Save so the user reads the reason and can press again.
+        LaunchedEffect(saveError) {
+            if (saveError == null) return@LaunchedEffect
+            if (isTv) {
+                val target = (listState.layoutInfo.totalItemsCount - 2).coerceAtLeast(0)
+                runCatching { listState.animateScrollToItem(target) }
+            } else {
+                runCatching { listState.animateScrollToItem(0) }
+            }
+        }
         LazyColumn(
+            state = listState,
             modifier = Modifier.settingsFormWidth(),
-            // 104dp bottom clears the MainScaffold NavigationBar so the
-            // Save button at the bottom of the form stays tappable.
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
                 top = 16.dp,
                 bottom = LocalTabBarBottomInset.current,
             ),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(
+                com.aeriotv.android.ui.settings.SettingsCardMetrics.sectionSpacing,
+            ),
         ) {
-            item {
-                Section(header = "Connection") {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            // A failed save keeps the user on the form with their typed values
+            // intact and says why, instead of popping back to a detail page
+            // still showing the previous credentials. On TV the same card is
+            // emitted just above the Save Changes row instead (see below).
+            if (!isTv) {
+                saveError?.let { message ->
+                    item("save-error") { SaveFailedCard(message) }
+                }
+            }
+
+            item("connection") {
+                SettingsSection(header = "Connection") {
+                    FieldGroup {
                         SettingsTextField(
                             label = "Name",
                             value = name,
-                            onValueChange = { name = it },
+                            onValueChange = { name = it; clearSaveError() },
                             keyboardOptions = aerioTextFieldKeyboardOptions(
                                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
                                 imeAction = androidx.compose.ui.text.input.ImeAction.Next,
@@ -257,14 +373,11 @@ fun EditPlaylistScreen(
                         )
                         Spacer(Modifier.height(12.dp))
                         SettingsTextField(
-                            label = when (sourceType) {
-                                SourceType.M3uUrl -> "Playlist URL"
-                                SourceType.DispatcharrApiKey,
-                                SourceType.DispatcharrUserPass -> "Server URL"
-                                SourceType.XtreamCodes -> "Server URL"
-                            },
+                            // Apple labels every source type's address field
+                            // "URL"; the type it belongs to is in the helper.
+                            label = "URL",
                             value = url,
-                            onValueChange = { url = it },
+                            onValueChange = { url = it; clearSaveError() },
                             helper = "Type: ${sourceType.displayName}. To switch types, use Change Playlist.",
                             keyboardOptions = aerioTextFieldKeyboardOptions(
                                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
@@ -285,21 +398,28 @@ fun EditPlaylistScreen(
                 // field and no way back.
                 SourceType.DispatcharrApiKey,
                 SourceType.DispatcharrUserPass,
-                -> item {
-                    Section(header = "Authentication") {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                -> item("auth") {
+                    SettingsSection(header = "Authentication") {
+                        FieldGroup {
                             SegmentedToggle(
                                 left = "Username & Password",
                                 right = "API Key",
                                 selected = dispatcharrMode,
-                                onSelect = { dispatcharrMode = it },
+                                onSelect = {
+                                    dispatcharrMode = it
+                                    clearSaveError()
+                                    // A stale "Session refreshed" line must not
+                                    // linger on the other mode (Apple does the
+                                    // same on its picker).
+                                    sessionMessage = null
+                                },
                             )
                             Spacer(Modifier.height(10.dp))
                             if (dispatcharrMode == DispatcharrMode.UsernamePassword) {
                                 SettingsTextField(
                                     label = "Username",
                                     value = username,
-                                    onValueChange = { username = it },
+                                    onValueChange = { username = it; clearSaveError() },
                                     keyboardOptions = aerioTextFieldKeyboardOptions(
                                         imeAction = androidx.compose.ui.text.input.ImeAction.Next,
                                     ),
@@ -308,7 +428,8 @@ fun EditPlaylistScreen(
                                 SettingsTextField(
                                     label = "Password",
                                     value = password,
-                                    onValueChange = { password = it },
+                                    onValueChange = { password = it; clearSaveError() },
+                                    helper = "Use your Dispatcharr Dashboard password (System > Users > Account tab), not your Dispatcharr XC password.",
                                     secure = true,
                                     secureLabel = "password",
                                     keyboardOptions = aerioTextFieldKeyboardOptions(
@@ -319,7 +440,7 @@ fun EditPlaylistScreen(
                                 SettingsTextField(
                                     label = "API Key",
                                     value = apiKey,
-                                    onValueChange = { apiKey = it },
+                                    onValueChange = { apiKey = it; clearSaveError() },
                                     secure = true,
                                     secureLabel = "API key",
                                     keyboardOptions = aerioTextFieldKeyboardOptions(
@@ -328,15 +449,40 @@ fun EditPlaylistScreen(
                                 )
                             }
                         }
+                        // Refresh Session: Username & Password mode only, as on
+                        // Apple. Re-runs the /api/accounts/token/ login and
+                        // re-reads /api/accounts/users/me/, so an admin-rotated
+                        // api_key is picked up without a re-save.
+                        if (dispatcharrMode == DispatcharrMode.UsernamePassword) {
+                            SettingsActionRow(
+                                label = if (refreshingSession) "Refreshing..." else "Refresh Session",
+                                leadingIcon = Icons.Filled.Refresh,
+                                enabled = username.isNotBlank() && password.isNotBlank(),
+                                running = refreshingSession,
+                                subtitle = "Use if streaming or logos suddenly fail. Re-fetches the API key from your Dispatcharr account.",
+                                statusLine = sessionMessage,
+                                statusIsError = sessionFailed,
+                                onClick = {
+                                    refreshingSession = true
+                                    sessionMessage = null
+                                    scope.launch {
+                                        val (ok, message) = viewModel.refreshDispatcharrSession()
+                                        sessionFailed = !ok
+                                        sessionMessage = message
+                                        refreshingSession = false
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
-                SourceType.XtreamCodes -> item {
-                    Section(header = "Authentication") {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                SourceType.XtreamCodes -> item("auth") {
+                    SettingsSection(header = "Authentication") {
+                        FieldGroup {
                             SettingsTextField(
                                 label = "Username",
                                 value = username,
-                                onValueChange = { username = it },
+                                onValueChange = { username = it; clearSaveError() },
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     imeAction = androidx.compose.ui.text.input.ImeAction.Next,
                                 ),
@@ -345,7 +491,7 @@ fun EditPlaylistScreen(
                             SettingsTextField(
                                 label = "Password",
                                 value = password,
-                                onValueChange = { password = it },
+                                onValueChange = { password = it; clearSaveError() },
                                 secure = true,
                                 secureLabel = "password",
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
@@ -358,168 +504,22 @@ fun EditPlaylistScreen(
                 SourceType.M3uUrl -> { /* no auth */ }
             }
 
-            // Local Network gets its own section (unified settings layout,
-            // 2026-07): the same grouping iOS/tvOS use, with the footer
-            // explaining the automatic LAN/WAN switch.
-            item {
-                Section(
-                    header = "Local Network",
-                    footer = "Used automatically whenever the server answers at this address " +
-                        "(checked at launch, on network changes, and after edits). Leave blank " +
-                        "to always use the server URL.",
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        SettingsTextField(
-                            label = "Local URL (optional)",
-                            value = lanUrl,
-                            onValueChange = { lanUrl = it },
-                            placeholder = "http://192.168.1.10:9191",
-                            keyboardOptions = aerioTextFieldKeyboardOptions(
-                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
-                                imeAction = androidx.compose.ui.text.input.ImeAction.Next,
-                            ),
-                        )
-                    }
-                }
-            }
-
-
-            // Per-playlist On Demand opt-in (iOS Edit Server "Fetch VOD from
-            // this playlist" toggle). Surfaces only for source types that
-            // actually carry VOD; M3U is live-only so the toggle would be
-            // pointless. Mirrors the same row used at Add Playlist
-            // (ConfigureSourceScreen.VodEnabledRow).
-            if (sourceType.supportsVOD) {
-                item {
-                    Section(
-                        header = "On Demand",
-                        footer = "When off, this playlist's movies and TV shows aren't loaded into On Demand. Useful if you only want Live TV from this server, or if you have a second playlist that already provides On Demand.",
-                    ) {
-                        // Whole row is the focus/toggle target so D-pad focus is
-                        // visible; the Switch is display-only.
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .dpadFocusWash()
-                                .toggleable(
-                                    value = vodEnabled,
-                                    onValueChange = { vodEnabled = it },
-                                )
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = "Fetch On Demand from this playlist",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Spacer(Modifier.size(12.dp))
-                            androidx.compose.material3.Switch(
-                                checked = vodEnabled,
-                                onCheckedChange = null,
-                                colors = androidx.compose.material3.SwitchDefaults.colors(
-                                    checkedThumbColor = MaterialTheme.colorScheme.primary,
-                                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                ),
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Catch-up EPG history retention (task #135). Applies to every
-            // source type: even without catch-up, retained history keeps the
-            // guide browsable into the past.
-            item {
-                Section(
-                    header = "Guide Days",
-                    footer = "How many days of guide data to load, back and ahead. " +
-                        "Dispatcharr only; other sources show what their guide carries.",
-                ) {
-                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                        // 0 = All Available (Logan 2026-09-11); a stored 30
-                        // from the old option reads back as All Available.
-                        listOf(1, 3, 7, 14, 0).forEach { days ->
-                            ProfileRow(
-                                label = when (days) {
-                                    0 -> "All Available"
-                                    1 -> "1 Day"
-                                    else -> "$days Days"
-                                },
-                                detail = if (days == 7) "Default" else null,
-                                selected = sanitizeGuideDays(epgRetentionDays) == days,
-                                onClick = { epgRetentionDays = days },
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (isDispatcharr) {
-                item {
-                    Section(
-                        header = "Channel Profile",
-                        footer = "Limit this playlist to the channels in a Dispatcharr profile. " +
-                            "\"All Channels\" shows everything on the server.",
-                    ) {
-                        Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                            if (state.profilesLoading && state.availableProfiles.isEmpty()) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp,
-                                    )
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(
-                                        "Loading profiles...",
-                                        style = MaterialTheme.typography.bodyMedium.subtext(),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            } else {
-                                ProfileRow(
-                                    label = "All Channels",
-                                    detail = null,
-                                    selected = selectedProfileId == null,
-                                    onClick = { selectedProfileId = null },
-                                )
-                                state.availableProfiles.forEach { profile ->
-                                    ProfileRow(
-                                        label = profile.name,
-                                        detail = "${profile.channelCount} channels",
-                                        selected = selectedProfileId == profile.id,
-                                        onClick = { selectedProfileId = profile.id },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
+            // EPG Source. Dispatcharr owns its guide through the REST API and
+            // has no XMLTV override on Android (see the report), so the section
+            // is M3U / Xtream Codes only.
             if (sourceType == SourceType.M3uUrl || sourceType == SourceType.XtreamCodes) {
-                item {
+                item("epg") {
                     val footerText = if (sourceType == SourceType.M3uUrl) {
                         "Optional XMLTV URL. Leave empty if your M3U doesn't ship with a separate EPG."
                     } else {
                         "Optional override. When set, AerioTV pulls the guide from this XMLTV URL instead of the server's xmltv.php. Useful when an external provider supplies richer category tags."
                     }
-                    Section(
-                        header = "EPG Source",
-                        footer = footerText,
-                    ) {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    SettingsSection(header = "EPG Source", footer = footerText) {
+                        FieldGroup {
                             SettingsTextField(
                                 label = "XMLTV URL",
                                 value = epgUrl,
-                                onValueChange = { epgUrl = it },
+                                onValueChange = { epgUrl = it; clearSaveError() },
                                 placeholder = "https://example.com/xmltv.xml",
                                 keyboardOptions = aerioTextFieldKeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
@@ -530,16 +530,175 @@ fun EditPlaylistScreen(
                 }
             }
 
+            // Local Network gets its own section (unified settings layout,
+            // 2026-07): the same grouping iOS/tvOS use, with the footer
+            // explaining the automatic LAN/WAN switch.
+            item("lan") {
+                SettingsSection(
+                    header = "Local Network",
+                    footer = "Used automatically whenever the server answers at this address " +
+                        "(checked at launch, on network changes, and after edits). Leave blank " +
+                        "to always use the server URL.",
+                ) {
+                    FieldGroup {
+                        SettingsTextField(
+                            label = "Local URL (optional)",
+                            value = lanUrl,
+                            onValueChange = { lanUrl = it; clearSaveError() },
+                            placeholder = "http://192.168.1.10:9191",
+                            keyboardOptions = aerioTextFieldKeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            // User-Agent (Dispatcharr only, Apple parity). Identification, not
+            // behavior: Dispatcharr's admin Stats panel attributes traffic by
+            // User-Agent, so a household running several boxes can tell them
+            // apart. Blank = the app default.
+            if (isDispatcharr) {
+                item("user-agent") {
+                    SettingsSection(header = "User-Agent") {
+                        FieldGroup {
+                            SettingsTextField(
+                                label = "User-Agent",
+                                value = userAgent,
+                                onValueChange = { userAgent = it; clearSaveError() },
+                                placeholder = dispatcharrDefaultUserAgent,
+                                helper = "Shown in Dispatcharr's admin Stats panel to identify this device. Leave blank for default: $dispatcharrDefaultUserAgent",
+                                keyboardOptions = aerioTextFieldKeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
+                                ),
+                            )
+                        }
+                        SettingsActionRow(
+                            label = "Reset to Default",
+                            leadingIcon = Icons.Filled.Undo,
+                            enabled = userAgent.isNotBlank(),
+                            onClick = { userAgent = ""; clearSaveError() },
+                        )
+                    }
+                }
+            }
+
+            // Per-playlist On Demand opt-in (iOS Edit Server "Fetch On Demand
+            // from this playlist" toggle). Surfaces only for source types that
+            // actually carry VOD; M3U is live-only so the toggle would be
+            // pointless.
+            if (sourceType.supportsVOD) {
+                item("on-demand") {
+                    SettingsSection(
+                        header = "On Demand",
+                        footer = "When off, this playlist's movies and TV shows aren't loaded into On Demand. Useful if you only want Live TV from this server, or if you have a second playlist that already provides On Demand.",
+                    ) {
+                        SettingsToggleRow(
+                            title = "Fetch On Demand from This Playlist",
+                            checked = vodEnabled,
+                            onCheckedChange = { vodEnabled = it; clearSaveError() },
+                        )
+                    }
+                }
+            }
+
+            // Catch-up EPG history retention (task #135). Applies to every
+            // source type: even without catch-up, retained history keeps the
+            // guide browsable into the past.
+            item("guide-days") {
+                SettingsSection(
+                    header = "Guide Days",
+                    footer = "How many days of guide data to load, back and ahead. " +
+                        "Dispatcharr only; other sources show what their guide carries.",
+                ) {
+                    SettingsPickerRow(
+                        title = "Guide Days",
+                        // 0 = All Available (Logan 2026-09-11); a stored 30
+                        // from the old option reads back as All Available.
+                        options = listOf(1, 3, 7, 14, 0).map { days ->
+                            SettingsPickerOption(
+                                value = days,
+                                label = when (days) {
+                                    0 -> "All Available"
+                                    1 -> "1 Day"
+                                    7 -> "7 Days (Default)"
+                                    else -> "$days Days"
+                                },
+                            )
+                        },
+                        selected = sanitizeGuideDays(epgRetentionDays),
+                        onSelect = { epgRetentionDays = it; clearSaveError() },
+                    )
+                }
+            }
+
+            if (isDispatcharr) {
+                item("channel-profile") {
+                    SettingsSection(
+                        header = "Channel Profile",
+                        footer = "Limit this playlist to the channels in a Dispatcharr profile. " +
+                            "\"All Channels\" shows everything on the server.",
+                    ) {
+                        if (state.profilesLoading && state.availableProfiles.isEmpty()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "Loading profiles...",
+                                    style = MaterialTheme.typography.bodyMedium.subtext(),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        } else {
+                            SettingsPickerRow(
+                                title = "Channel Profile",
+                                options = buildList {
+                                    add(SettingsPickerOption<Int?>(null, "All Channels"))
+                                    state.availableProfiles.forEach { profile ->
+                                        add(
+                                            SettingsPickerOption(
+                                                value = profile.id,
+                                                label = profile.name,
+                                                subtitle = "${profile.channelCount} channels",
+                                            ),
+                                        )
+                                    }
+                                },
+                                selected = selectedProfileId,
+                                onSelect = { selectedProfileId = it; clearSaveError() },
+                            )
+                        }
+                    }
+                }
+            }
+
             // TV: Save lives at the end of the form, where the D-pad lands
             // after the last field. Phones keep the iOS-style header Save.
             if (isTv) {
-                item {
+                saveError?.let { message ->
+                    item("save-error") { SaveFailedCard(message) }
+                }
+                item("save") {
                     SettingsActionRow(
-                        label = "Save Changes",
+                        label = if (saving) "Saving..." else "Save Changes",
                         leadingIcon = Icons.Filled.Check,
                         onClick = performSave,
                         enabled = canSave,
-                        subtitle = if (canSave) null else "Name and Server URL are required",
+                        running = saving,
+                        subtitle = when {
+                            saving -> "Checking the connection with the new details"
+                            canSave -> null
+                            else -> "Name and URL are required"
+                        },
                     )
                 }
             }
@@ -548,67 +707,43 @@ fun EditPlaylistScreen(
         }
     }
     }
+    }
 }
 
 private enum class DispatcharrMode { UsernamePassword, ApiKey }
 
 /**
- * One selectable channel-profile row in the Edit Playlist > Channel Profile
- * picker. Shows the profile name (+ optional channel count) with a trailing
- * checkmark when active, matching the app's other single-select lists (sort
- * menu, group filter).
+ * The reason a save failed, in the standard Settings card. Only the section
+ * header carries colorScheme.error; the message itself is normal body text on
+ * the usual card fill, per the Settings visual-restraint rule (no bright fills,
+ * no outsized borders).
  */
 @Composable
-private fun ProfileRow(
-    label: String,
-    detail: String?,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .dpadFocusWash()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun SaveFailedCard(message: String) {
+    SettingsSection(
+        header = "Save Failed",
+        headerColor = MaterialTheme.colorScheme.error,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (detail != null) {
-                Text(
-                    text = detail,
-                    style = MaterialTheme.typography.bodySmall.subtext(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (selected) {
-            Icon(
-                imageVector = Icons.Filled.Check,
-                contentDescription = "Selected",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-        }
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium.subtext(),
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+        )
     }
 }
 
+/**
+ * The inset well a group of [SettingsTextField]s sits in inside a section card.
+ * One place, so every field in Settings keeps the same gutter and the same
+ * height whichever screen it is on.
+ */
 @Composable
-private fun Section(
-    header: String,
-    footer: String? = null,
-    content: @Composable () -> Unit,
-) {
-    Column {
-        com.aeriotv.android.ui.settings.SettingsSectionHeader(header)
-        com.aeriotv.android.ui.settings.SettingsCard { content() }
-        if (footer != null) com.aeriotv.android.ui.settings.SettingsSectionFooter(footer)
-    }
+private fun FieldGroup(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        content = content,
+    )
 }
 
 @Composable

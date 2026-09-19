@@ -1033,6 +1033,8 @@ class DvrViewModel @Inject constructor(
                 title = recording.title,
                 channelName = recording.title,
                 apiKey = key,
+                userAgent = com.aeriotv.android.core.network.PlaybackHeaders
+                    .customUserAgent(playlist).orEmpty(),
             )
         }
     }

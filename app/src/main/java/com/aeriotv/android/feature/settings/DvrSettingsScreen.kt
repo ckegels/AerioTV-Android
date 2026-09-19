@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.feature.dvr.DvrViewModel
+import com.aeriotv.android.ui.settings.SettingsSlider
 import com.aeriotv.android.ui.settings.SettingsPickerOption
 import com.aeriotv.android.ui.settings.SettingsPickerRow
 import com.aeriotv.android.ui.settings.settingsFormWidth
@@ -105,7 +106,7 @@ fun DvrSettingsScreen(
 
     com.aeriotv.android.ui.settings.SettingsSubPageHost {
     Column(modifier = Modifier.fillMaxSize()) {
-        SettingsDetailTopBar(title = "DVR Settings", onBack = onBack)
+        SettingsDetailTopBar(title = "DVR", onBack = onBack)
 
         androidx.compose.foundation.layout.Box(
             modifier = Modifier.fillMaxSize(),
@@ -159,14 +160,14 @@ fun DvrSettingsScreen(
                     // Touch keeps the pushed picker page.
                     if (rememberIsTvDevice()) {
                         SettingsIntStepperRow(
-                            title = "Start Early",
+                            title = "Start Early (Pre-Roll)",
                             options = ROLL_OPTIONS,
                             value = preRoll,
                             onValueChange = settingsVm::setDvrDefaultPreRollMins,
                             format = ::formatRoll,
                         )
                         SettingsIntStepperRow(
-                            title = "End Late",
+                            title = "End Late (Post-Roll)",
                             options = ROLL_OPTIONS,
                             value = postRoll,
                             onValueChange = settingsVm::setDvrDefaultPostRollMins,
@@ -175,14 +176,14 @@ fun DvrSettingsScreen(
                     } else {
                         val rolls = ROLL_OPTIONS.map { SettingsPickerOption(it, formatRoll(it)) }
                         SettingsPickerRow(
-                            title = "Start Early",
+                            title = "Start Early (Pre-Roll)",
                             inlineTitle = true,
                             options = rolls,
                             selected = preRoll,
                             onSelect = settingsVm::setDvrDefaultPreRollMins,
                         )
                         SettingsPickerRow(
-                            title = "End Late",
+                            title = "End Late (Post-Roll)",
                             inlineTitle = true,
                             options = rolls,
                             selected = postRoll,
@@ -213,20 +214,15 @@ fun DvrSettingsScreen(
                                 fontWeight = FontWeight.SemiBold,
                             )
                         }
-                        // 1 GB - 100 GB range, step 1 GB (1024 MB).
-                        Slider(
+                        // 1 GB - 100 GB range, step 1 GB (1024 MB). The shared
+                        // Settings slider owns the track, the thumb and the
+                        // D-pad escape (v0.1.6 report: UP/DOWN must move focus
+                        // off the slider on Android TV).
+                        SettingsSlider(
                             value = capMB.toFloat(),
                             onValueChange = { settingsVm.setDvrMaxLocalStorageMB(it.toInt()) },
                             valueRange = 1024f..102400f,
                             steps = 99,
-                            // D-pad escape (v0.1.6 report): UP/DOWN move focus
-                            // off the slider on Android TV instead of trapping
-                            // the user on it.
-                            modifier = Modifier.dpadFocusEscape(),
-                            colors = SliderDefaults.colors(
-                                thumbColor = MaterialTheme.colorScheme.primary,
-                                activeTrackColor = MaterialTheme.colorScheme.primary,
-                            ),
                         )
                         Spacer(Modifier.height(10.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -329,7 +325,7 @@ fun DvrSettingsScreen(
                     footer = "Holds a CPU wake lock while a local recording is downloading so Doze can't stall it. Server-side recordings are unaffected (they run on Dispatcharr). Leave on unless you're debugging battery drain.",
                 ) {
                     SettingsToggleRow(
-                        title = "Keep device awake during recording",
+                        title = "Keep Device Awake During Recording",
                         subtitle = "Recommended for long local recordings.",
                         checked = keepAwake,
                         onCheckedChange = settingsVm::setDvrKeepAwakeDuringRecording,

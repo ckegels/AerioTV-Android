@@ -99,7 +99,7 @@ fun HexPickerDialog(
                 }
                 Spacer(Modifier.height(12.dp))
                 com.aeriotv.android.ui.settings.SettingsTextField(
-                    label = "Hex color",
+                    label = "Hex Color",
                     value = input,
                     onValueChange = { raw ->
                         input = raw.removePrefix("#").uppercase().filter { it in HEX_CHARS }.take(6)

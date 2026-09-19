@@ -150,7 +150,7 @@ fun LiveTvSettingsScreen(
                             onCheckedChange = viewModel::setShowProgramSubtitles,
                         )
                         SettingsToggleRow(
-                            title = "Rounded corners in Guide view",
+                            title = "Rounded Corners in Guide View",
                             checked = roundedArtworkGuide,
                             onCheckedChange = viewModel::setRoundedArtworkGuide,
                         )
@@ -163,14 +163,14 @@ fun LiveTvSettingsScreen(
                 // source screens gated these rows before the regroup.
                 if (listViewShown) item("list-view") {
                     SettingsSection(
-                        header = "List view",
+                        header = "List View",
                         footer = "Which layout Live TV opens in. Automatic uses the List on " +
                             "phones and the Guide on TV and larger tablets. On phones you " +
                             "can still switch for the current session with the List / Guide " +
                             "button; on TV this setting is the only switch.",
                     ) {
                         SettingsToggleRow(
-                            title = "Rounded corners in List view",
+                            title = "Rounded Corners in List View",
                             checked = roundedArtwork,
                             onCheckedChange = viewModel::setRoundedArtwork,
                         )
@@ -218,13 +218,13 @@ fun LiveTvSettingsScreen(
                     if (isTv) {
                         SettingsSection(
                             header = "Group Selection",
-                            footer = "How channel groups are picked in the guide. Top pills keep the group row above the grid; the sidebar menu hides that row and opens by holding Left in the grid (unless Left (Hold) is reassigned in Remote Control). Only one is active at a time.",
+                            footer = "How channel groups are picked in the guide. Top Group Pills keep the group row above the grid; Sidebar Menu hides that row and opens by holding Left in the grid (unless Left (Hold) is reassigned in Remote Control). Only one is active at a time.",
                         ) {
                             SettingsPickerRow(
                                 title = "Group Selection",
                                 options = listOf(
-                                    SettingsPickerOption("pills", "Top group pills"),
-                                    SettingsPickerOption("sidebar", "Sidebar menu"),
+                                    SettingsPickerOption("pills", "Top Group Pills"),
+                                    SettingsPickerOption("sidebar", "Sidebar Menu"),
                                 ),
                                 selected = if (guideGroupSelector == "sidebar") "sidebar" else "pills",
                                 onSelect = viewModel::setGuideGroupSelector,
@@ -233,15 +233,17 @@ fun LiveTvSettingsScreen(
                     } else {
                         SettingsSection(
                             header = "Group Selection",
-                            footer = "How Live TV picks a channel group. Drawer opens a " +
-                                "group list from the header button; Pills puts the groups " +
-                                "in a strip across the header.",
+                            footer = "How Live TV picks a channel group. Sidebar Menu " +
+                                "opens a group list from the header button, where a long " +
+                                "press also reorders groups. Top Group Pills put the " +
+                                "groups in a strip across the header. Long press a pill " +
+                                "to set the default group.",
                         ) {
                             SettingsPickerRow(
                                 title = "Group Selection",
                                 options = listOf(
-                                    SettingsPickerOption("sidebar", "Drawer"),
-                                    SettingsPickerOption("pills", "Pills"),
+                                    SettingsPickerOption("sidebar", "Sidebar Menu"),
+                                    SettingsPickerOption("pills", "Top Group Pills"),
                                 ),
                                 selected = if (phoneGroupSelector == "pills") "pills" else "sidebar",
                                 onSelect = viewModel::setPhoneGroupSelector,
@@ -262,7 +264,7 @@ fun LiveTvSettingsScreen(
                             (if (isTv) "TVs" else "mobile devices") + ".",
                     ) {
                         SettingsToggleRow(
-                            title = "Show program badges",
+                            title = "Show Program Badges",
                             subtitle = "LIVE, NEW, and season/episode pills on the guide",
                             checked = showEpgBadges,
                             onCheckedChange = { viewModel.setShowEpgBadges(isTv, it) },
@@ -274,12 +276,12 @@ fun LiveTvSettingsScreen(
                             val badges = listOf("NEW", "REPEAT", "LIVE", "PREMIERE", "FINALE")
                             val shown = badges.count { it !in hiddenEpgBadges }
                             SettingsSubGroup(
-                                title = "Badge types",
+                                title = "Badge Types",
                                 summary = settingsCountSummary(shown, badges.size),
                             ) {
                                 badges.forEach { badge ->
                                     SettingsToggleRow(
-                                        title = "${badge.first()}${badge.drop(1).lowercase()} badge",
+                                        title = "${badge.first()}${badge.drop(1).lowercase()} Badge",
                                         checked = badge !in hiddenEpgBadges,
                                         onCheckedChange = { on ->
                                             viewModel.setBadgeHidden(badge, hidden = !on)
@@ -295,9 +297,9 @@ fun LiveTvSettingsScreen(
                 settingsCard(
                     header = "Display Scale",
                     footer = if (listViewShown) {
-                        "Independent scale for the Live TV List. 100% matches the default; 85-175% lets you trade density for readability (150%+ shows fewer, larger items - handy on a TV across the room). Changes apply live."
+                        "Independent scale for the Live TV List. 100% matches the default; 85-150% lets you trade density for readability (larger steps show fewer, bigger items - handy on a TV across the room). Changes apply live."
                     } else {
-                        "Independent scale for Live TV. 100% matches the default; 85-175% lets you trade density for readability (150%+ shows fewer, larger items - handy on a TV across the room). Changes apply live."
+                        "Independent scale for Live TV. 100% matches the default; 85-150% lets you trade density for readability (larger steps show fewer, bigger items - handy on a TV across the room). Changes apply live."
                     },
                 ) {
                     ScaleSliderRow(

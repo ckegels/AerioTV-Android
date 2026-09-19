@@ -74,6 +74,7 @@ fun TvActionMenuDialog(
     actions: List<TvMenuAction>,
     guard: TvMenuGuard,
     onDismiss: () -> Unit,
+    width: androidx.compose.ui.unit.Dp = 250.dp,
 ) {
     // Apple TV look (Logan 2026-09-02): a centred translucent card, the
     // title on top, one capsule per action with accent text, the focused
@@ -84,7 +85,7 @@ fun TvActionMenuDialog(
             shape = RoundedCornerShape(28.dp),
             color = com.aeriotv.android.ui.tv.TvChrome.dialogSurface(),
             border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-            modifier = Modifier.width(250.dp),
+            modifier = Modifier.width(width),
         ) {
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
@@ -177,9 +178,13 @@ private fun TvMenuCapsule(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             color = textColor,
-            maxLines = 1,
+            // A long action label (for example "Browse earlier programs")
+            // wraps to a second line inside the capsule instead of being
+            // clipped; short labels are unchanged.
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 16.dp),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
         )
     }
 }

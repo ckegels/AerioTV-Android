@@ -1216,7 +1216,17 @@ fun MainScaffold(
                 TabletTopTabBar(
                     tabs = tabs,
                     selected = selectedTab,
-                    onSelect = { selectedTab = it; initialTabApplied = true },
+                    // Re-tap of the tab you are on: pop that tab to its root,
+                    // or scroll it to the top if it is already there. See
+                    // TabReselect; the tab screens own the two behaviors.
+                    onSelect = {
+                        if (it == selectedTab) {
+                            TabReselect.emit(it)
+                        } else {
+                            selectedTab = it
+                            initialTabApplied = true
+                        }
+                    },
                     scale = tabBarScale,
                 )
             }
@@ -1426,7 +1436,20 @@ fun MainScaffold(
                             FloatingTabBar(
                                 tabs = tabs,
                                 selected = selectedTab,
-                                onSelect = { selectedTab = it; initialTabApplied = true },
+                                // Re-tap of the selected tab (see TabReselect):
+                                // pop to that tab's root, else scroll it to the
+                                // top. Either way the bar comes back out of its
+                                // scroll-collapsed state, so the gesture never
+                                // leaves the user looking at a hidden bar.
+                                onSelect = {
+                                    if (it == selectedTab) {
+                                        bottomBarVisible = true
+                                        TabReselect.emit(it)
+                                    } else {
+                                        selectedTab = it
+                                        initialTabApplied = true
+                                    }
+                                },
                                 modifier = Modifier
                                     .onSizeChanged { barSize = it }
                                     .graphicsLayer {
@@ -2420,11 +2443,22 @@ private fun SettingsTabContent(
         if (entering || exitingToRoot) runCatching { settingsContentFocus.requestFocus() }
         prevSubScreenKey = subScreenKey
     }
+    // Settings tab re-tap (TabReselect): pop whatever is pushed back to the
+    // Settings root first -- including a picker / sub-toggle page, which lives
+    // inside the sub-screen being popped -- and once already at the root,
+    // scroll that root list to the top. The two-pane host keeps its selection:
+    // only the pushes ABOVE the pane baseline are popped, which is what Back
+    // would have done one press at a time.
+    val settingsRootListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    OnTabReselect(AppTab.Settings) {
+        if (nav.canPop) nav.popToRoot() else settingsRootListState.animateScrollToItem(0)
+    }
     // Phase B3: one renderer for a route, used by BOTH the stacked phone layout
     // and the tablet host's detail pane, so the two can never diverge.
     val renderRoute: @Composable (SettingsRoute?) -> Unit = { r ->
     when (r) {
         null -> SettingsScreen(
+            listState = settingsRootListState,
             onSectionClick = { nav.push(SettingsRoute.Section(it)) },
             onOpenPlaylistDetail = { id -> nav.push(SettingsRoute.PlaylistDetail(id)) },
             onOpenPlaylists = { nav.push(SettingsRoute.Playlists) },
@@ -2442,6 +2476,7 @@ private fun SettingsTabContent(
             content = SettingsRootContent.AboutOnly,
         )
         is SettingsRoute.Root -> SettingsScreen(
+            listState = settingsRootListState,
             onSectionClick = { nav.push(SettingsRoute.Section(it)) },
             onOpenPlaylistDetail = { id -> nav.push(SettingsRoute.PlaylistDetail(id)) },
             onOpenPlaylists = { nav.push(SettingsRoute.Playlists) },

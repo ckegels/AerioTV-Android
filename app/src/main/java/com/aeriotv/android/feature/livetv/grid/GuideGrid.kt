@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -85,7 +86,9 @@ import coil3.toBitmap
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.ui.epgFlags
+import com.aeriotv.android.core.ui.seasonEpisodeLabel
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.History
 import com.aeriotv.android.core.remote.GuideRemoteAction
 import com.aeriotv.android.core.remote.RemoteSlot
@@ -131,8 +134,12 @@ fun GuideGrid(
     jumpLabel: String? = null,
     /** Clock cell tap: snap to now. */
     onClockTap: () -> Unit = {},
-    /** Clock cell long press: open Jump To. */
-    onClockLongPress: () -> Unit = {},
+    /**
+     * Clock / date cell: open Jump To Day. Reached by a plain tap or Select
+     * AND by a long press (Logan 2026-09-19: the long press alone was
+     * undiscoverable, so the cell now carries a chevron and answers a tap).
+     */
+    onOpenJumpToDay: () -> Unit = {},
     /** Channel Preview layout: cells keep the title and tags (the banner carries the rest). */
     compact: Boolean = false,
     /** Host gate snapshot for the trace (AerioFocus [KEY]/[GUIDE] lines); read only when a line is logged. */
@@ -153,6 +160,14 @@ fun GuideGrid(
     var rightDownSeen by remember { mutableStateOf(false) }
     var okLongLatched by remember { mutableStateOf(false) }
     var okDownSeen by remember { mutableStateOf(false) }
+
+    // Re-tap of the Live TV tab while the guide is showing (TabReselect): the
+    // CHANNEL ROWS go back to the top. The timeline is left where the user put
+    // it -- the clock cell is the control for that, and resetting both at once
+    // would throw away a deliberate jump to another hour.
+    com.aeriotv.android.feature.main.OnTabReselect(
+        com.aeriotv.android.feature.main.AppTab.LiveTV,
+    ) { listState.animateScrollToItem(0) }
 
     // Lane: keep the focused row two rows below the top edge once past it.
     // snapshotFlow, not effect keys: reading focusRow in composition would
@@ -264,9 +279,18 @@ fun GuideGrid(
                     if (down) {
                         val rc = native?.repeatCount ?: 0
                         if (rc == 0) clockOkHeld = false
-                        else if (!clockOkHeld && (rc >= HOLD_LEFT_REPEATS || native?.isLongPress == true)) { clockOkHeld = true; onClockLongPress() }
+                        else if (!clockOkHeld && (rc >= HOLD_LEFT_REPEATS || native?.isLongPress == true)) { clockOkHeld = true; onOpenJumpToDay() }
                     } else {
-                        if (!clockOkHeld) { clockSelected = false; onClockTap() }
+                        // Plain Select opens Jump To Day, the same as the long
+                        // press and the same as a tap on touch (Logan
+                        // 2026-09-19). While a jump is ACTIVE the cell shows
+                        // the jump target and Select returns to now instead,
+                        // so the one-press way back is not lost. Left/Right
+                        // and the clock cursor itself are untouched: the
+                        // locked D-pad rule is only about movement.
+                        if (!clockOkHeld) {
+                            if (jumpLabel != null) { clockSelected = false; onClockTap() } else onOpenJumpToDay()
+                        }
                         clockOkHeld = false
                     }
                     true
@@ -479,7 +503,7 @@ fun GuideGrid(
             .onPreviewKeyEvent(keyHandler),
     ) {
         TimeHeader(state, nowMs, railWidth, headerHeight, pxPerMs, textMeasurer,
-                   jumpLabel = jumpLabel, onClockTap = onClockTap, onClockLongPress = onClockLongPress,
+                   jumpLabel = jumpLabel, onClockTap = onClockTap, onOpenJumpToDay = onOpenJumpToDay,
                    clockSelected = clockSelected, isTv = isTv)
         val railPx = with(density) { railWidth.toPx() }
         LazyColumn(
@@ -545,7 +569,7 @@ private fun TimeHeader(
     textMeasurer: androidx.compose.ui.text.TextMeasurer,
     jumpLabel: String? = null,
     onClockTap: () -> Unit = {},
-    onClockLongPress: () -> Unit = {},
+    onOpenJumpToDay: () -> Unit = {},
     /** TV: the grid's virtual cursor sits on the clock (accent ring). */
     clockSelected: Boolean = false,
     /** TV: the clock is driven by the grid's virtual cursor, never by real focus. */
@@ -561,9 +585,11 @@ private fun TimeHeader(
     val clockMode = rememberClockMode()
     val fmt = remember(clockMode) { ClockFormat.guideLabel(clockMode) }
     Row(modifier = Modifier.fillMaxWidth().height(headerHeight)) {
-        // Clock cell: tap snaps to now, long press opens Jump To (Roman via
-        // Discord 2026-09-06). While a jump is active it shows the target in
-        // the accent colour.
+        // Clock / date cell: a plain tap (or Select on TV) opens Jump To Day,
+        // and so does the long press that used to be the only way in (Roman
+        // via Discord 2026-09-06; discoverability, Logan 2026-09-19). The
+        // chevron under the label says so. While a jump is active the cell
+        // shows the target in the accent colour and a tap returns to now.
         val focused = clockSelected
         Box(
             modifier = Modifier
@@ -582,21 +608,38 @@ private fun TimeHeader(
                 // (clockSelected) and must not take focus at all.
                 .then(
                     if (isTv) Modifier
-                    else Modifier.combinedClickable(onClick = onClockTap, onLongClick = onClockLongPress),
+                    else Modifier.combinedClickable(
+                        onClick = { if (jumpLabel != null) onClockTap() else onOpenJumpToDay() },
+                        onLongClick = onOpenJumpToDay,
+                    ),
                 ),
             contentAlignment = Alignment.Center,
         ) {
             val clock = remember(nowMs / 60_000L, clockMode) { ClockFormat.short(clockMode).format(Date(nowMs)) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 jumpLabel ?: clock,
                 style = MaterialTheme.typography.labelMedium,
                 color = if (jumpLabel != null) MaterialTheme.colorScheme.textAccent else androidx.compose.ui.graphics.Color.Unspecified,
                 fontWeight = if (jumpLabel != null) FontWeight.SemiBold else null,
                 maxLines = 1,
+                modifier = Modifier.weight(1f, fill = false),
             )
+            // The affordance for Jump To Day. Small and dim: the cell is 78 dp
+            // wide on a phone and the time has to stay readable.
+            androidx.compose.material3.Icon(
+                androidx.compose.material.icons.Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Jump to day",
+                tint = if (jumpLabel != null) MaterialTheme.colorScheme.textAccent
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 1.dp).size(13.dp),
+            )
+            }
         }
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val vs = state.drawViewportStartMs
+            // Same clamp as the rows, so the hour labels cannot drift out of
+            // the window the cells are drawn from.
+            val vs = state.drawStartMs
             // Half-hour slots from the first slot boundary at or before the viewport edge.
             val slot = 30 * 60_000L
             var t = (vs / slot) * slot
@@ -659,6 +702,15 @@ private fun GridRow(
     val timeStyle = TextStyle(color = cellText(Color.White.copy(alpha = 0.55f)), fontSize = 10.5.sp * subScale)
     val descStyle = TextStyle(color = cellText(accent.copy(alpha = 0.85f)), fontSize = 10.5.sp * subScale)
     val subStyle = TextStyle(color = cellText(accent), fontSize = 10.5.sp * subScale, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+    // SEASON / EPISODE PILL (restored 2026-09-19). 0.5.9 moved S/E into the
+    // Channel Preview banner, which only the TV preview layout draws: on the
+    // phone, the tablet and the TV's standard layout the label vanished
+    // completely. It is back on the badge line of every cell EXCEPT the
+    // preview layout's compact cell, where the banner still owns it. Outlined
+    // pill, never a solid colour chip, so it reads as metadata and not as a
+    // flag badge (Apple's SeasonEpisodePill, compactBadgeRow).
+    val pillStyle = TextStyle(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f), fontSize = 7.5.sp, fontWeight = FontWeight.Medium)
+    val outline = MaterialTheme.colorScheme.decorSecondary.copy(alpha = 0.45f)
     val badgeStyle = TextStyle(color = Color.White, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
     val showBadges = com.aeriotv.android.core.ui.LocalShowEpgBadges.current
     val showSubtitles = com.aeriotv.android.core.ui.LocalShowProgramSubtitles.current
@@ -978,7 +1030,9 @@ private fun GridRow(
         clipRect(railWidthPx, 0f, size.width, size.height) {
         translate(left = railWidthPx) {
             val stripW = size.width - railWidthPx
-            val vs = state.drawViewportStartMs
+            // Clamped: a draw start outside the rows window used to leave the
+            // whole row blank (Logan 2026-09-19).
+            val vs = state.drawStartMs
             val ve = vs + (stripW / pxPerMs).toLong()
             val focusStart = focusedCellStart
             val focusedHere = gridFocused && focusStart != Long.MIN_VALUE
@@ -1024,13 +1078,27 @@ private fun GridRow(
                     // Threshold follows the Text Size so the phone row (98dp x
                     // Text Size) keeps its two lines at every stop.
                     val descLines = if (size.height >= 90.dp.toPx() * appTextScale * subRowGrowth) 2 else 1
-                    val key = ((cell.startMillis * 31 + textW) * 4 + descLines) * 2 + (if (compact) 1 else 0)
+                    // The key identifies every input the measured layouts
+                    // depend on that the cache's own remember() key does not
+                    // already cover: the program, the width it was measured
+                    // for, the line count and the cell shape. The badge line
+                    // (flags plus the restored S/E pill) is part of the shape,
+                    // so showBadges rides in here too rather than relying on
+                    // the map being rebuilt.
+                    val key = (((cell.startMillis * 31 + textW) * 4 + descLines) * 2 + (if (compact) 1 else 0)) * 2 +
+                        (if (showBadges) 1 else 0)
                     val text = textCache.getOrPut(key) {
-                        fun measure(t: String, st: TextStyle, maxH: Float, ellipsis: Boolean = true, lines: Int = 1) = textMeasurer.measure(
+                        fun measure(t: String, st: TextStyle, maxH: Float, ellipsis: Boolean = true, lines: Int = 1, maxW: Int = textW) = textMeasurer.measure(
                             text = t, style = st, maxLines = lines,
                             overflow = if (ellipsis) TextOverflow.Ellipsis else TextOverflow.Clip,
-                            constraints = Constraints(maxWidth = textW, maxHeight = maxH.toInt().coerceAtLeast(1)),
+                            constraints = Constraints(maxWidth = maxW.coerceAtLeast(1), maxHeight = maxH.toInt().coerceAtLeast(1)),
                         )
+                        // A date-coded season ("S2026 E917") is real provider
+                        // data and must stay readable, but it must never eat
+                        // the flag badges beside it, so the pill ellipsizes
+                        // itself at a third of the text column.
+                        fun pill(c: EPGProgramme) = if (!showBadges) null else c.seasonEpisodeLabel()
+                            ?.let { measure(it, pillStyle, 12.sp.toPx(), maxW = textW / 3) }
                         val title = measure(cell.title, if (cell.isPlaceholder) titleDimStyle else titleStyle, 20.sp.toPx())
                         if (cell.isPlaceholder || !tall) CellText(title, null) else if (compact) {
                             // Channel Preview (tvOS): title, the subtitle
@@ -1061,7 +1129,7 @@ private fun GridRow(
                             val time = measure(range, timeStyle, 15.sp.toPx() * subScale, ellipsis = false)
                             val badges = if (showBadges) cell.epgFlags().filter { it.label !in hiddenBadges }
                                 .map { measure(it.label, badgeStyle, 12.sp.toPx(), ellipsis = false) to it.color } else emptyList()
-                            CellText(title, time, desc, sub, badges)
+                            CellText(title, time, desc, sub, badges, pill(cell))
                         }
                     }
                     val recording = !cell.isPlaceholder && recordingWindows.any { win ->
@@ -1105,7 +1173,7 @@ private fun GridRow(
                             // Bottom line sits on the row floor; the lines above stack from the top.
                             // Phone rows (iPhone): time on its own line, the S/E pill and
                             // badges on a line under it; 72 dp rows keep them together.
-                            val stacked = descLines == 2 && text.badges.isNotEmpty()
+                            val stacked = descLines == 2 && (text.pill != null || text.badges.isNotEmpty())
                             val chipH = time.size.height - 4.dp.toPx()
                             val ty = if (stacked) maxOf(y, size.height - 3.dp.toPx() - chipH - 3.dp.toPx() - time.size.height)
                                 else maxOf(y, size.height - 3.dp.toPx() - time.size.height)
@@ -1113,6 +1181,15 @@ private fun GridRow(
                             drawText(time, topLeft = Offset(bx, ty))
                             if (stacked) bx = x else bx += time.size.width + 5.dp.toPx()
                             val chipY = if (stacked) ty + time.size.height + 3.dp.toPx() else ty + (time.size.height - chipH) / 2f
+                            // S/E first, then the flags (Apple compactBadgeRow).
+                            text.pill?.let { pill ->
+                                val cw = pill.size.width + 5.dp.toPx()
+                                if (bx + cw <= x0 + w) {
+                                    drawRoundRect(outline, topLeft = Offset(bx, chipY), size = Size(cw, chipH), cornerRadius = CornerRadius(3.dp.toPx()), style = Stroke(width = 1.dp.toPx()))
+                                    drawText(pill, topLeft = Offset(bx + 2.5.dp.toPx(), chipY + (chipH - pill.size.height) / 2f))
+                                    bx += cw + 4.dp.toPx()
+                                }
+                            }
                             for ((badge, color) in text.badges) {
                                 val cw = badge.size.width + 5.dp.toPx()
                                 if (bx + cw > x0 + w) break
@@ -1274,4 +1351,10 @@ private class CellText(
     val desc: TextLayoutResult? = null,
     val sub: TextLayoutResult? = null,
     val badges: List<Pair<TextLayoutResult, Color>> = emptyList(),
+    /**
+     * Season / episode label for the badge line, an outlined pill drawn
+     * before the flag badges (Apple's compactBadgeRow order). Null in the TV
+     * Channel Preview cell, where the banner carries it instead.
+     */
+    val pill: TextLayoutResult? = null,
 )

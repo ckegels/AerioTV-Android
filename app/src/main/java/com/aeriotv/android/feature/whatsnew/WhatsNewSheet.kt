@@ -308,7 +308,7 @@ object WhatsNewContent {
         ),
         WhatsNewItem(
             title = "Rounded corners, two toggles",
-            body = "Rounded corners for List view and Guide view are now separate in Settings > Appearance, and guide artwork follows the Guide toggle.",
+            body = "Rounded corners for List view and Guide view are now separate in Settings > Live TV, and guide artwork follows the Guide toggle.",
         ),
         WhatsNewItem(
             title = "Android TV: Guide only",

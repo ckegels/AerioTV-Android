@@ -63,6 +63,17 @@ class GuideGridState(
     var focusChannelId: String? = null
         private set
 
+    /**
+     * What the renderer must actually walk from: [drawViewportStartMs] held
+     * inside the current rows window. The clamp and installRows keep the
+     * stored value honest, but the draw pass can run in the same frame a new
+     * rows window arrives, so the walk reads through this and never starts
+     * outside the window (empty program lanes, Logan 2026-09-19).
+     */
+    val drawStartMs: Long
+        get() = if (rows.isEmpty) drawViewportStartMs
+        else drawViewportStartMs.coerceIn(minViewportStart(), maxViewportStart())
+
     val anchorMs: Long get() = viewportStartMs + leadMs
     val viewportEndMs: Long get() = viewportStartMs + viewportDurationMs
     val hasFocus: Boolean get() = focusRow >= 0
@@ -80,6 +91,7 @@ class GuideGridState(
      */
     fun installRows(newRows: GuideGridRows) {
         val previousId = focusChannelId
+        val windowMoved = newRows.windowStartMs != rows.windowStartMs || newRows.windowEndMs != rows.windowEndMs
         rows = newRows
         if (newRows.isEmpty) { focusRow = -1; focusCellStartMs = Long.MIN_VALUE; return }
         val byId = previousId?.let { newRows.indexOfChannel(it) } ?: -1
@@ -89,6 +101,16 @@ class GuideGridState(
             else -> focusRow.coerceIn(0, newRows.size - 1)
         }
         clampViewport()
+        // EMPTY LANES AFTER RETURNING TO THE GUIDE (Logan 2026-09-19). The
+        // draw viewport is normally eased toward viewportStartMs by
+        // GuideGrid's animation driver, so on a rows swap that moved the
+        // window (a new "now" quantum, a jump, a wider Guide Days extent) the
+        // draw start could still sit OUTSIDE the new rows window while the
+        // logical viewport had already been clamped into it. The cell walk
+        // starts from the draw start, so every row painted nothing: the guide
+        // came back with channels and no programs. A window move snaps the
+        // draw to the clamped viewport instead of easing from a stale value.
+        if (windowMoved) drawViewportStartMs = viewportStartMs
         land(row)
     }
 
@@ -298,7 +320,12 @@ class GuideGridState(
     private fun maxViewportStart(): Long = (rows.windowEndMs - viewportDurationMs).coerceAtLeast(rows.windowStartMs)
     private fun clampViewport() {
         if (rows.isEmpty) return
-        viewportStartMs = viewportStartMs.coerceIn(minViewportStart(), maxViewportStart())
+        val lo = minViewportStart()
+        val hi = maxViewportStart()
+        viewportStartMs = viewportStartMs.coerceIn(lo, hi)
+        // The clamp owns BOTH viewports: a draw start left outside the rows
+        // window paints empty lanes (see installRows).
+        drawViewportStartMs = drawViewportStartMs.coerceIn(lo, hi)
     }
 
     enum class BackStep { RESTORED_NOW_AND_TOP, TOP, NONE }

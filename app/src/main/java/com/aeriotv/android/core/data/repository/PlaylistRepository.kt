@@ -26,6 +26,8 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import com.aeriotv.android.core.data.db.entity.dispatcharrAccountProfileIdList
 import com.aeriotv.android.core.data.db.entity.dispatcharrCanUseCatchup
+import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewSeries
+import com.aeriotv.android.core.data.db.entity.dispatcharrCanViewVod
 import com.aeriotv.android.core.data.db.entity.EPG_CHUNK_TTL_MS
 import com.aeriotv.android.core.data.db.entity.EpgChunkCoverage
 import com.aeriotv.android.core.data.db.entity.sanitizeGuideDays
@@ -225,6 +227,10 @@ class PlaylistRepository @Inject constructor(
         // per-host auth-mode registry is primed from the persisted row
         // before the request goes out (no-op for the legacy empty mode).
         dispatcharrClient.seedAuthMode(playlist)
+        // Same choke point primes the per-playlist User-Agent override, so a
+        // Dispatcharr request can never go out under the default UA after the
+        // user set one in Edit Playlist.
+        dispatcharrClient.seedUserAgent(playlist)
         val lan = playlist.lanUrlString?.takeIf { it.isNotBlank() } ?: return playlist.urlString
         return if (lanReachability.isReachable(lan)) lan else playlist.urlString
     }
@@ -291,7 +297,93 @@ class PlaylistRepository @Inject constructor(
         val vodEnabled: Boolean = true,
         /** Days of already-aired EPG kept for catch-up browsing (task #135). */
         val epgRetentionDays: Int = 7,
+        /**
+         * Per-playlist Dispatcharr User-Agent (Apple `customUserAgent`).
+         * Blank = the app default. Null means "leave whatever the row has",
+         * which is what every caller other than Edit Playlist wants.
+         */
+        val customUserAgent: String? = null,
     )
+
+    /**
+     * The coarse phases of [loadAndPersist], reported to the caller so Edit
+     * Playlist (and Add Playlist) can say what a multi-second save is actually
+     * doing instead of showing an unexplained spinner.
+     *
+     * Only the stages that RUN are reported: a non-credential edit (a rename, a
+     * Guide Days change) re-authenticates nothing, so it starts at
+     * [LoadingChannels]. Never guess these with a timer - they are emitted at
+     * the real call boundaries.
+     *
+     * The declaration order is also the order a save screen lists them in. The
+     * two On Demand stages are not run by this class: the save only decides
+     * whether the catalog has to be rebuilt (see [SavePlan.rebuildVod]) and the
+     * caller drives the rebuild after the row has landed, reporting these two
+     * itself.
+     */
+    enum class SaveStage {
+        /** Dispatcharr login / api_key verification against the server. */
+        VerifyingCredentials,
+
+        /** Account metadata + the channel fetch, which is usually the long one. */
+        LoadingChannels,
+
+        /** The movies half of the On Demand catalog, rebuilt by the caller. */
+        LoadingMovies,
+
+        /** The TV Shows half of the On Demand catalog, rebuilt by the caller. */
+        LoadingSeries,
+
+        /** Row persist, identity drop, snapshot cache, capability probe. */
+        Finishing,
+    }
+
+    /**
+     * What this save is actually going to do, published to the caller as soon
+     * as each part of it is known so a save screen can list exactly those steps
+     * and no others (Logan 2026-09-18: the rows must be truthful - a row is
+     * shown only when the work behind it really runs).
+     *
+     * [stages] is in display order and only ever GROWS, so a screen following
+     * it never sees a step disappear or the current one move backwards.
+     */
+    data class SavePlan(
+        val stages: List<SaveStage>,
+        /**
+         * True when the credentials or the URL changed on the ACTIVE playlist,
+         * so its stored On Demand catalog belongs to an account the app is no
+         * longer connected as and has to be wiped and rebuilt.
+         */
+        val rebuildVod: Boolean = false,
+    ) {
+        val hasMovies: Boolean get() = SaveStage.LoadingMovies in stages
+        val hasSeries: Boolean get() = SaveStage.LoadingSeries in stages
+    }
+
+    /**
+     * Edit Playlist > Refresh Session (Apple `refreshDirectConnectSession`).
+     * Re-runs the Direct Connect login from the saved username + password,
+     * caches the fresh JWT pair and re-reads /api/accounts/users/me/ so a
+     * server-side api_key rotation is picked up. Returns true when the cached
+     * api_key actually changed, false when it was already current, and a
+     * failure when there are no credentials to re-mint from or the login was
+     * rejected.
+     *
+     * The whole exchange is [DispatcharrAuthBroker.silentRebootstrapApiKey],
+     * i.e. exactly the path a 401 already takes; this only lets the user ask
+     * for it before anything fails.
+     */
+    suspend fun refreshDispatcharrSession(playlistId: String): Result<Boolean> {
+        val playlist = dao.byId(playlistId)
+            ?: return Result.failure(IllegalStateException("Playlist not found."))
+        val previousKey = playlist.apiKey?.trim().orEmpty()
+        if (playlist.username.isNullOrBlank() || playlist.password.isNullOrBlank()) {
+            return Result.failure(IllegalStateException("Username and password required."))
+        }
+        val fresh = dispatcharrAuth.silentRebootstrapApiKey(playlist)
+            ?: return Result.failure(IllegalStateException("Refresh failed. Check the URL and credentials."))
+        return Result.success(fresh.trim() != previousKey)
+    }
 
     suspend fun activePlaylist(): PlaylistEntity? {
         val pl = dao.firstActive()
@@ -302,10 +394,197 @@ class PlaylistRepository @Inject constructor(
         return pl
     }
 
+    /**
+     * What an Edit Playlist save actually has to do, decided from the fields
+     * that CHANGED against the stored row (Apple parity: it has always skipped
+     * the reload for a non-identity edit).
+     *
+     * Measured on device 2026-09-18: a save that only renamed the playlist cost
+     * 9 to 11 s, because [loadAndPersist] always refetched all 650 channels (6
+     * to 9 s) and then spent ~2 s in [SaveStage.Finishing] on a user-level read,
+     * a forced capability probe and the 650-row snapshot write. None of that
+     * work can change anything a rename affects, so a rename now takes the
+     * [instant] path: one row UPDATE, no network, no loading screen.
+     */
+    data class EditPlan(
+        /** URL / credentials / auth mode / source type: the full reload. */
+        val fullReload: Boolean,
+        /**
+         * Channel Profile change: it decides WHICH channels exist, so the fetch
+         * is real work the user has to wait for, but nothing re-authenticates.
+         */
+        val channelRefetch: Boolean,
+        /** Guide Days, or an EPG URL edit on a source that owns its own EPG. */
+        val reloadGuide: Boolean,
+        /** On Demand was switched on for the active playlist: sweep it. */
+        val vodTurnedOn: Boolean,
+        /** On Demand was switched off: the catalog is hidden, as before. */
+        val vodTurnedOff: Boolean,
+        /** The per-playlist User-Agent changed: reseed the per-host cache. */
+        val userAgentChanged: Boolean,
+        /** The LAN URL changed: re-probe its reachability. */
+        val lanUrlChanged: Boolean,
+    ) {
+        /** No network stage: the row update lands and the screen pops at once. */
+        val instant: Boolean get() = !fullReload && !channelRefetch
+
+        /** True when a save screen has something truthful to show. */
+        val hasNetworkStage: Boolean get() = !instant
+    }
+
+    /**
+     * Classify an Edit Playlist save against the row as it stands now. Returns
+     * null when there is no such row (the caller then runs the full path, which
+     * is what an Add does anyway).
+     *
+     * [sourceTypeOverride] is Edit Playlist's Authentication toggle: moving a
+     * Dispatcharr playlist between API Key and Username & Password IS an
+     * identity change even when every visible field reads the same.
+     */
+    suspend fun classifyEdit(request: SaveRequest, existingId: String): EditPlan? {
+        val prior = dao.byId(existingId) ?: return null
+        val normalisedBase = request.url.trimEnd('/')
+        // Only a SUPPLIED credential that differs counts; Edit Playlist sends
+        // only the fields of the auth mode on screen, so the nulls mean
+        // "untouched" (same rule as loadAndPersist).
+        val suppliedKey = request.apiKey?.trim()?.takeIf { it.isNotBlank() }
+        val suppliedUser = request.username?.trim()?.takeIf { it.isNotBlank() }
+        val suppliedPass = request.password?.takeIf { it.isNotBlank() }
+        val credentialsChanged =
+            (suppliedKey != null && suppliedKey != prior.apiKey?.trim()?.takeIf { it.isNotBlank() }) ||
+                (suppliedUser != null && suppliedUser != prior.username?.trim()?.takeIf { it.isNotBlank() }) ||
+                (suppliedPass != null && suppliedPass != prior.password?.takeIf { it.isNotBlank() })
+        val urlChanged = prior.urlString.trimEnd('/') != normalisedBase
+        val sourceTypeChanged = request.sourceType.name != prior.sourceType
+        val newLan = request.lanUrl?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        val lanChanged = newLan != prior.lanUrlString?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        val newEpg = request.epgUrl?.takeIf { it.isNotBlank() }
+        val epgChanged = newEpg != prior.epgUrl?.takeIf { it.isNotBlank() }
+        val daysChanged =
+            sanitizeGuideDays(request.epgRetentionDays) != sanitizeGuideDays(prior.epgRetentionDays)
+        val profileChanged = request.dispatcharrProfileId != prior.dispatcharrProfileId
+        val uaChanged = request.customUserAgent != null &&
+            request.customUserAgent.trim() != prior.customUserAgent.trim()
+        val vodChanged = request.vodEnabled != prior.vodEnabled
+        return EditPlan(
+            fullReload = credentialsChanged || urlChanged || sourceTypeChanged,
+            channelRefetch = profileChanged,
+            // An EPG URL edit only changes where the NEXT guide refresh reads
+            // from, so it is a background reload, never a channel fetch.
+            reloadGuide = (daysChanged || epgChanged) && prior.isActive,
+            vodTurnedOn = vodChanged && request.vodEnabled && prior.isActive,
+            vodTurnedOff = vodChanged && !request.vodEnabled,
+            userAgentChanged = uaChanged,
+            lanUrlChanged = lanChanged,
+        )
+    }
+
+    /**
+     * The instant Edit Playlist save: write the edited fields to the existing
+     * row and nothing else. No login, no channel fetch, no capability probe, no
+     * [SaveStage.Finishing] work, so no loading screen either.
+     *
+     * Every surface that shows the playlist (the Settings rows, the detail page,
+     * the On Demand gate) reads the row through a Room flow, so the single
+     * UPDATE here is what repaints them; that is also how the On Demand toggle
+     * takes effect, since OnDemandViewModel collects the same flow.
+     */
+    suspend fun applyInstantEdit(
+        request: SaveRequest,
+        existingId: String,
+        plan: EditPlan,
+    ): Result<PlaylistEntity> = runCatching {
+        val startedAt = System.currentTimeMillis()
+        val previous = dao.byId(existingId)
+            ?: throw IllegalStateException("Playlist not found.")
+        val normalisedBase = request.url.trimEnd('/')
+        val updated = previous.copy(
+            name = request.name?.takeIf { it.isNotBlank() } ?: previous.name,
+            urlString = normalisedBase,
+            lanUrlString = request.lanUrl?.trimEnd('/')?.takeIf { it.isNotBlank() },
+            epgUrl = request.epgUrl?.takeIf { it.isNotBlank() },
+            vodEnabled = request.vodEnabled,
+            epgRetentionDays = sanitizeGuideDays(request.epgRetentionDays),
+            customUserAgent = request.customUserAgent ?: previous.customUserAgent,
+        )
+        dao.update(updated)
+        // A changed User-Agent has to apply to the NEXT request, not the next
+        // launch: the client keeps a per-host override cache and PlaybackHeaders
+        // reads the row, so reseeding the cache is the whole of it.
+        if (plan.userAgentChanged) dispatcharrClient.seedUserAgent(updated)
+        if (plan.lanUrlChanged) {
+            updated.lanUrlString?.takeIf { it.isNotBlank() }?.let { lanReachability.refresh(it) }
+        }
+        if (updated.isActive) publishActiveCredentials(updated)
+        Log.i(
+            TAG_SAVE,
+            "plan=InstantUpdate elapsedMs=${System.currentTimeMillis() - startedAt} " +
+                "guideReload=${plan.reloadGuide} vodOn=${plan.vodTurnedOn} " +
+                "vodOff=${plan.vodTurnedOff} ua=${plan.userAgentChanged}",
+        )
+        updated
+    }.onFailure { Log.w(TAG_SAVE, "plan=InstantUpdate failed", it) }
+
     suspend fun loadAndPersist(
         request: SaveRequest,
         existingId: String? = null,
-    ): Result<Pair<PlaylistEntity, List<M3UChannel>>> = runCatching {
+        /**
+         * Called as each [SaveStage] begins, on the calling coroutine's
+         * dispatcher. Edit Playlist renders the stage as a status line; every
+         * other caller passes nothing.
+         */
+        onStage: ((SaveStage) -> Unit)? = null,
+        /**
+         * Called whenever the [SavePlan] becomes more definite (once up front,
+         * again if a login runs, again once the account's On Demand permissions
+         * are known). Edit Playlist renders the plan as its list of rows.
+         */
+        onPlan: ((SavePlan) -> Unit)? = null,
+    ): Result<Pair<PlaylistEntity, List<M3UChannel>>> {
+        // Where the seconds go, per stage, so a slow save can be attributed
+        // (Logan 2026-09-18: "a successful save takes several seconds"). No
+        // credential values are ever logged.
+        val saveStartedAt = System.currentTimeMillis()
+        var stageStartedAt = saveStartedAt
+        var currentStage: SaveStage? = null
+        // The plan starts at the two steps every save runs and grows as the
+        // save learns what else it will do. Never shrinks (see [SavePlan]).
+        var plan = SavePlan(stages = listOf(SaveStage.LoadingChannels, SaveStage.Finishing))
+        fun publishPlan(next: SavePlan) {
+            plan = next
+            Log.i(TAG_SAVE, "plan=${next.stages.joinToString("+")} rebuildVod=${next.rebuildVod}")
+            onPlan?.invoke(next)
+        }
+        /**
+         * [report] false keeps the timing log but leaves the VISIBLE stage
+         * where it is. Used for [SaveStage.Finishing] when the plan puts the On
+         * Demand rows in front of it: the caller drives those and reports
+         * Finishing itself once they are done, so the screen never jumps to the
+         * last row and back up.
+         */
+        fun enterStage(stage: SaveStage, report: Boolean = true) {
+            // "Verifying credentials..." is only a row when a login or a key
+            // verification actually runs, which is known the moment it starts.
+            if (stage == SaveStage.VerifyingCredentials && stage !in plan.stages) {
+                publishPlan(plan.copy(stages = listOf(stage) + plan.stages))
+            }
+            val now = System.currentTimeMillis()
+            currentStage?.let {
+                Log.i(TAG_SAVE, "stage=$it elapsedMs=${now - stageStartedAt}")
+            }
+            currentStage = stage
+            stageStartedAt = now
+            if (report) onStage?.invoke(stage)
+        }
+        fun closeStages(outcome: String) {
+            val now = System.currentTimeMillis()
+            currentStage?.let {
+                Log.i(TAG_SAVE, "stage=$it elapsedMs=${now - stageStartedAt}")
+            }
+            currentStage = null
+            Log.i(TAG_SAVE, "save $outcome totalMs=${now - saveStartedAt}")
+        }
+        return runCatching {
         val normalisedBase = request.url.trimEnd('/')
         val sourceType = request.sourceType
         if (!sourceType.isImplemented) {
@@ -313,6 +592,8 @@ class PlaylistRepository @Inject constructor(
                 "${sourceType.displayName} support lands in a later phase",
             )
         }
+        // The two steps every save runs; anything else is added as it is decided.
+        publishPlan(plan)
 
         // Generate the playlist id up front so the JWT pair from a UserPass login
         // can land in DispatcharrTokenStore under the same key the rest of the
@@ -336,24 +617,44 @@ class PlaylistRepository @Inject constructor(
         // credential fields take part, so renaming a playlist or changing
         // its EPG retention still costs nothing extra.
         val priorRow = existingId?.let { dao.byId(it) }
+        // A null credential field means "this form did not carry one", NOT
+        // "clear it". Edit Playlist only ever sends the fields of the auth
+        // mode on screen, so an API-Key-mode save sends no username and no
+        // password. Treating those nulls as a change wiped the stored pair -
+        // flipping the mode toggle back showed two empty fields and Refresh
+        // Session had nothing to re-mint from, which is the "I changed the
+        // credentials and it did not stick" report (Logan 2026-09-18). Only a
+        // SUPPLIED value that differs counts, and the writes below fall back
+        // to the prior value for anything not supplied.
+        val suppliedKey = request.apiKey?.trim()?.takeIf { it.isNotBlank() }
+        val suppliedUser = request.username?.trim()?.takeIf { it.isNotBlank() }
+        val suppliedPass = request.password?.takeIf { it.isNotBlank() }
         val credentialsChanged = priorRow != null && run {
-            val suppliedKey = request.apiKey?.trim()?.takeIf { it.isNotBlank() }
             val keyChanged = suppliedKey != null &&
                 suppliedKey != priorRow.apiKey?.trim()?.takeIf { it.isNotBlank() }
-            val userChanged = request.username?.takeIf { it.isNotBlank() } !=
-                priorRow.username?.takeIf { it.isNotBlank() }
-            val passChanged = request.password?.takeIf { it.isNotBlank() } !=
-                priorRow.password?.takeIf { it.isNotBlank() }
+            val userChanged = suppliedUser != null &&
+                suppliedUser != priorRow.username?.trim()?.takeIf { it.isNotBlank() }
+            val passChanged = suppliedPass != null &&
+                suppliedPass != priorRow.password?.takeIf { it.isNotBlank() }
             keyChanged || userChanged || passChanged
         }
-        if (credentialsChanged) {
-            Log.i(TAG_CAPS, "credentials changed for ${playlistId.take(8)}; dropping the old account's cached identity")
-            dropCachedIdentity(priorRow!!)
-        }
+        // VERIFY BEFORE DESTROYING (Logan 2026-09-18). The drop below used to
+        // run HERE, a second before the login it was preparing for: a typo in
+        // the password 401'd, the save failed, and the playlist had already
+        // lost its JWT pair, its capability snapshot and its correction cache
+        // for an account it was still connected as. Nothing is invalidated now
+        // until the typed credentials have proven themselves against the
+        // server; on failure this whole call throws with the stored row and
+        // cached session untouched.
 
         // For Dispatcharr User/Pass, do the JWT exchange up front and resolve to an api_key
         // so the rest of the flow looks identical to API-key mode. iOS does this too
         // (silent rebootstrap pattern, DispatcharrDirectConnect.swift line 534-588).
+        // Held back until the verification below passes: dropCachedIdentity
+        // clears this very store, so storing the new pair first would have it
+        // wiped, and storing it before the drop-or-fail decision would leave
+        // the NEW account's tokens behind after a failed save.
+        var pendingJwt: com.aeriotv.android.core.network.JwtPair? = null
         val resolvedApiKey: String? = when (sourceType) {
             SourceType.DispatcharrUserPass -> {
                 // A playlist ORIGINALLY added with username/password can be
@@ -376,19 +677,61 @@ class PlaylistRepository @Inject constructor(
                         "UserPass playlist saved in API Key mode; using the supplied key",
                     )
                     suppliedKey
+                } else if (
+                    priorRow != null &&
+                    !credentialsChanged &&
+                    priorRow.urlString.trimEnd('/') == normalisedBase &&
+                    !priorRow.apiKey.isNullOrBlank()
+                ) {
+                    // A name / Guide Days / User-Agent edit on an unchanged
+                    // account and an unchanged URL has nothing to re-login for:
+                    // reuse the stored api_key. The old code minted a fresh JWT
+                    // pair on every such save, so a server that was briefly
+                    // unreachable failed a rename. If the stored key has since
+                    // been rotated the fetch below 401s and the AuthBroker's
+                    // silent rebootstrap re-mints from the stored credentials,
+                    // exactly as it does outside this screen.
+                    priorRow.apiKey
                 } else {
                     val user = u ?: throw IllegalArgumentException("Username is required")
                     val pass = p ?: throw IllegalArgumentException("Password is required")
+                    // First stage the user can see: this login is the only
+                    // thing standing between Save and the channel fetch.
+                    enterStage(SaveStage.VerifyingCredentials)
                     val jwt = dispatcharrClient.login(normalisedBase, user, pass)
-                    // Stash the JWT pair so the warmup coordinator picks up the
-                    // refresh token on the next app foreground and the
-                    // bearer-mode calls don't re-login from scratch every session.
-                    dispatcharrTokenStore.store(playlistId, jwt.access, jwt.refresh)
+                    // The JWT pair is stashed AFTER the drop decision below, so
+                    // the warmup coordinator picks up the refresh token on the
+                    // next app foreground and bearer-mode calls don't re-login
+                    // from scratch every session.
+                    pendingJwt = jwt
                     dispatcharrClient.fetchCurrentUserApiKey(normalisedBase, jwt.access)
                 }
             }
             else -> request.apiKey
         }
+
+        val isDispatcharrSource = sourceType == SourceType.DispatcharrApiKey ||
+            sourceType == SourceType.DispatcharrUserPass
+        if (credentialsChanged) {
+            // A User/Pass change already proved itself in the login above. An
+            // API-key change has authenticated nothing yet, so spend one
+            // /api/core/version/ call on it: verifyConnection throws on 401 and
+            // on any non-2xx, which is the only way a pasted bad key can fail
+            // loudly instead of quietly replacing a working one.
+            if (isDispatcharrSource && pendingJwt == null) {
+                resolvedApiKey?.takeIf { it.isNotBlank() }?.let { key ->
+                    enterStage(SaveStage.VerifyingCredentials)
+                    dispatcharrClient.verifyConnection(normalisedBase, key)
+                }
+            }
+            Log.i(TAG_CAPS, "credentials verified for ${playlistId.take(8)}; dropping the old account's cached identity")
+            dropCachedIdentity(priorRow!!)
+        }
+        pendingJwt?.let { dispatcharrTokenStore.store(playlistId, it.access, it.refresh) }
+
+        // Everything from here to the channel list is what the user is waiting
+        // on. A non-credential edit enters the save at exactly this point.
+        enterStage(SaveStage.LoadingChannels)
 
         // Capture the connected account's assigned Channel Profile id(s) for the
         // FAIL-CLOSED child-safety filter (iOS 3eb4ae3d8). Best-effort: a failed
@@ -425,11 +768,24 @@ class PlaylistRepository @Inject constructor(
                     // playlist went on acting as the old user.
                     apiKey = resolvedApiKey?.takeIf { it.isNotBlank() }
                         ?: previous.apiKey.takeUnless { credentialsChanged },
-                    username = request.username?.takeIf { it.isNotBlank() },
-                    password = request.password?.takeIf { it.isNotBlank() },
+                    // Not supplied = untouched (see the note on
+                    // credentialsChanged above), so the auth mode that is off
+                    // screen keeps its stored credential.
+                    username = suppliedUser ?: previous.username,
+                    password = suppliedPass ?: previous.password,
                     dispatcharrProfileId = request.dispatcharrProfileId,
                     vodEnabled = request.vodEnabled,
                     epgRetentionDays = sanitizeGuideDays(request.epgRetentionDays),
+                    customUserAgent = request.customUserAgent ?: previous.customUserAgent,
+                ),
+            )
+            // The channel + permission fetches below run under the edited row,
+            // so register the (possibly new) User-Agent before they go out.
+            dispatcharrClient.seedUserAgent(
+                previous.copy(
+                    urlString = normalisedBase,
+                    lanUrlString = request.lanUrl?.trimEnd('/')?.takeIf { it.isNotBlank() },
+                    customUserAgent = request.customUserAgent ?: previous.customUserAgent,
                 ),
             )
         }
@@ -446,6 +802,54 @@ class PlaylistRepository @Inject constructor(
             resolvedApiKey?.takeIf { it.isNotBlank() }
                 ?.let { dispatcharrClient.fetchServerVersion(normalisedBase, it) }
         } else null
+        // ---- On Demand rebuild decision (Logan 2026-09-18) --------------
+        // The stored VOD catalog is per playlist ROW, and the row id does not
+        // change across an edit, so after a credential or URL change every
+        // vod_title row on disk belongs to an account this playlist is no
+        // longer connected as. That catalog has to be wiped and re-swept, and
+        // the save screen is where the user watches it happen - but ONLY when
+        // the work is real: the playlist has to be the active one (nothing
+        // sweeps for an inactive playlist), On Demand has to be enabled for it,
+        // and the source has to serve VOD at all. A rename / Guide Days /
+        // User-Agent edit changes no account, so nothing here runs.
+        val urlChanged = priorRow != null && priorRow.urlString.trimEnd('/') != normalisedBase
+        val sourceServesVod = isDispatcharr || sourceType == SourceType.XtreamCodes
+        val rebuildVod = priorRow != null && priorRow.isActive &&
+            (credentialsChanged || urlChanged) && request.vodEnabled && sourceServesVod
+        if (rebuildVod) {
+            // Which halves the NEW account may view. Direct Connect answers
+            // this per user, so take the capability snapshot NOW, before the
+            // rows are decided, instead of at the end of the save: a row for a
+            // library this account cannot see would be a lie, and one that
+            // never appears hides a rebuild that is really running.
+            //
+            // The snapshot this probe persists is overwritten by the fresh
+            // entity upsert further down (a new PlaylistEntity carries no
+            // snapshot fields), which is why the probe at the end of the save
+            // stays where it is: this early pass is read for the decision, that
+            // one is what the rest of the app reads.
+            if (isDispatcharr) {
+                runCatching { probeCapabilities(playlistId, force = true) }
+                    .onFailure { Log.w(TAG_CAPS, "pre-rebuild capability probe failed", it) }
+            }
+            val probed = dao.byId(playlistId)
+            val movies = if (isDispatcharr) probed?.dispatcharrCanViewVod() ?: true else true
+            val series = if (isDispatcharr) probed?.dispatcharrCanViewSeries() ?: true else true
+            val vodStages = buildList {
+                if (movies) add(SaveStage.LoadingMovies)
+                if (series) add(SaveStage.LoadingSeries)
+            }
+            if (vodStages.isNotEmpty()) {
+                publishPlan(
+                    SavePlan(
+                        stages = plan.stages.filter { it != SaveStage.Finishing } + vodStages +
+                            SaveStage.Finishing,
+                        rebuildVod = true,
+                    ),
+                )
+            }
+        }
+        val channelFetchStartedAt = System.currentTimeMillis()
         val channels = try {
             fetchChannelsFor(
                 sourceType = sourceType,
@@ -462,11 +866,17 @@ class PlaylistRepository @Inject constructor(
             if (previous != null) runCatching { dao.update(previous) }
             throw t
         }
+        Log.i(
+            TAG_SAVE,
+            "channelFetch elapsedMs=${System.currentTimeMillis() - channelFetchStartedAt} " +
+                "channels=${channels.size}",
+        )
 
         // Capture the connected user's Dispatcharr account level (10 = admin,
         // 1 = standard, 0 = streamer). Only admins can POST server recordings,
         // so this gates the Record affordances; best-effort, a failed read
         // keeps the recording-capable default (10). Mirrors iOS d8aa76b.
+        enterStage(SaveStage.Finishing, report = !(plan.hasMovies || plan.hasSeries))
         val dispatcharrUserLevel: Int =
             if (sourceType == SourceType.DispatcharrApiKey ||
                 sourceType == SourceType.DispatcharrUserPass
@@ -486,8 +896,8 @@ class PlaylistRepository @Inject constructor(
             epgUrl = request.epgUrl?.takeIf { it.isNotBlank() },
             sourceType = sourceType.name,
             apiKey = resolvedApiKey?.takeIf { it.isNotBlank() },
-            username = request.username?.takeIf { it.isNotBlank() },
-            password = request.password?.takeIf { it.isNotBlank() },
+            username = suppliedUser ?: priorRow?.username,
+            password = suppliedPass ?: priorRow?.password,
             channelCount = channels.size,
             lastRefreshedAt = System.currentTimeMillis(),
             isActive = true,
@@ -501,6 +911,10 @@ class PlaylistRepository @Inject constructor(
             dispatcharrServerVersion = serverVersion ?: "",
             vodEnabled = request.vodEnabled,
             epgRetentionDays = sanitizeGuideDays(request.epgRetentionDays),
+            // A fresh entity would otherwise drop the stored override on every
+            // save and every refresh: carry the prior row's value when the
+            // caller did not supply one.
+            customUserAgent = request.customUserAgent ?: priorRow?.customUserAgent ?: "",
         )
         // New / re-loaded playlist becomes the active one. Mirrors iOS commit
         // f72b942 — wrap "deactivate others + upsert" in a transactional DAO
@@ -532,6 +946,9 @@ class PlaylistRepository @Inject constructor(
         // network change.
         entity.lanUrlString?.takeIf { it.isNotBlank() }?.let { lanReachability.refresh(it) }
         entity to channels
+        }.also { result ->
+            closeStages(if (result.isSuccess) "ok" else "failed")
+        }
     }
 
     /**
@@ -603,6 +1020,9 @@ class PlaylistRepository @Inject constructor(
                 ),
             )
         }.onFailure { Log.w(TAG_CAPS, "cached-identity reset failed", it) }
+        // The display-only facts describe the OLD account; drop them with it.
+        runCatching { appPreferences.clearDispatcharrAccountFacts(priorRow.id) }
+            .onFailure { Log.w(TAG_CAPS, "account facts reset failed", it) }
     }
 
     suspend fun probeCapabilities(playlistId: String, force: Boolean = false): Boolean {
@@ -710,6 +1130,37 @@ class PlaylistRepository @Inject constructor(
         )
         runCatching { dao.update(updated) }
             .onFailure { Log.w(TAG_CAPS, "capability persist failed", it) }
+        // Display-only facts for the Playlist Detail permissions section (iOS
+        // Models.swift parity): the username the server echoed (an API-key
+        // playlist never typed one) and the names of the assigned Channel
+        // Profiles. Names are only asked for when the account actually has
+        // profiles; a failure just leaves the ids to be shown instead.
+        runCatching {
+            val profileNames = if (snapshot.channelProfiles.isEmpty()) {
+                emptyList()
+            } else {
+                val all = key.let {
+                    runCatching {
+                        dispatcharrAuth.withApiKeyRetry(playlist.id) { k ->
+                            dispatcharrClient.listProfiles(base, k)
+                        }
+                    }.getOrNull()
+                }.orEmpty()
+                snapshot.channelProfiles.mapNotNull { id -> all.firstOrNull { it.id == id }?.name }
+            }
+            val prior = appPreferences.dispatcharrAccountFactsOnce(playlistId)
+            appPreferences.setDispatcharrAccountFacts(
+                playlistId,
+                com.aeriotv.android.core.preferences.DispatcharrAccountFacts(
+                    username = snapshot.username,
+                    // Keep the last known names when this pass could not read
+                    // them, so a transient 403 does not blank the row.
+                    profileNames = profileNames.ifEmpty {
+                        if (snapshot.channelProfiles.isEmpty()) emptyList() else prior.profileNames
+                    },
+                ),
+            )
+        }.onFailure { Log.w(TAG_CAPS, "account facts persist failed", it) }
         // Session corrections are guesses; persisted truth supersedes them.
         CapabilityCorrections.clear(playlistId)
         // Log the DERIVED verdicts, not just the raw level: the raw level alone
@@ -2657,6 +3108,9 @@ class PlaylistRepository @Inject constructor(
         dispatcharrTokenStore.clear(playlistId)
         // Session capability guesses recorded from this playlist's 403s.
         CapabilityCorrections.clear(playlistId)
+        // Display-only Dispatcharr account facts for the deleted row.
+        runCatching { appPreferences.clearDispatcharrAccountFacts(playlistId) }
+            .onFailure { Log.w("PlaylistRepo", "delete: account facts purge failed", it) }
         // The VOD snapshot file is keyed by the playlist's IDENTITY, which is
         // derived from the row, so compute it BEFORE the row is gone.
         val row = dao.byId(playlistId)
@@ -3591,3 +4045,6 @@ private fun Double.formatChannelNumber(): String {
  *  server per playlist. */
 
 private const val TAG_CAPS = "AerioCaps"
+
+/** Per-stage timing for playlist saves (Edit Playlist / Add Playlist). */
+private const val TAG_SAVE = "AerioSave"

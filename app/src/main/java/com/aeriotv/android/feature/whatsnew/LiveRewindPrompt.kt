@@ -91,7 +91,7 @@ fun LiveRewindPromptGate(currentRoute: String?) {
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "Buffered video is deleted automatically. You can change " +
-                        "this anytime in Settings > App Behaviors > Live Rewind.",
+                        "this anytime in Settings > Player > Live Rewind.",
                     style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

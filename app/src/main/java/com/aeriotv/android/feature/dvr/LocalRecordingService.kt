@@ -128,8 +128,9 @@ class LocalRecordingService : Service() {
                     val title = intent.getStringExtra(EXTRA_TITLE) ?: "Recording"
                     val channelName = intent.getStringExtra(EXTRA_CHANNEL_NAME) ?: title
                     val apiKey = intent.getStringExtra(EXTRA_API_KEY).orEmpty()
+                    val userAgent = intent.getStringExtra(EXTRA_USER_AGENT).orEmpty()
                     val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 60 * 60 * 1000L)
-                    startRecording(streamUrl, title, channelName, apiKey, durationMs)
+                    startRecording(streamUrl, title, channelName, apiKey, durationMs, userAgent)
                 }
             }
             ACTION_STOP -> {
@@ -144,7 +145,8 @@ class LocalRecordingService : Service() {
                     val title = intent.getStringExtra(EXTRA_TITLE) ?: "Recording"
                     val channelName = intent.getStringExtra(EXTRA_CHANNEL_NAME) ?: title
                     val apiKey = intent.getStringExtra(EXTRA_API_KEY).orEmpty()
-                    startDownload(fileUrl, title, channelName, apiKey)
+                    val userAgent = intent.getStringExtra(EXTRA_USER_AGENT).orEmpty()
+                    startDownload(fileUrl, title, channelName, apiKey, userAgent)
                 }
             }
         }
@@ -157,6 +159,7 @@ class LocalRecordingService : Service() {
         channelName: String,
         apiKey: String,
         durationMs: Long,
+        userAgent: String = "",
     ) {
         if (streamUrl.isBlank()) {
             stopSelf()
@@ -214,6 +217,13 @@ class LocalRecordingService : Service() {
                     .url(streamUrl)
                     .header("X-API-Key", apiKey)
                     .header("Authorization", "ApiKey $apiKey")
+                    .apply {
+                        // Per-playlist User-Agent (PlaybackHeaders). Blank
+                        // leaves okhttp's own default in place, which is what
+                        // every recording sent before this.
+                        userAgent.takeIf { it.isNotBlank() }
+                            ?.let { header("User-Agent", it) }
+                    }
                     // Tag the trusted host so the network interceptor can strip
                     // credentials from any cross-host redirect that follows.
                     .tag(String::class.java, runCatching { java.net.URI(streamUrl).host }.getOrNull() ?: "")
@@ -298,7 +308,13 @@ class LocalRecordingService : Service() {
      * playback URL with the source's auth headers, write it to the recordings
      * directory, record the byte size.
      */
-    private fun startDownload(fileUrl: String, title: String, channelName: String, apiKey: String) {
+    private fun startDownload(
+        fileUrl: String,
+        title: String,
+        channelName: String,
+        apiKey: String,
+        userAgent: String = "",
+    ) {
         if (fileUrl.isBlank()) {
             stopSelf()
             return
@@ -339,6 +355,10 @@ class LocalRecordingService : Service() {
                     .url(fileUrl)
                     .header("X-API-Key", apiKey)
                     .header("Authorization", "ApiKey $apiKey")
+                    .apply {
+                        userAgent.takeIf { it.isNotBlank() }
+                            ?.let { header("User-Agent", it) }
+                    }
                     .tag(String::class.java, runCatching { java.net.URI(fileUrl).host }.getOrNull() ?: "")
                     .build()
                 okHttp.newCall(request).execute().use { response ->
@@ -699,6 +719,8 @@ class LocalRecordingService : Service() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_CHANNEL_NAME = "channelName"
         const val EXTRA_API_KEY = "apiKey"
+        /** Per-playlist custom User-Agent, or blank for the client default. */
+        const val EXTRA_USER_AGENT = "userAgent"
         const val EXTRA_DURATION_MS = "durationMs"
 
         fun start(
@@ -708,6 +730,7 @@ class LocalRecordingService : Service() {
             channelName: String,
             apiKey: String,
             durationMs: Long,
+            userAgent: String = "",
         ) {
             val intent = Intent(context, LocalRecordingService::class.java).apply {
                 action = ACTION_START
@@ -715,6 +738,7 @@ class LocalRecordingService : Service() {
                 putExtra(EXTRA_TITLE, title)
                 putExtra(EXTRA_CHANNEL_NAME, channelName)
                 putExtra(EXTRA_API_KEY, apiKey)
+                putExtra(EXTRA_USER_AGENT, userAgent)
                 putExtra(EXTRA_DURATION_MS, durationMs)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -737,6 +761,7 @@ class LocalRecordingService : Service() {
             title: String,
             channelName: String,
             apiKey: String,
+            userAgent: String = "",
         ) {
             val intent = Intent(context, LocalRecordingService::class.java).apply {
                 action = ACTION_DOWNLOAD
@@ -744,6 +769,7 @@ class LocalRecordingService : Service() {
                 putExtra(EXTRA_TITLE, title)
                 putExtra(EXTRA_CHANNEL_NAME, channelName)
                 putExtra(EXTRA_API_KEY, apiKey)
+                putExtra(EXTRA_USER_AGENT, userAgent)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

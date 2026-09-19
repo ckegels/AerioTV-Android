@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -32,12 +33,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.shape.CircleShape
+import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.FiberSmartRecord
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.Search
@@ -411,6 +414,12 @@ fun LiveTvPhoneHeaderRow(
     groups: List<String>,
     selectedGroup: String,
     onSelectGroup: (String) -> Unit,
+    /** Per-playlist default group token; blank means All Channels is the
+     *  effective default. The pinned pill is the only indicator. */
+    defaultToken: String = "",
+    /** Long press on a pill sets it as the default, or clears the default
+     *  when it is already the pinned one (Logan 2026-09-17: no menu). */
+    onSetDefault: ((String) -> Unit)? = null,
     collections: List<ChannelCollection>,
     collectionPillItem: @Composable (ChannelCollection) -> Unit,
     searchActive: Boolean,
@@ -480,6 +489,8 @@ fun LiveTvPhoneHeaderRow(
                     groups = groups,
                     selectedGroup = selectedGroup,
                     onSelectGroup = { actionsExpanded = false; onSelectGroup(it) },
+                    defaultToken = defaultToken,
+                    onSetDefault = onSetDefault,
                     collections = collections,
                     collectionPillItem = collectionPillItem,
                     modifier = Modifier.weight(1f).clipToBounds(),
@@ -618,6 +629,8 @@ private fun LiveTvHeaderPillStrip(
     groups: List<String>,
     selectedGroup: String,
     onSelectGroup: (String) -> Unit,
+    defaultToken: String,
+    onSetDefault: ((String) -> Unit)?,
     collections: List<ChannelCollection>,
     collectionPillItem: @Composable (ChannelCollection) -> Unit,
     modifier: Modifier = Modifier,
@@ -642,22 +655,57 @@ private fun LiveTvHeaderPillStrip(
             key = { "coll_${it.id}" },
         ) { c -> collectionPillItem(c) }
         items(groups, key = { "grp_$it" }) { group ->
-            FilterChip(
-                selected = selectedGroup == group,
-                onClick = { onSelectGroup(group) },
-                label = { Text(groupSidebarLabel(group), style = MaterialTheme.typography.labelLarge) },
-                shape = CircleShape,
-                colors = FilterChipDefaults.filterChipColors(
-                    containerColor = Color.Transparent,
-                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-                border = FilterChipDefaults.filterChipBorder(
-                    enabled = true,
+            val isDefault = group == defaultToken ||
+                (group == PlaylistViewModel.ALL_GROUPS && defaultToken.isBlank())
+            Box {
+                FilterChip(
                     selected = selectedGroup == group,
-                ),
-            )
+                    onClick = { onSelectGroup(group) },
+                    label = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(groupSidebarLabel(group), style = MaterialTheme.typography.labelLarge)
+                            // Thumbtack on the default group, same 11dp
+                            // tertiary mark the phone drawer draws.
+                            if (isDefault) {
+                                Icon(
+                                    imageVector = Icons.Filled.PushPin,
+                                    contentDescription = "Default group",
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(11.dp),
+                                )
+                            }
+                        }
+                    },
+                    shape = CircleShape,
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = Color.Transparent,
+                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = selectedGroup == group,
+                    ),
+                )
+                // FilterChip has no long-press hook, so an overlay exactly
+                // the size of the pill takes both gestures: tap selects the
+                // group, hold sets or clears the default.
+                if (onSetDefault != null) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clip(CircleShape)
+                            .combinedClickable(
+                                onClick = { onSelectGroup(group) },
+                                onLongClick = { onSetDefault(group) },
+                            ),
+                    )
+                }
+            }
         }
         items(
             collections.filter { it.placement != ChannelCollection.PLACEMENT_BEGINNING },

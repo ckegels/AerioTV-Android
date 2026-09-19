@@ -197,6 +197,24 @@ data class PlaylistEntity(
     val dispatcharrCastAacProfileId: Int? = null,
 
     /**
+     * Per-playlist User-Agent for this server's Dispatcharr API requests
+     * (Apple `ServerConnection.customUserAgent`). Blank = the app default,
+     * `AerioTV/<version> (Android; <model>)`.
+     *
+     * Its job is identification, not behavior: Dispatcharr's admin Stats
+     * panel attributes traffic by User-Agent, so a household running several
+     * boxes can tell them apart. Seeded into the client's per-host registry
+     * by [com.aeriotv.android.core.network.DispatcharrClient.seedUserAgent]
+     * from the one base-URL choke point every Dispatcharr call resolves
+     * through.
+     *
+     * `@ColumnInfo(defaultValue = "")` MUST match the v35 migration's
+     * `DEFAULT ''` or Room's schema validation fails on upgraded installs.
+     */
+    @ColumnInfo(defaultValue = "")
+    val customUserAgent: String = "",
+
+    /**
      * Fingerprint of this server's EPG sources list the cached guide was built
      * from (Logan 2026-09-12): the sorted "id:updated_at" pairs from
      * /api/epg/sources/, joined with commas, with sources that carry no
@@ -464,8 +482,23 @@ fun PlaylistEntity.sourceTypeDisplayLabel(): String = when (sourceType) {
 fun PlaylistEntity.sourceTypeBadgeLabel(): String = when (sourceType) {
     SourceType.DispatcharrUserPass.name, SourceType.DispatcharrApiKey.name -> "Dispatcharr"
     SourceType.XtreamCodes.name -> "Xtream Codes"
-    SourceType.M3uUrl.name -> "M3U"
+    SourceType.M3uUrl.name -> "M3U Playlist"
     else -> sourceType
+}
+
+/**
+ * The playlist row's SUBTITLE, one string on every form factor and both
+ * platforms (Logan 2026-09-18): "<Type>" on its own, or "<Type> · <N>
+ * channels" once a count is known. Never the URL - a provider URL can carry
+ * the username and password in its query string, and these rows are the ones
+ * users screenshot.
+ *
+ * A stored count of 0 means "not synced yet", not "no channels", so it is
+ * omitted rather than shown as a zero.
+ */
+fun PlaylistEntity.playlistRowSubtitle(): String {
+    val type = sourceTypeBadgeLabel()
+    return if (channelCount > 0) "$type \u00B7 $channelCount channels" else type
 }
 
 /**

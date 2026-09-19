@@ -325,16 +325,8 @@ class AutoBrowseTree @Inject constructor(
         }
     }
 
-    private fun headersFor(playlist: PlaylistEntity): Map<String, String> {
-        val isDispatcharr = playlist.sourceType == SourceType.DispatcharrApiKey.name ||
-            playlist.sourceType == SourceType.DispatcharrUserPass.name
-        val key = playlist.apiKey?.takeIf { it.isNotBlank() }
-        return if (isDispatcharr && key != null) {
-            mapOf("X-API-Key" to key, "Authorization" to "ApiKey $key")
-        } else {
-            emptyMap()
-        }
-    }
+    private fun headersFor(playlist: PlaylistEntity): Map<String, String> =
+        com.aeriotv.android.core.network.PlaybackHeaders.forPlaylist(playlist)
 
     companion object {
         const val ROOT_ID = "aerio_auto_root"

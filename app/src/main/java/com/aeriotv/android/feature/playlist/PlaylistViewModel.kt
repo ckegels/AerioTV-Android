@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
@@ -181,6 +182,17 @@ class PlaylistViewModel @Inject constructor(
         const val RECENT_GROUP = "__recent__"
         private const val TAG = "PlaylistViewModel"
 
+        /** Timing log tag shared with [PlaylistRepository]'s save stages. */
+        private const val TAG_SAVE = "AerioSave"
+
+        /**
+         * How long the save screen waits for one On Demand half to produce its
+         * first page before moving on. Generous (a cold Dispatcharr VOD page on
+         * a big panel is seconds, not milliseconds) but bounded: a server that
+         * neither answers nor fails must not strand the user on a save screen.
+         */
+        private const val VOD_REBUILD_STAGE_TIMEOUT_MS = 45_000L
+
         /**
          * How long a disk-cached EPG is treated as fresh before a relaunch also
          * hits the network. Within this window the cache is used as-is (instant,
@@ -252,6 +264,43 @@ class PlaylistViewModel @Inject constructor(
      *  phase-watcher never re-fires and the add silently succeeds with no advance. */
     private val _sourceConfigured = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val sourceConfigured: SharedFlow<Unit> = _sourceConfigured.asSharedFlow()
+
+    /**
+     * Which phase of a playlist save is running right now, or null when no save
+     * is in flight. Emitted by [PlaylistRepository.loadAndPersist] at the real
+     * call boundaries (login, channel fetch, persist), never on a timer, so the
+     * staged loading screen Edit Playlist shows can name what is taking the
+     * time. A StateFlow because the repository reports stages from whatever
+     * dispatcher it is on.
+     */
+    private val _saveStage = MutableStateFlow<PlaylistRepository.SaveStage?>(null)
+    val saveStage: StateFlow<PlaylistRepository.SaveStage?> = _saveStage.asStateFlow()
+
+    /**
+     * The steps THIS save is going to run, in display order, so the staged
+     * screen lists exactly those and no others (a playlist whose account cannot
+     * view TV Shows never gets a "Loading TV shows..." row). Grows as the save
+     * learns what it will do; see [PlaylistRepository.SavePlan].
+     */
+    private val _savePlan = MutableStateFlow(
+        PlaylistRepository.SavePlan(
+            stages = listOf(
+                PlaylistRepository.SaveStage.LoadingChannels,
+                PlaylistRepository.SaveStage.Finishing,
+            ),
+        ),
+    )
+    val savePlan: StateFlow<PlaylistRepository.SavePlan> = _savePlan.asStateFlow()
+
+    /**
+     * Whether the save now in flight has a network stage worth a loading screen.
+     * False for an instant save (a rename, a Guide Days change, an On Demand
+     * toggle): those write one row and pop, so showing "Loading channels" for a
+     * frame would be both a lie and a flash. Set before the work starts and
+     * cleared when it settles.
+     */
+    private val _saveHasProgress = MutableStateFlow(false)
+    val saveHasProgress: StateFlow<Boolean> = _saveHasProgress.asStateFlow()
 
     /** Pending Live TV guide-jump target (channel guideMatchKey + programme
      *  start millis), emitted when a Search EPG result is tapped while the
@@ -1653,13 +1702,42 @@ class PlaylistViewModel @Inject constructor(
          * Null keeps whatever the row already has.
          */
         sourceTypeOverride: SourceType? = null,
+        /**
+         * Per-playlist Dispatcharr User-Agent (Apple `customUserAgent`).
+         * Blank clears the override; null leaves the stored value alone.
+         */
+        customUserAgent: String? = null,
+        /**
+         * Called on the main thread when the save settles: null on success, the
+         * user-facing failure line otherwise.
+         *
+         * Edit Playlist used to pop the moment Save was tapped, so a rejected
+         * login or a failed channel fetch (both of which restore the previous
+         * row, see [PlaylistRepository.loadAndPersist]) looked exactly like
+         * "my credentials did not save" with no message anywhere - the error
+         * landed in [UiState.error], which that screen never renders. The
+         * screen now waits for this and only leaves on success.
+         */
+        onResult: ((String?) -> Unit)? = null,
     ) {
         viewModelScope.launch {
-            val active = repository.activePlaylist() ?: return@launch
+            // Fresh save, fresh plan: the previous save's rows must not decide
+            // this one's (a credential change followed by a rename).
+            _savePlan.value = PlaylistRepository.SavePlan(
+                stages = listOf(
+                    PlaylistRepository.SaveStage.LoadingChannels,
+                    PlaylistRepository.SaveStage.Finishing,
+                ),
+            )
+            val active = repository.activePlaylist() ?: run {
+                _saveStage.value = null
+                _saveHasProgress.value = false
+                onResult?.invoke("No playlist loaded.")
+                return@launch
+            }
             val sourceType = sourceTypeOverride
                 ?: SourceType.entries.firstOrNull { it.name == active.sourceType }
                 ?: SourceType.M3uUrl
-            _state.update { it.copy(isLoading = true, error = null) }
             val request = PlaylistRepository.SaveRequest(
                 sourceType = sourceType,
                 name = name.ifBlank { null },
@@ -1675,7 +1753,42 @@ class PlaylistViewModel @Inject constructor(
                 dispatcharrProfileId = dispatcharrProfileId,
                 vodEnabled = vodEnabled,
                 epgRetentionDays = sanitizeGuideDays(epgRetentionDays),
+                customUserAgent = customUserAgent,
             )
+            // What does this edit actually need? A rename, a User-Agent, a LAN
+            // URL, an EPG URL, Guide Days or the On Demand toggle change nothing
+            // about which channels exist, so they take the instant path: one row
+            // UPDATE, no login, no 650-channel fetch, no capability probe, no
+            // loading screen. Apple has always worked this way; here the rename
+            // was costing 9 to 11 s (Logan, measured 2026-09-18).
+            val editPlan = repository.classifyEdit(request, active.id)
+            if (editPlan != null && editPlan.instant) {
+                _saveHasProgress.value = false
+                _saveStage.value = null
+                repository.applyInstantEdit(request, active.id, editPlan).fold(
+                    onSuccess = { entity ->
+                        _state.update { it.copy(playlist = entity, isLoading = false, error = null) }
+                        // Guide Days / EPG URL: reload in the BACKGROUND. The
+                        // screen has already popped, so nothing waits on it.
+                        if (editPlan.reloadGuide) loadEpgIfConfigured(entity, forceRefresh = true)
+                        // On Demand ON kicks the ordinary sweep, OFF hides the
+                        // catalog: both come from the row this save just wrote,
+                        // which OnDemandViewModel collects (vodEnabled gate), so
+                        // there is nothing to drive from here.
+                        onResult?.invoke(null)
+                    },
+                    onFailure = { t ->
+                        Log.w(TAG, "saveEdits (instant) failed", t)
+                        val message = loadFailureMessage("Save failed", t)
+                        _state.update { it.copy(playlist = active, isLoading = false, error = message) }
+                        onResult?.invoke(message)
+                    },
+                )
+                return@launch
+            }
+            // A real network stage from here: the staged screen is honest now.
+            _saveHasProgress.value = true
+            _state.update { it.copy(isLoading = true, error = null) }
             // GH #83: Edit Playlist reads state.playlist, so reflect the
             // edited fields there NOW (the repository writes the DB row early
             // too); a failed save puts the previous values back.
@@ -1693,10 +1806,16 @@ class PlaylistViewModel @Inject constructor(
                         dispatcharrProfileId = request.dispatcharrProfileId,
                         vodEnabled = request.vodEnabled,
                         epgRetentionDays = request.epgRetentionDays,
+                        customUserAgent = request.customUserAgent ?: active.customUserAgent,
                     ),
                 )
             }
-            repository.loadAndPersist(request, existingId = active.id).fold(
+            repository.loadAndPersist(
+                request,
+                existingId = active.id,
+                onStage = { stage -> _saveStage.value = stage },
+                onPlan = { plan -> _savePlan.value = plan },
+            ).fold(
                 onSuccess = { (entity, channels) ->
                     _state.update {
                         it.copy(
@@ -1706,20 +1825,102 @@ class PlaylistViewModel @Inject constructor(
                             error = if (channels.isEmpty()) "No channels found." else null,
                         )
                     }
+                    // The account or the address changed on the active playlist,
+                    // so its stored On Demand catalog was built as somebody
+                    // else: wipe it and re-sweep. Same nuclear path "Refresh
+                    // Everything" uses (OnDemandViewModel collects the bus),
+                    // and the wait here is only for the FIRST page of each half
+                    // the account may view - the uncapped sweep carries on in
+                    // the background exactly as it does after an Add.
+                    awaitVodRebuild()
                     loadEpgIfConfigured(entity)
+                    _saveStage.value = null
+                    _saveHasProgress.value = false
+                    onResult?.invoke(null)
                 },
                 onFailure = { t ->
+                    // Stage cleared on failure too, so the staged screen gets
+                    // out of the way and the form can show Save Failed with the
+                    // typed values still in the fields.
+                    _saveStage.value = null
+                    _saveHasProgress.value = false
                     Log.w(TAG, "saveEdits failed", t)
+                    val message = loadFailureMessage("Save failed", t)
                     _state.update {
                         it.copy(
                             playlist = active,
                             isLoading = false,
-                            error = loadFailureMessage("Save failed", t),
+                            error = message,
                         )
                     }
+                    onResult?.invoke(message)
                 },
             )
         }
+    }
+
+    /**
+     * Wipe + rebuild the active playlist's On Demand catalog after a save that
+     * changed the account or the address, reporting the two stages the save
+     * screen shows while it happens. No-op unless the save decided the rebuild
+     * is real (see [PlaylistRepository.SavePlan]).
+     *
+     * Each half is waited on only to its FIRST stored page (or to a terminal
+     * answer: nothing to fetch, permission denied, a failed walk). The sweep is
+     * uncapped and can run for minutes; holding the screen for all of it would
+     * be a worse bug than the stale catalog, so it is left running in the
+     * background exactly as it is after Add Playlist. The timeout is the
+     * backstop for a server that answers neither way.
+     */
+    private suspend fun awaitVodRebuild() {
+        val plan = _savePlan.value
+        if (!plan.rebuildVod || !(plan.hasMovies || plan.hasSeries)) return
+        val token = vodResetBus.requestReset()
+        Log.i(TAG_SAVE, "vod rebuild requested token=$token movies=${plan.hasMovies} series=${plan.hasSeries}")
+        if (plan.hasMovies) {
+            _saveStage.value = PlaylistRepository.SaveStage.LoadingMovies
+            awaitVodHalf(token, VodResetBus.Kind.Movies)
+        }
+        if (plan.hasSeries) {
+            _saveStage.value = PlaylistRepository.SaveStage.LoadingSeries
+            awaitVodHalf(token, VodResetBus.Kind.Series)
+        }
+        _saveStage.value = PlaylistRepository.SaveStage.Finishing
+    }
+
+    private suspend fun awaitVodHalf(token: Long, kind: VodResetBus.Kind) {
+        val startedAt = System.currentTimeMillis()
+        val settled = kotlinx.coroutines.withTimeoutOrNull(VOD_REBUILD_STAGE_TIMEOUT_MS) {
+            vodResetBus.rebuild.first { it != null && it.token >= token && it.settled(kind) }
+        } != null
+        // Same shape as the repository's own stage lines, so one AerioSave
+        // filter still accounts for the whole save end to end.
+        Log.i(
+            TAG_SAVE,
+            "stage=Loading$kind elapsedMs=${System.currentTimeMillis() - startedAt} " +
+                "firstPage=${if (settled) "landed" else "timedOut"}",
+        )
+    }
+
+    /**
+     * Edit Playlist > Refresh Session (Apple parity). Re-mints the Direct
+     * Connect JWT pair from the saved username + password and re-reads the
+     * account's api_key. Returns the user-facing result line so the caller can
+     * show it under the row; true in the pair means "succeeded".
+     */
+    suspend fun refreshDispatcharrSession(): Pair<Boolean, String> {
+        val id = repository.activePlaylist()?.id
+            ?: return false to "No playlist loaded."
+        return repository.refreshDispatcharrSession(id).fold(
+            onSuccess = { rotated ->
+                true to if (rotated) "Session refreshed. Cached API key updated."
+                else "Session refreshed. API key unchanged."
+            },
+            onFailure = { t ->
+                Log.w(TAG, "refreshDispatcharrSession failed", t)
+                false to (t.message ?: "Refresh failed.")
+            },
+        )
     }
 
     /**
@@ -1852,6 +2053,17 @@ class PlaylistViewModel @Inject constructor(
     val activeIdLive: Flow<String?> = repository.observeActiveId()
 
     /**
+     * Display-only Dispatcharr account facts (echoed username, Channel Profile
+     * names) for one playlist, backing the Playlist Detail permissions section.
+     * Read-only: this never probes, so an inactive playlist simply shows what
+     * the last probe persisted.
+     */
+    fun dispatcharrAccountFacts(
+        playlistId: String,
+    ): Flow<com.aeriotv.android.core.preferences.DispatcharrAccountFacts> =
+        appPreferences.dispatcharrAccountFacts(playlistId)
+
+    /**
      * GH #81 default group, now owned by Live TV's Manage Groups sheet rather
      * than a Settings picker (Logan 2026-09-17). Same per-playlist preference
      * key Live TV already reads for its launch group, so behavior is unchanged.
@@ -1874,9 +2086,16 @@ class PlaylistViewModel @Inject constructor(
      * picker did: a default the user cannot see would open on nothing.
      */
     fun setDefaultGroup(token: String) {
-        val id = state.value.playlist?.id ?: return
-        if (id.isBlank()) return
         viewModelScope.launch {
+            // Read the SAME id [defaultGroupToken] reads (the DAO's active
+            // row), not state.playlist: that snapshot lags a playlist switch
+            // and is never written at all when the channel fetch fails, so a
+            // write could land under the previous playlist's key while the
+            // pin read the new one.
+            val id = activeIdLive.firstOrNull()
+                ?: state.value.playlist?.id
+                ?: return@launch
+            if (id.isBlank()) return@launch
             val current = appPreferences.defaultGroupTokenOnce(id)
             // Tapping the marked group again clears the default (back to
             // "last used"), which is how Apple's sheet behaves.

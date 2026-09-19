@@ -60,6 +60,10 @@ import com.aeriotv.android.feature.playlist.PlaylistViewModel
 internal fun ChannelListOverlay(
     groups: List<String>,
     activeGroup: String,
+    /** Per-playlist default group token; blank falls back to All Channels. */
+    defaultToken: String = "",
+    /** Long press on a group row sets or clears the Live TV default group. */
+    onSetDefault: ((String) -> Unit)? = null,
     channelsFor: (String) -> List<M3UChannel>,
     currentChannelId: String?,
     nowTitleFor: (M3UChannel) -> String?,
@@ -125,6 +129,8 @@ internal fun ChannelListOverlay(
                 GroupSidebarPanel(
                     groups = groups,
                     selectedToken = activeGroup,
+                    defaultToken = defaultToken,
+                    onSetDefault = onSetDefault,
                     onSelect = { token ->
                         onGroupChange(token)
                         onSidebarOpenChange(false)

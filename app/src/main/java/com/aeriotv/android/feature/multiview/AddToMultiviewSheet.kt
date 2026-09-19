@@ -152,17 +152,11 @@ fun AddToMultiviewSheet(
 
     // Dispatcharr auth headers for VOD / recording tiles (Navigation.kt parity):
     // X-API-Key + Authorization ApiKey, only for Dispatcharr-backed sources.
-    val vodHeaders = remember(state.playlist?.apiKey, state.playlist?.sourceType) {
-        val pl = state.playlist
-        val key = pl?.apiKey?.takeIf { it.isNotBlank() }
-        val isDispatcharr = pl?.sourceType == SourceType.DispatcharrApiKey.name ||
-            pl?.sourceType == SourceType.DispatcharrUserPass.name
-        if (isDispatcharr && key != null) {
-            mapOf("X-API-Key" to key, "Authorization" to "ApiKey $key")
-        } else {
-            emptyMap()
-        }
-    }
+    val vodHeaders = remember(
+        state.playlist?.apiKey,
+        state.playlist?.sourceType,
+        state.playlist?.customUserAgent,
+    ) { com.aeriotv.android.core.network.PlaybackHeaders.forPlaylist(state.playlist) }
 
     var selectedGroup by remember { mutableStateOf(PlaylistViewModel.ALL_GROUPS) }
     var query by remember { mutableStateOf("") }

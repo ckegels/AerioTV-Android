@@ -4,6 +4,7 @@ import com.aeriotv.android.ui.theme.textAccent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -18,10 +19,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -31,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -90,12 +93,24 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
  */
 internal fun groupSidebarLabel(token: String): String = groupDisplayName(token)
 
+/** Hint copy under the TV sidebar's "Groups" heading. */
+internal const val GROUP_DEFAULT_HINT_TV =
+    "Hold Select on a group to set it as default."
+
 @Composable
 internal fun GroupSidebarPanel(
     groups: List<String>,
     selectedToken: String,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Per-playlist default group (GH #81, Manage Groups owns the write).
+     *  Blank means nothing stored, and All Channels is then the effective
+     *  default, matching Apple GroupSidebar.swift:254. */
+    defaultToken: String = "",
+    /** Long press (D-pad center held on TV) makes that group the default, or
+     *  clears the default when it is already the pinned one. The thumbtack in
+     *  the row is the only indicator (Logan 2026-09-17: no menu). */
+    onSetDefault: ((String) -> Unit)? = null,
     initialFocus: FocusRequester? = null,
     /** Fires as D-pad focus lands on a row. The guide's docked pane uses it
      *  for live group preview (Logan 2026-08-06); the player's channel-list
@@ -243,6 +258,25 @@ internal fun GroupSidebarPanel(
                 )
             }
         }
+        // Hold-Select hint (Logan 2026-09-18). TV only, and gated on the same
+        // "Show Remote Hints" toggle as every other remote hint, so a user who
+        // turned hints off does not get a new one here. Plain text, never
+        // focusable, so it cannot sit in the D-pad path between the header
+        // button and the first group row.
+        if (isTv && onSetDefault != null) {
+            val hintSettingsVm: com.aeriotv.android.feature.settings.SettingsViewModel =
+                androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
+            val hintsEnabled by hintSettingsVm.showRemoteHints
+                .collectAsStateWithLifecycle(initialValue = true)
+            if (hintsEnabled) {
+                Text(
+                    text = GROUP_DEFAULT_HINT_TV,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 8.dp),
+                )
+            }
+        }
         LazyColumn(
             state = listState,
             // The pane's exit = Cancel is inherited by the list's own focus
@@ -257,8 +291,10 @@ internal fun GroupSidebarPanel(
                     label = groupSidebarLabel(token),
                     isActive = token == selectedToken,
                     leadingStar = token == PlaylistViewModel.FAVORITES_GROUP,
-                    trailingPin = token == PlaylistViewModel.ALL_GROUPS,
+                    trailingPin = token == defaultToken ||
+                        (token == PlaylistViewModel.ALL_GROUPS && defaultToken.isBlank()),
                     onClick = { onSelect(token) },
+                    onSetDefault = onSetDefault?.let { set -> { set(token) } },
                     onFocused = {
                         focusedRowIndex = index
                         onRowFocused(token)
@@ -326,6 +362,8 @@ private fun GroupSidebarRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit = {},
+    /** Long press: set this group as the Live TV default (or clear it). */
+    onSetDefault: (() -> Unit)? = null,
     /** tvOS: star.fill before Favorites, pin.fill after the default group. */
     leadingStar: Boolean = false,
     trailingPin: Boolean = false,
@@ -334,6 +372,20 @@ private fun GroupSidebarRow(
     val focused by interaction.collectIsFocusedAsState()
     LaunchedEffect(focused) { if (focused) onFocused() }
     val isTv = rememberIsTvDevice()
+    // Same long-press mechanism the channel rows use: onLongClick fires while
+    // OK is still held, and the guard swallows the release so it cannot also
+    // register as a select (core/tv/TvMenuGuard).
+    val menuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
+    val rowClick: Modifier = if (onSetDefault == null) {
+        Modifier.clickable(interactionSource = interaction, indication = null, onClick = onClick)
+    } else {
+        Modifier.combinedClickable(
+            interactionSource = interaction,
+            indication = null,
+            onClick = menuGuard.wrap(onClick),
+            onLongClick = { onSetDefault(); menuGuard.arm() },
+        )
+    }
     if (isTv) {
         // tvOS GroupSidebarRowButtonStyle (halved): 30 pt text, 20/12 padding,
         // corner 10, focused = white 16% wash + inset accent ring + white
@@ -347,7 +399,7 @@ private fun GroupSidebarRow(
                 .clip(RoundedCornerShape(5.dp))
                 .background(bg)
                 .border(2.dp, if (focused) colors.primary else Color.Transparent, RoundedCornerShape(5.dp))
-                .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+                .then(rowClick)
                 .focusable(interactionSource = interaction)
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -390,7 +442,7 @@ private fun GroupSidebarRow(
                     Modifier
                 },
             )
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .then(rowClick)
             .focusable(interactionSource = interaction)
             .padding(
                 horizontal = if (isTv) 10.dp else 14.dp,
@@ -476,6 +528,10 @@ internal fun GroupFocusPreview(
 internal fun GuideGroupSidebarPane(
     groups: List<String>,
     selectedToken: String,
+    /** Per-playlist default group token; blank falls back to All Channels. */
+    defaultToken: String = "",
+    /** Long press on a row sets or clears the Live TV default group. */
+    onSetDefault: ((String) -> Unit)? = null,
     /** Debounced focus preview: apply this group NOW (not persisted), sidebar stays open. */
     onPreview: ((String) -> Unit)? = null,
     /** OK or Right: keep this group and close the sidebar. */
@@ -539,6 +595,8 @@ internal fun GuideGroupSidebarPane(
             GroupSidebarPanel(
                 groups = groups,
                 selectedToken = selectedToken,
+                defaultToken = defaultToken,
+                onSetDefault = onSetDefault,
                 onSelect = onCommit,
                 initialFocus = focus,
                 onRowFocused = { focusedToken = it },
@@ -562,23 +620,125 @@ internal fun GuideGroupSidebarPane(
 }
 
 /**
+ * Every horizontal metric the phone drawer uses, in ONE place, so the
+ * fitted-width math and the row that draws itself can never drift apart
+ * (Apple `PhoneDrawerMetrics`, ChannelListView.swift).
+ */
+internal object PhoneDrawerMetrics {
+    /** Row label size. */
+    val rowFontSize = 15.sp
+    /** Leading status glyph (Favorites star). */
+    val rowIconSize = 13.dp
+    /** Spacing between every element of the row. */
+    val rowSpacing = 8.dp
+    /** Minimum gap the label keeps before the pin column. */
+    val labelSpacerMin = 4.dp
+    /** Pin touch target (square); the glyph inside stays small. */
+    val pinTouchSide = 44.dp
+    val pinGlyphSize = 13.dp
+    /** Row horizontal insets. */
+    val rowInsetLeading = 18.dp
+    val rowInsetTrailing = 4.dp
+    /** Header row: horizontal padding, gap before the circle, circle side. */
+    val headerHPadding = 18.dp
+    val headerGap = 12.dp
+    val headerCircleSide = 34.dp
+    val headerFontSize = 12.sp
+    val headerTracking = 1.2.sp
+    /** Row height; the 44dp pin target overflows it instead of growing it. */
+    val rowMinHeight = 34.dp
+    /** Slack so sub-pixel measurement differences never truncate a label. */
+    val safety = 4.dp
+    /** Never narrower than this, however short the group names are. */
+    val minWidth = 200.dp
+    /** Fraction of the screen the drawer may never exceed. */
+    const val MAX_SCREEN_FRACTION = 0.85f
+
+    /** Everything a row reserves horizontally OUTSIDE the label text. */
+    val rowChrome: Dp
+        get() = rowInsetLeading + rowInsetTrailing + labelSpacerMin + rowSpacing + pinTouchSide
+}
+
+/**
+ * Fitted phone-drawer width: the wider of the longest group row and the
+ * header row, floored at max(200dp, header row) and ceilinged at ~85 percent
+ * of the screen. It grows AND shrinks with the token list; names past the
+ * ceiling ellipsize.
+ *
+ * Measured with a [androidx.compose.ui.text.TextMeasurer] at the row's exact
+ * bold style (the widest a row ever draws) and recomputed only when the token
+ * list or the font scale changes. NO BoxWithConstraints / SubcomposeLayout:
+ * this app crashes when one lands inside an intrinsic-measured parent, so the
+ * screen width comes from LocalConfiguration.
+ */
+@Composable
+internal fun rememberPhoneDrawerWidth(
+    tokens: List<String>,
+    labelFor: (String) -> String,
+): Dp {
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val fontScale = density.fontScale
+    val screenWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+    val M = PhoneDrawerMetrics
+    val rowStyle = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = M.rowFontSize,
+        fontWeight = FontWeight.Bold,
+    )
+    val headerStyle = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = M.headerFontSize,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = M.headerTracking,
+    )
+    return remember(tokens, fontScale, screenWidth, rowStyle, headerStyle, density) {
+        fun textWidth(text: String, style: androidx.compose.ui.text.TextStyle): Dp {
+            val px = measurer.measure(text = text, style = style, maxLines = 1).size.width
+            return with(density) { kotlin.math.ceil(px.toFloat()).toInt().toDp() }
+        }
+        val header = (M.headerHPadding * 2) + textWidth("CHANNEL GROUPS", headerStyle) +
+            M.headerGap + M.headerCircleSide + M.safety
+        val widestRow = tokens.maxOfOrNull { token ->
+            var w = textWidth(labelFor(token), rowStyle)
+            if (token == PlaylistViewModel.FAVORITES_GROUP) w += M.rowIconSize + M.rowSpacing
+            w + M.rowChrome + M.safety
+        } ?: 0.dp
+        val floor = maxOf(M.minWidth, header)
+        val ceiling = maxOf(floor, screenWidth * M.MAX_SCREEN_FRACTION)
+        minOf(maxOf(widestRow, floor), ceiling)
+    }
+}
+
+/**
  * Phone group drawer (Apple `PhoneGroupDrawer`, ChannelListView.swift:4653-4723,
  * Logan 2026-09-05): the phone's default group selector. "CHANNEL GROUPS"
  * heading with the Manage Groups circle beside it, then Favorites, All and
  * the visible groups (collections ride along where their pill placement puts
- * them) as tight 34dp rows with no dividers. The default group carries a pin
- * (Android has no default-group setting yet, so All is the pinned row). A
+ * them) as tight 34dp rows with no dividers. The default group carries a pin,
+ * driven by the per-playlist Default Group that Manage Groups writes (GH #81);
+ * with nothing stored, All Channels is the effective default and keeps it. A
  * long press lifts a row to reorder; the new order is the pill order too and
  * is written through [onReorder] without the collection tokens.
+ *
+ * Each group row (not the collections) carries a TAPPABLE thumbtack at its
+ * trailing edge that sets or clears the per-playlist default. Apple parity
+ * (Logan 2026-09-18): a stationary long press used to do this, but it
+ * collided with the list's own hold-and-drag reorder, so a reorder also
+ * pinned the moved group.
  */
 @Composable
 internal fun PhoneGroupDrawer(
     tokens: List<String>,
     selected: String,
+    /** Per-playlist default group token; blank falls back to All Channels. */
+    defaultToken: String = "",
     labelFor: (String) -> String,
     onSelect: (String) -> Unit,
     onReorder: (List<String>) -> Unit,
     onManageGroups: () -> Unit,
+    /** Trailing thumbtack tap pins that group as the per-playlist default, or
+     *  clears it when it is already pinned. Apple parity (Logan 2026-09-18);
+     *  null leaves the drawer reorder-only with no pin column. */
+    onSetDefault: ((String) -> Unit)? = null,
     hiddenGroupCount: Int = 0,
     modifier: Modifier = Modifier,
 ) {
@@ -623,61 +783,112 @@ internal fun PhoneGroupDrawer(
                 )
             }
         }
+        // No gesture hint here (Logan 2026-09-18): the tappable pin is
+        // self-explanatory. The TV sidebar keeps its own Hold Select hint.
+        Spacer(Modifier.height(8.dp))
         LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
             items(order, key = { it }) { token ->
                 val isCollection = token.startsWith(ChannelCollection.TOKEN_PREFIX)
                 ReorderableItem(reorderState, key = token) { dragging ->
                     val isSelected = token == selected
+                    val M = PhoneDrawerMetrics
+                    // The default group. Unchanged rule: the stored token, or
+                    // All Channels while nothing is stored.
+                    val isDefault = token == defaultToken ||
+                        (token == PlaylistViewModel.ALL_GROUPS && defaultToken.isBlank())
                     Row(
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(
                                 if (dragging) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)
                                 else Color.Transparent,
                             )
-                            .clickable { onSelect(token) }
-                            // Collections keep their pill placement; only the
-                            // real groups (and the pinned rows) reorder.
-                            .then(
-                                if (isCollection) Modifier
-                                else Modifier.longPressDraggableHandle(
-                                    onDragStopped = {
-                                        onReorder(order.filterNot { it.startsWith(ChannelCollection.TOKEN_PREFIX) })
-                                    },
-                                ),
-                            )
-                            .heightIn(min = 34.dp)
-                            .padding(start = 18.dp, end = 14.dp),
+                            .heightIn(min = M.rowMinHeight),
                     ) {
-                        if (token == PlaylistViewModel.FAVORITES_GROUP) {
-                            Icon(
-                                imageVector = Icons.Filled.Star,
-                                contentDescription = null,
-                                tint = if (isSelected) MaterialTheme.colorScheme.primary
+                        Row(
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(M.rowSpacing),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onSelect(token) }
+                                // Collections keep their pill placement; only
+                                // the real groups reorder.
+                                .then(
+                                    if (isCollection) Modifier
+                                    else Modifier.longPressDraggableHandle(
+                                        onDragStopped = {
+                                            onReorder(
+                                                order.filterNot {
+                                                    it.startsWith(ChannelCollection.TOKEN_PREFIX)
+                                                },
+                                            )
+                                        },
+                                    ),
+                                )
+                                .heightIn(min = M.rowMinHeight)
+                                .padding(start = M.rowInsetLeading),
+                        ) {
+                            if (token == PlaylistViewModel.FAVORITES_GROUP) {
+                                Icon(
+                                    imageVector = Icons.Filled.Star,
+                                    contentDescription = null,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onBackground,
+                                    modifier = Modifier.size(M.rowIconSize),
+                                )
+                            }
+                            Text(
+                                text = labelFor(token),
+                                fontSize = M.rowFontSize,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) MaterialTheme.colorScheme.textAccent
                                 else MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.size(13.dp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
                             )
+                            Spacer(Modifier.width(M.labelSpacerMin))
                         }
-                        Text(
-                            text = labelFor(token),
-                            fontSize = 15.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) MaterialTheme.colorScheme.textAccent
-                            else MaterialTheme.colorScheme.onBackground,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (token == PlaylistViewModel.ALL_GROUPS) {
-                            Icon(
-                                imageVector = Icons.Filled.PushPin,
-                                contentDescription = "Default group",
-                                tint = MaterialTheme.colorScheme.tertiary,
-                                modifier = Modifier.size(11.dp),
-                            )
+                        // Tappable thumbtack. 44dp touch target on a 34dp row:
+                        // requiredSize lets the target overflow the row
+                        // vertically instead of growing it.
+                        Box(
+                            modifier = Modifier
+                                .width(M.pinTouchSide)
+                                .height(M.rowMinHeight),
+                            contentAlignment = androidx.compose.ui.Alignment.Center,
+                        ) {
+                            if (!isCollection && onSetDefault != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .requiredSize(M.pinTouchSide)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null,
+                                        ) {
+                                            // Tapping All while it is only the
+                                            // IMPLICIT default is a no-op:
+                                            // there is nothing to clear.
+                                            val implicitAll = token == PlaylistViewModel.ALL_GROUPS &&
+                                                defaultToken.isBlank()
+                                            if (!implicitAll) onSetDefault(token)
+                                        },
+                                    contentAlignment = androidx.compose.ui.Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = if (isDefault) Icons.Filled.PushPin
+                                        else Icons.Outlined.PushPin,
+                                        contentDescription = if (isDefault) "Clear default group"
+                                        else "Set as default group",
+                                        tint = if (isDefault) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                                        modifier = Modifier.size(M.pinGlyphSize),
+                                    )
+                                }
+                            }
                         }
+                        Spacer(Modifier.width(M.rowInsetTrailing))
                     }
                 }
             }
@@ -698,12 +909,19 @@ internal fun PhoneGroupDrawerHost(
     onDismiss: () -> Unit,
     tokens: List<String>,
     selected: String,
+    /** Per-playlist default group token; blank falls back to All Channels. */
+    defaultToken: String = "",
     labelFor: (String) -> String,
     onSelect: (String) -> Unit,
     onReorder: (List<String>) -> Unit,
     onManageGroups: () -> Unit,
+    /** Thumbtack tap pins the default group; see [PhoneGroupDrawer]. */
+    onSetDefault: ((String) -> Unit)? = null,
     hiddenGroupCount: Int = 0,
 ) {
+    // One width for the surface AND the slide animation: the drawer fits its
+    // longest label instead of a fixed 78 percent of the screen.
+    val drawerWidth = rememberPhoneDrawerWidth(tokens, labelFor)
     androidx.activity.compose.BackHandler(enabled = open) { onDismiss() }
     androidx.compose.animation.AnimatedVisibility(
         visible = open,
@@ -729,8 +947,7 @@ internal fun PhoneGroupDrawerHost(
         Box(
             modifier = Modifier
                 .fillMaxHeight()
-                .fillMaxWidth(0.78f)
-                .widthIn(max = 320.dp)
+                .width(drawerWidth)
                 .background(MaterialTheme.colorScheme.background)
                 // Swallow taps so they never reach the scrim below.
                 .clickable(
@@ -743,10 +960,12 @@ internal fun PhoneGroupDrawerHost(
             PhoneGroupDrawer(
                 tokens = tokens,
                 selected = selected,
+                defaultToken = defaultToken,
                 labelFor = labelFor,
                 onSelect = { onSelect(it); onDismiss() },
                 onReorder = onReorder,
                 onManageGroups = onManageGroups,
+                onSetDefault = onSetDefault,
                 hiddenGroupCount = hiddenGroupCount,
             )
         }

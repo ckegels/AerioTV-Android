@@ -103,6 +103,16 @@ const val SUBTEXT_SCALE_MAX = 1.50f
  * follow as their sub-screens land.
  */
 @Singleton
+/**
+ * Display-only facts about the Dispatcharr account a playlist connects as,
+ * shown on Playlist Detail. No credentials: just the echoed username and the
+ * names of the assigned Channel Profiles.
+ */
+data class DispatcharrAccountFacts(
+    val username: String = "",
+    val profileNames: List<String> = emptyList(),
+)
+
 class AppPreferences @Inject constructor(
     @ApplicationContext private val context: Context,
     private val cipher: CredentialCipher,
@@ -282,9 +292,12 @@ class AppPreferences @Inject constructor(
         }
     }
 
-    /** iOS `displayScaleMovies` parity. 0.85 .. 1.25. Default 1.0. */
+    /** iOS `displayScaleMovies` parity. 0.85 .. 1.5. Default 1.0. */
     val displayScaleMovies: Flow<Float> = store.data.map {
-        (it[KEY_DISPLAY_SCALE_MOVIES] ?: 1.0).toFloat()
+        // Logan 2026-09-18: the range is 85% .. 150% on every platform. Values
+        // stored while the old 85-175% segments existed are clamped on read so
+        // an upgraded device never renders above the shared maximum.
+        (it[KEY_DISPLAY_SCALE_MOVIES] ?: 1.0).toFloat().coerceIn(0.85f, 1.5f)
     }
     suspend fun setDisplayScaleMovies(value: Float) {
         store.edit { it[KEY_DISPLAY_SCALE_MOVIES] = value.toDouble() }
@@ -328,9 +341,16 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_TEXT_CONTRAST] = snapTextContrast(value).toDouble() }
     }
 
-    /** iOS `displayScaleLiveTV` parity. 0.85 .. 1.25. Default 1.0. */
+    /**
+     * iOS `displayScaleLiveTV` parity. 0.85 .. 1.5. Default 1.0.
+     *
+     * Logan 2026-09-18: Live TV caps at 150% like Movies on every platform.
+     * Values stored while the old 85-175% segments existed are clamped HERE,
+     * at the read point, so an upgraded device never renders above the shared
+     * maximum even though its preference file still holds 1.75.
+     */
     val displayScaleLiveTV: Flow<Float> = store.data.map {
-        (it[KEY_DISPLAY_SCALE_LIVE_TV] ?: 1.0).toFloat()
+        (it[KEY_DISPLAY_SCALE_LIVE_TV] ?: 1.0).toFloat().coerceIn(0.85f, 1.5f)
     }
     suspend fun setDisplayScaleLiveTV(value: Float) {
         store.edit { it[KEY_DISPLAY_SCALE_LIVE_TV] = value.toDouble() }
@@ -496,6 +516,16 @@ class AppPreferences @Inject constructor(
     suspend fun setGuideGroupSelector(mode: String) {
         store.edit { it[KEY_GUIDE_GROUP_SELECTOR] = mode }
     }
+
+    /**
+     * Raw stored value, or null when the user has never had the choice made
+     * for them. Drives the one-time seed in AerioTVApplication that makes
+     * "sidebar" the default for FRESH installs only; everyone else is pinned
+     * to "pills" explicitly so the decision is never re-evaluated. The flow
+     * above keeps "pills" as its fallback for the window before the seed runs.
+     */
+    suspend fun guideGroupSelectorRawOnce(): String? =
+        store.data.first()[KEY_GUIDE_GROUP_SELECTOR]
 
     /**
      * TV guide sidebar layout (Logan 2026-09-14), only meaningful while
@@ -1905,6 +1935,45 @@ class AppPreferences @Inject constructor(
     suspend fun dvrKeepAwakeOnce(): Boolean =
         store.data.first()[KEY_DVR_KEEP_AWAKE] ?: true
 
+    /**
+     * Display-only Dispatcharr account facts for the Playlist Detail
+     * "Dispatcharr User Permissions" section (iOS DispatcharrAccountFactsStore
+     * parity): the username the server echoed and the names of the account's
+     * assigned Channel Profiles.
+     *
+     * Kept HERE rather than on the playlist row on purpose: everything else the
+     * section shows is already persisted in Room, and these two strings are not
+     * worth a schema migration. Nothing here is a credential; the facts are
+     * cleared on a credential change and on playlist delete, exactly like the
+     * capability snapshot.
+     *
+     * Wire format: "username" then the profile names, all separated by U+001F.
+     */
+    fun dispatcharrAccountFacts(playlistId: String): Flow<DispatcharrAccountFacts> =
+        store.data.map { decodeAccountFacts(it[keyAccountFacts(playlistId)]) }
+
+    suspend fun dispatcharrAccountFactsOnce(playlistId: String): DispatcharrAccountFacts =
+        decodeAccountFacts(store.data.first()[keyAccountFacts(playlistId)])
+
+    suspend fun setDispatcharrAccountFacts(playlistId: String, facts: DispatcharrAccountFacts) {
+        val encoded = (listOf(facts.username) + facts.profileNames)
+            .joinToString(FACTS_SEPARATOR) { it.replace(FACTS_SEPARATOR, " ") }
+        store.edit { it[keyAccountFacts(playlistId)] = encoded }
+    }
+
+    suspend fun clearDispatcharrAccountFacts(playlistId: String) {
+        store.edit { it.remove(keyAccountFacts(playlistId)) }
+    }
+
+    private fun decodeAccountFacts(raw: String?): DispatcharrAccountFacts {
+        if (raw.isNullOrEmpty()) return DispatcharrAccountFacts()
+        val parts = raw.split(FACTS_SEPARATOR)
+        return DispatcharrAccountFacts(
+            username = parts.firstOrNull().orEmpty(),
+            profileNames = parts.drop(1).filter { it.isNotBlank() },
+        )
+    }
+
     private companion object {
         /** Max entries kept in [recentChannelIds]. Sized for the player's
          *  Recently Watched overlay (top 25, Logan 2026-07-20); the
@@ -1912,6 +1981,10 @@ class AppPreferences @Inject constructor(
         const val RECENT_CHANNELS_CAP = 25
         val KEY_RECENT_CHANNEL_IDS = stringPreferencesKey("recent_channel_ids")
         /** Guide rebuild: per-playlist identity fingerprint the EPG cache was built for. */
+        /** Separator for the packed account-facts string (never in a name). */
+        const val FACTS_SEPARATOR = ""
+        private fun keyAccountFacts(playlistId: String) =
+            stringPreferencesKey("dispatcharr_account_facts_$playlistId")
         private fun keyEpgIdentityHash(playlistId: String) = stringPreferencesKey("epg_identity_hash_$playlistId")
 
         /** GH #81: per-playlist Live TV group token (see [liveGroupToken]). */

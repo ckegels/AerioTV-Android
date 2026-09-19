@@ -225,7 +225,7 @@ internal fun TmdbSourceNote(
         !hasProviderArt && !tmdbConfigured -> TmdbNoteRow(
             icon = Icons.Filled.AutoAwesome,
             tint = accent,
-            text = "No artwork from your provider. Enter a TMDB API key in Settings > App Behaviors " +
+            text = "No artwork from your provider. Enter a TMDB API key in Settings > Movies & TV Shows " +
                 "to fill it in automatically. Only works when TMDB has a matching title.",
         )
         !hasProviderArt && lookupDone -> TmdbNoteRow(

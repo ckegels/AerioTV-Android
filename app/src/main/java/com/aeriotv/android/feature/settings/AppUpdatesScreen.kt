@@ -58,7 +58,7 @@ fun AppUpdatesScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        SettingsDetailTopBar(title = "App Updates", onBack = onBack)
+        SettingsDetailTopBar(title = "Updates", onBack = onBack)
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Column(
                 modifier = Modifier
@@ -69,7 +69,7 @@ fun AppUpdatesScreen(
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 SettingsSection(
-                    header = "This device",
+                    header = "This Device",
                     footer = "Updates on this channel come from the project's GitHub " +
                         "releases. Installing keeps your channels, settings, and " +
                         "recordings; AerioTV closes during the install and you reopen " +
@@ -78,7 +78,7 @@ fun AppUpdatesScreen(
                     SettingsInfoRow(label = "Version", value = BuildConfig.VERSION_NAME)
                     SettingsInfoRow(label = "Channel", value = "GitHub releases")
                     SettingsActionRow(
-                        label = "Check for updates",
+                        label = "Check for Updates",
                         leadingIcon = Icons.Filled.Refresh,
                         onClick = { viewModel.manualCheck() },
                     )
@@ -87,7 +87,7 @@ fun AppUpdatesScreen(
                 when (val s = state) {
                     is UpdateState.UpToDate -> StatusText("You're on the latest version.")
                     is UpdateState.Available -> SettingsSection(
-                        header = "Update available",
+                        header = "Update Available",
                         footer = s.info.notes.ifBlank { null },
                     ) {
                         SettingsActionRow(
@@ -111,7 +111,7 @@ fun AppUpdatesScreen(
                         StatusText("Verifying download...")
                     }
                     is UpdateState.ReadyToInstall -> SettingsSection(
-                        header = "Ready to install",
+                        header = "Ready to Install",
                         footer = "Your data is kept. AerioTV will close to install; reopen " +
                             "it from your home screen.",
                     ) {
@@ -122,7 +122,7 @@ fun AppUpdatesScreen(
                         )
                     }
                     is UpdateState.AwaitingInstallPermission -> SettingsSection(
-                        header = "One-time permission needed",
+                        header = "One-Time Permission Needed",
                         footer = "Allow AerioTV to install updates in the Settings screen, " +
                             "then come back. If you've already allowed it, Install " +
                             "continues right away.",
@@ -138,7 +138,7 @@ fun AppUpdatesScreen(
                             "install.",
                     )
                     is UpdateState.Error -> SettingsSection(
-                        header = "Update problem",
+                        header = "Update Problem",
                         footer = s.message,
                     ) {
                         SettingsActionRow(

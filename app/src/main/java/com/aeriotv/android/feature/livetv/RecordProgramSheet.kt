@@ -163,7 +163,7 @@ fun RecordProgramSheet(
                     if (usedMB >= storageCapMB) {
                         Toast.makeText(
                             context,
-                            "Local storage cap reached. Free space or raise the cap in Settings -> DVR.",
+                            "Local storage cap reached. Free space or raise the cap in Settings > DVR.",
                             Toast.LENGTH_LONG,
                         ).show()
                         onDismiss()
@@ -190,6 +190,8 @@ fun RecordProgramSheet(
                             title = target.title.ifBlank { target.channelName },
                             channelName = target.channelName,
                             apiKey = apiKey.orEmpty(),
+                            userAgent = com.aeriotv.android.core.network.PlaybackHeaders
+                                .customUserAgent(playlistState.playlist).orEmpty(),
                             durationMs = durationMs.coerceAtLeast(60_000L),
                         )
                         Toast.makeText(

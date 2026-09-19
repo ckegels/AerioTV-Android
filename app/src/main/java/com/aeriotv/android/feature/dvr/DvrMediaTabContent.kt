@@ -296,6 +296,12 @@ fun DvrMediaTabContent(
     val canManageDvr = com.aeriotv.android.ui.LocalDvrAccess.current == "manage"
     var showSort by remember { mutableStateOf(false) }
     val gridState = if (com.aeriotv.android.ui.settings.rememberIsTvDevice()) com.aeriotv.android.ui.tv.rememberTvMediaGridState() else rememberLazyGridState()
+    // Re-tap of the DVR tab you are already on: back to the top of the list
+    // (nothing is pushed inside this tab; recordings open as their own route,
+    // which hides the bar). Phone and tablet only -- TV never emits.
+    com.aeriotv.android.feature.main.OnTabReselect(
+        com.aeriotv.android.feature.main.AppTab.DVR,
+    ) { gridState.animateScrollToItem(0) }
     val bottomInset = LocalTabBarBottomInset.current
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()

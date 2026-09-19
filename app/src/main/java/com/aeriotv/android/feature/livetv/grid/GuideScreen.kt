@@ -93,6 +93,8 @@ import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.canReplay
 import com.aeriotv.android.core.data.db.entity.dispatcharrVersionAtLeast
 import com.aeriotv.android.core.data.db.entity.resolveGuideDays
+import com.aeriotv.android.core.data.db.entity.GUIDE_DAYS_ALL_MAX_AHEAD
+import com.aeriotv.android.core.data.db.entity.GUIDE_DAYS_ALL_MAX_BACK
 import com.aeriotv.android.core.data.db.entity.reminderKey
 import com.aeriotv.android.core.data.toInfoTarget
 import com.aeriotv.android.core.guide.GuideCatalog
@@ -120,6 +122,8 @@ import com.aeriotv.android.feature.settings.SettingsViewModel
 import com.aeriotv.android.ui.LocalCanRecordToServer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 
 /**
@@ -154,6 +158,7 @@ fun GuideScreen(
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val defaultGroupToken by viewModel.defaultGroupToken.collectAsStateWithLifecycle()
     val settingsVm: SettingsViewModel = hiltViewModel()
     val favoritesVm: FavoritesViewModel = hiltViewModel()
     val remindersVm: RemindersViewModel = hiltViewModel()
@@ -387,9 +392,28 @@ fun GuideScreen(
     // Extent: a fixed Guide Days setting drives both directions from the
     // setting; All Available (and non-Dispatcharr sources) follow the guide
     // that is actually loaded.
-    val historyHours = (guideDaysOffered?.times(24)
-        ?: minOf(state.epgHistoryHours, epgDaysBack * 24)).coerceAtLeast(1)
-    val forwardHours = (guideDaysOffered?.times(24) ?: (epgDaysAhead * 24)).coerceAtLeast(3)
+    // THE EXTENT FOLLOWS THE CONFIGURED GUIDE DAYS ON EVERY SOURCE (Logan
+    // 2026-09-19, Apple GuideStore.activeForwardDays / activeRetentionDays).
+    // It used to follow the setting only for Dispatcharr 0.30 and above and
+    // otherwise follow the LOADED extent, which at launch is about one day:
+    // forward scrolling simply stopped after roughly 24 hours no matter what
+    // Guide Days said. Now a numeric Guide Days means that many days in both
+    // directions for ANY source, All Available means the same ceilings Apple
+    // uses (60 ahead / 30 back), and with no active playlist yet the window
+    // falls back to the PlaylistEntity default of 7 days. The scroll bounds
+    // are still owned by the grid's clamp against this window, so the TV
+    // focus model is untouched; the days beyond what is loaded are one hole
+    // cell per row until the on-demand fetch below fills them in.
+    val activePlaylist = state.playlist
+    // null with a playlist loaded = All Available; null with no playlist yet
+    // is the default, handled below.
+    val configuredGuideDays = activePlaylist?.let { resolveGuideDays(it.epgRetentionDays) }
+    val forwardDays = configuredGuideDays
+        ?: if (activePlaylist == null) GUIDE_DAYS_DEFAULT else GUIDE_DAYS_ALL_MAX_AHEAD
+    val backDays = configuredGuideDays
+        ?: if (activePlaylist == null) GUIDE_DAYS_DEFAULT else GUIDE_DAYS_ALL_MAX_BACK
+    val historyHours = (backDays * 24).coerceAtLeast(1)
+    val forwardHours = (forwardDays * 24).coerceAtLeast(3)
     // Guide jump-to-day (Roman via Discord 2026-09-06; Apple parity): the
     // target instant while a jump is active. The window grows to hold it
     // (plus three hours of room), the view model fetches the missing days,
@@ -423,6 +447,22 @@ fun GuideScreen(
         }
     }
     val grid = remember { GuideGridState(initialViewportStartMs = System.currentTimeMillis() - 15 * 60_000L) }
+    // LOAD ON DEMAND WHILE SCROLLING FORWARD (Logan 2026-09-19). The window
+    // now reaches as far as Guide Days allows, but only the launch span is in
+    // memory, so scrolling toward the loaded edge has to pull the next window
+    // in. Keyed on the viewport END quantized to the DAY, so a pan inside one
+    // day asks for nothing, and debounced so holding Right does not fire a
+    // fetch per step. ensureGuideForward is the same entry point jump-to-day
+    // uses and is itself a no-op when the catalog already reaches that far.
+    LaunchedEffect(grid, state.playlist?.id) {
+        val day = 86_400_000L
+        androidx.compose.runtime.snapshotFlow { (grid.viewportEndMs + 6 * 3_600_000L) / day }
+            .distinctUntilChanged()
+            .collectLatest { edgeDay ->
+                delay(400L)
+                viewModel.ensureGuideForward((edgeDay + 1) * day)
+            }
+    }
     val rows = remember(displayChannels, state.epgByChannel, windowStartMs, windowEndMs) {
         com.aeriotv.android.feature.livetv.GuideMemo.get(
             "rows",
@@ -435,6 +475,12 @@ fun GuideScreen(
     }
     LaunchedEffect(rows) {
         grid.installRows(rows)
+        // Empty program lanes (Logan 2026-09-19): the window the rows were
+        // built for, next to both viewports after the install clamped them.
+        com.aeriotv.android.ui.tv.TvFocusTrace.guide(
+            "rows-install windowStartMs=${rows.windowStartMs} windowEndMs=${rows.windowEndMs}" +
+                " forwardHours=$forwardHours viewportStart=${grid.viewportStartMs} drawStart=${grid.drawViewportStartMs}",
+        )
         // Land the jump once the rows reach far enough to hold it.
         val target = jumpTargetMs
         // Both edges, now that a backward jump also widens the window.
@@ -801,6 +847,8 @@ fun GuideScreen(
         GuideGroupSidebarPane(
             groups = groups,
             selectedToken = state.selectedGroup,
+            defaultToken = defaultGroupToken,
+            onSetDefault = viewModel::setDefaultGroup,
             topOffset = 0.dp,
             onCommit = commitSidebarGroup,
             onManageGroups = openSidebarManageGroups,
@@ -825,6 +873,8 @@ fun GuideScreen(
                 groups = groups,
                 selectedGroup = state.selectedGroup,
                 onSelectGroup = { viewModel.onGroupSelected(it) },
+                defaultToken = defaultGroupToken,
+                onSetDefault = viewModel::setDefaultGroup,
                 collections = collections,
                 collectionPillItem = collectionPillItem,
                 searchActive = searchActive,
@@ -931,6 +981,8 @@ fun GuideScreen(
             GuideGroupSidebarPane(
                 groups = groups,
                 selectedToken = state.selectedGroup,
+                defaultToken = defaultGroupToken,
+                onSetDefault = viewModel::setDefaultGroup,
                 topOffset = 0.dp,
                 onPreview = previewSidebarGroup,
                 onCommit = commitSidebarGroup,
@@ -975,7 +1027,7 @@ fun GuideScreen(
                 onOpenMenu = { channel, cell -> menuFor = channel to cell; menuGuard.arm() },
                 jumpLabel = jumpLabel,
                 onClockTap = snapToNow,
-                onClockLongPress = { showJumpSheet = true },
+                onOpenJumpToDay = { showJumpSheet = true },
                 // Favorites (TV): no pills above the grid, so UP must leave
                 // through the content group's exit redirect (which lands on
                 // the SELECTED tab's pill); a direct request on the bar's
@@ -1035,6 +1087,8 @@ fun GuideScreen(
             GuideGroupSidebarPane(
                 groups = groups,
                 selectedToken = state.selectedGroup,
+                defaultToken = defaultGroupToken,
+                onSetDefault = viewModel::setDefaultGroup,
                 topOffset = guideTop + drawerTop,
                 onPreview = previewSidebarGroup,
                 onCommit = commitSidebarGroup,
@@ -1117,6 +1171,7 @@ fun GuideScreen(
             onDismiss = { phoneDrawerOpen = false },
             tokens = drawerTokens,
             selected = state.selectedGroup,
+            defaultToken = defaultGroupToken,
             labelFor = groupLabelFor,
             onSelect = { viewModel.onGroupSelected(it) },
             // A drag in the drawer is a manual order (the saved order is only
@@ -1126,6 +1181,7 @@ fun GuideScreen(
                 settingsVm.setGroupOrder(order)
             },
             onManageGroups = { phoneDrawerOpen = false; showManageGroups = true },
+            onSetDefault = viewModel::setDefaultGroup,
             hiddenGroupCount = hiddenGroups.size,
         )
     }
@@ -1143,7 +1199,6 @@ fun GuideScreen(
         )
     }
 
-    val defaultGroupToken by viewModel.defaultGroupToken.collectAsStateWithLifecycle()
     if (showManageGroups) {
         if (isTv) {
             TvGroupPicker(
@@ -1170,8 +1225,6 @@ fun GuideScreen(
                 // Only meaningful with the Sidebar Menu group selector.
                 sidebarLayout = if (groupSelector == "sidebar") guideSidebarLayout else null,
                 onSidebarLayoutChange = { settingsVm.setGuideSidebarLayout(it) },
-                defaultGroup = defaultGroupToken,
-                onSetDefault = viewModel::setDefaultGroup,
                 onCommit = { hidden, order ->
                     com.aeriotv.android.feature.livetv.applyManagedGroups(
                         hidden, hiddenGroups, recentGroupVisible,
@@ -1195,8 +1248,6 @@ fun GuideScreen(
                 reorderEnabled = true, sortMode = groupSortMode,
                 onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
                 onReorder = { settingsVm.setGroupOrder(it) },
-                defaultGroup = defaultGroupToken,
-                onSetDefault = viewModel::setDefaultGroup,
             )
         }
     }
@@ -1335,6 +1386,12 @@ private fun GroupPills(
 }
 
 private const val QUANTUM_MS = 15 * 60_000L
+
+/**
+ * Guide extent before a playlist is loaded, matching PlaylistEntity's own
+ * epgRetentionDays default.
+ */
+private const val GUIDE_DAYS_DEFAULT = 7
 
 /**
  * The guide cell a TV catch-up replay was launched from, plus the timeline

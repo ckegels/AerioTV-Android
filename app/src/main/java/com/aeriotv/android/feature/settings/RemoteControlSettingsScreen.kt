@@ -19,6 +19,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -194,7 +196,7 @@ private val GuideRemoteAction.displayName: String
         GuideRemoteAction.PROGRAM_INFO -> "Program info"
         GuideRemoteAction.PROGRAM_MENU -> "Program menu"
         GuideRemoteAction.RECORD -> "Record"
-        GuideRemoteAction.PLAY -> "Play"
+        GuideRemoteAction.PLAY -> "Play channel"
         GuideRemoteAction.NAVIGATE -> "Move focus"
         GuideRemoteAction.OPEN_SEARCH -> "Search"
         GuideRemoteAction.NONE -> "Do nothing"
@@ -243,7 +245,7 @@ fun RemoteControlSettingsScreen(
                     footer = "The one-line key reminder under the tab bar on Live TV and at the bottom of the player controls. Turn it off once the buttons are second nature.",
                 ) {
                     SettingsToggleRow(
-                        title = "Show remote hints",
+                        title = "Show Remote Hints",
                         subtitle = "Key reminders on Live TV and in the player",
                         checked = showRemoteHints,
                         onCheckedChange = { viewModel.setShowRemoteHints(it) },
@@ -265,7 +267,7 @@ fun RemoteControlSettingsScreen(
 
                 SettingsSection(
                     header = "In the TV Guide",
-                    footer = "What each button does while browsing the guide. A Left or Right set to anything other than Move focus still moves between programs, and runs its action once focus reaches the edge of the timeline (Play, Record, Program info and Program menu run on every press). Up, Down and Back always navigate.",
+                    footer = "What each button does while browsing the guide. A Left or Right set to anything other than Move focus still moves between programs, and runs its action once focus reaches the edge of the timeline (Play, Record, Program info and Program menu run on every press). Up, Down and Back always navigate.\n\nGroups can open as a sidebar instead of pills. Change it in Settings, Live TV, Group Selection.",
                 ) {
                     GUIDE_SLOTS.forEach { slot ->
                         SlotRow(
@@ -357,6 +359,7 @@ fun RemoteControlSettingsScreen(
             },
             onDismiss = { editingPlayerSlot = null },
             guard = menuGuard,
+            width = 340.dp,
         )
     }
 
@@ -375,6 +378,7 @@ fun RemoteControlSettingsScreen(
             },
             onDismiss = { editingGuideSlot = null },
             guard = menuGuard,
+            width = 340.dp,
         )
     }
 
@@ -413,6 +417,13 @@ private fun SlotRow(
                 text = valueName,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.textAccent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End,
+                // fill = false so a long action name ("Browse earlier
+                // programs") shrinks to fit instead of running past the row,
+                // while the slot name keeps first claim on the width.
+                modifier = Modifier.weight(1f, fill = false),
             )
         }
     }

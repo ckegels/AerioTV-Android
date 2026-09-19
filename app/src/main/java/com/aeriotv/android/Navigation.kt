@@ -52,6 +52,7 @@ import com.aeriotv.android.feature.onboarding.SettingUpScreen
 import com.aeriotv.android.feature.onboarding.WelcomeScreen
 import com.aeriotv.android.feature.ondemand.OnDemandViewModel
 import com.aeriotv.android.feature.ondemand.SeriesDetailScreen
+import com.aeriotv.android.core.network.PlaybackHeaders
 import com.aeriotv.android.feature.player.PlayerScreen
 import com.aeriotv.android.feature.player.VODPlayerScreen
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
@@ -913,19 +914,7 @@ fun AerioTVNavHost(
                         // HLS proxy's ingest, which must present the same
                         // Dispatcharr identity headers the player would (same
                         // header recipe as the mini-tune block below).
-                        val castTuneHeaders = run {
-                            val pl = state.playlist
-                            val key = pl?.apiKey?.takeIf { it.isNotBlank() }
-                            val isDispatcharr =
-                                pl?.sourceType == SourceType.DispatcharrApiKey.name ||
-                                    pl?.sourceType == SourceType.DispatcharrUserPass.name
-                            if (isDispatcharr && key != null) {
-                                mapOf(
-                                    "X-API-Key" to key,
-                                    "Authorization" to "ApiKey $key",
-                                )
-                            } else emptyMap()
-                        }
+                        val castTuneHeaders = PlaybackHeaders.forPlaylist(state.playlist)
                         // Same rule for the companion transport (this phone
                         // driving an AerioTV TV over the LAN).
                         if (companionTvName != null) {
@@ -983,17 +972,7 @@ fun AerioTVNavHost(
                             if (!isTvDevice) {
                                 com.aeriotv.android.feature.player.PhoneVodMini.close()
                             }
-                            val pl = state.playlist
-                            val key = pl?.apiKey?.takeIf { it.isNotBlank() }
-                            val isDispatcharr =
-                                pl?.sourceType == SourceType.DispatcharrApiKey.name ||
-                                    pl?.sourceType == SourceType.DispatcharrUserPass.name
-                            exoHolderNav.httpHeaders = if (isDispatcharr && key != null) {
-                                mapOf(
-                                    "X-API-Key" to key,
-                                    "Authorization" to "ApiKey $key",
-                                )
-                            } else emptyMap()
+                            exoHolderNav.httpHeaders = PlaybackHeaders.forPlaylist(state.playlist)
                             // Same fresh-tune guard as PlayerScreen's prime
                             // effect (GH #22): re-prime on a genuine channel
                             // change OR a holder that went idle; a tap on the
@@ -1207,18 +1186,11 @@ fun AerioTVNavHost(
                 val csEnd = entry.arguments?.getLong("csEnd") ?: 0L
                 val csTz = Uri.decode(entry.arguments?.getString("csTz").orEmpty())
                 val csUuid = Uri.decode(entry.arguments?.getString("csUuid").orEmpty())
-                val headers = remember(state.playlist?.apiKey, state.playlist?.sourceType) {
-                    val pl = state.playlist
-                    val key = pl?.apiKey?.takeIf { it.isNotBlank() }
-                    val isDispatcharr = pl?.sourceType == SourceType.DispatcharrApiKey.name ||
-                            pl?.sourceType == SourceType.DispatcharrUserPass.name
-                    if (isDispatcharr && key != null) {
-                        mapOf(
-                            "X-API-Key" to key,
-                            "Authorization" to "ApiKey $key",
-                        )
-                    } else emptyMap()
-                }
+                val headers = remember(
+                    state.playlist?.apiKey,
+                    state.playlist?.sourceType,
+                    state.playlist?.customUserAgent,
+                ) { PlaybackHeaders.forPlaylist(state.playlist) }
                 // UNFILTERED on purpose: dropping blank-url channels here made the
                 // id lookup miss for event channels whose stream is not assigned
                 // yet, and the old coerce-to-0 then played channels[0]. PlayerScreen
@@ -1419,18 +1391,11 @@ fun AerioTVNavHost(
                 val epFromStart = entry.arguments?.getBoolean("fromStart") ?: false
 
                 val apiKey = playlistState.playlist?.apiKey
-                val headers = remember(apiKey, playlistState.playlist?.sourceType) {
-                    val pl = playlistState.playlist
-                    val key = pl?.apiKey?.takeIf { it.isNotBlank() }
-                    val isDispatcharr = pl?.sourceType == SourceType.DispatcharrApiKey.name ||
-                            pl?.sourceType == SourceType.DispatcharrUserPass.name
-                    if (isDispatcharr && key != null) {
-                        mapOf(
-                            "X-API-Key" to key,
-                            "Authorization" to "ApiKey $key",
-                        )
-                    } else emptyMap()
-                }
+                val headers = remember(
+                    playlistState.playlist?.apiKey,
+                    playlistState.playlist?.sourceType,
+                    playlistState.playlist?.customUserAgent,
+                ) { PlaybackHeaders.forPlaylist(playlistState.playlist) }
 
                 // Look up the episode across all cached series for stream-id +
                 // title. Cache miss falls back to an untitled play.
@@ -1573,18 +1538,11 @@ fun AerioTVNavHost(
                 }
                 val playlistVm: PlaylistViewModel = hiltViewModel(parent)
                 val playlistState by playlistVm.state.collectAsStateWithLifecycle()
-                val headers = remember(playlistState.playlist?.apiKey, playlistState.playlist?.sourceType) {
-                    val pl = playlistState.playlist
-                    val key = pl?.apiKey?.takeIf { it.isNotBlank() }
-                    val isDispatcharr = pl?.sourceType == SourceType.DispatcharrApiKey.name ||
-                            pl?.sourceType == SourceType.DispatcharrUserPass.name
-                    if (isDispatcharr && key != null) {
-                        mapOf(
-                            "X-API-Key" to key,
-                            "Authorization" to "ApiKey $key",
-                        )
-                    } else emptyMap()
-                }
+                val headers = remember(
+                    playlistState.playlist?.apiKey,
+                    playlistState.playlist?.sourceType,
+                    playlistState.playlist?.customUserAgent,
+                ) { PlaybackHeaders.forPlaylist(playlistState.playlist) }
                 // Guide-banner entry skips PlayerScreen's launch teardown
                 // (PlayerScreen.kt onLaunch), leaving the persistent mini
                 // window + its decoder running on top of the tile grid.
@@ -1725,18 +1683,11 @@ fun AerioTVNavHost(
 
                 val baseUrl = playlistState.playlist?.urlString.orEmpty()
                 val apiKey = playlistState.playlist?.apiKey
-                val headers = remember(apiKey, playlistState.playlist?.sourceType) {
-                    val pl = playlistState.playlist
-                    val key = pl?.apiKey?.takeIf { it.isNotBlank() }
-                    val isDispatcharr = pl?.sourceType == SourceType.DispatcharrApiKey.name ||
-                            pl?.sourceType == SourceType.DispatcharrUserPass.name
-                    if (isDispatcharr && key != null) {
-                        mapOf(
-                            "X-API-Key" to key,
-                            "Authorization" to "ApiKey $key",
-                        )
-                    } else emptyMap()
-                }
+                val headers = remember(
+                    playlistState.playlist?.apiKey,
+                    playlistState.playlist?.sourceType,
+                    playlistState.playlist?.customUserAgent,
+                ) { PlaybackHeaders.forPlaylist(playlistState.playlist) }
 
                 // See the episode route: a phone mini expand reuses its URL.
                 var resolved by remember(movieUuid) {
@@ -1870,20 +1821,8 @@ fun AerioTVNavHost(
                     playlistState.playlist?.apiKey,
                     playlistState.playlist?.sourceType,
                     playbackUrl,
-                ) {
-                    val pl = playlistState.playlist
-                    val key = pl?.apiKey?.takeIf { it.isNotBlank() }
-                    val isDispatcharr = pl?.sourceType == SourceType.DispatcharrApiKey.name ||
-                            pl?.sourceType == SourceType.DispatcharrUserPass.name
-                    val remote = playbackUrl.startsWith("http://", ignoreCase = true) ||
-                            playbackUrl.startsWith("https://", ignoreCase = true)
-                    if (remote && isDispatcharr && key != null) {
-                        mapOf(
-                            "X-API-Key" to key,
-                            "Authorization" to "ApiKey $key",
-                        )
-                    } else emptyMap()
-                }
+                    playlistState.playlist?.customUserAgent,
+                ) { PlaybackHeaders.forPlaylist(playlistState.playlist, playbackUrl) }
                 // Finalize migration target (iOS parity): the /file/ twin of
                 // an in-progress /hls/ URL, served with the same headers.
                 val completedUrl = remember(playbackUrl) {

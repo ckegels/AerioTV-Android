@@ -31,7 +31,6 @@ import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsPickerOption
 import com.aeriotv.android.ui.settings.SettingsPickerRow
 import com.aeriotv.android.ui.settings.SettingsSection
-import com.aeriotv.android.ui.settings.SettingsSelectionRow
 import com.aeriotv.android.ui.settings.SettingsSubPageHost
 import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.settings.dpadFocusRing
@@ -102,7 +101,7 @@ fun GeneralSettingsScreen(
                         it != AppTab.Search && it != AppTab.OnDemand && it != AppTab.Favorites
                     }
                     SettingsPickerRow(
-                        title = "Default Tab",
+                        title = "Default Landing Tab",
                         options = tabs.map { SettingsPickerOption(it.name, it.label) },
                         // Nothing stored means Live TV, which is where a first
                         // launch lands; keep that reading as an explicit pick.
@@ -110,13 +109,13 @@ fun GeneralSettingsScreen(
                         onSelect = { viewModel.setDefaultTab(it) },
                     )
                     SettingsToggleRow(
-                        title = "Skip loading screen",
+                        title = "Skip Loading Screen",
                         subtitle = "Land on Live TV instantly; data hydrates in the background",
                         checked = skipLoadingScreen,
                         onCheckedChange = viewModel::setSkipLoadingScreen,
                     )
                     SettingsToggleRow(
-                        title = "Resume last channel",
+                        title = "Resume Last Channel",
                         subtitle = "Auto-start the last-played channel on launch.",
                         checked = autoResumeLastChannel,
                         onCheckedChange = viewModel::setAutoResumeLastChannel,
@@ -128,7 +127,7 @@ fun GeneralSettingsScreen(
                         val autoRotate by viewModel.autoRotate
                             .collectAsStateWithLifecycle(initialValue = true)
                         SettingsToggleRow(
-                            title = "Auto-rotate",
+                            title = "Auto-Rotate",
                             subtitle = "Follow the device orientation. When off, " +
                                 "AerioTV stays in its current orientation",
                             checked = autoRotate,
@@ -148,7 +147,7 @@ fun GeneralSettingsScreen(
                         },
                 ) {
                     SettingsToggleRow(
-                        title = "Refresh in the background",
+                        title = "Refresh in the Background",
                         checked = backgroundRefreshEnabled,
                         onCheckedChange = viewModel::setBackgroundRefreshEnabled,
                     )
@@ -156,14 +155,19 @@ fun GeneralSettingsScreen(
                         // iOS bgRefreshIntervalMins (audit P1 #7): how often the
                         // periodic refresh fires. Hidden when the master toggle is
                         // off so the UI doesn't suggest setting frequency on a
-                        // disabled worker.
-                        BG_REFRESH_INTERVAL_OPTIONS.forEach { opt ->
-                            SettingsSelectionRow(
-                                label = opt.label,
-                                selected = opt.mins == backgroundRefreshIntervalMins,
-                                onClick = { viewModel.setBackgroundRefreshIntervalMins(opt.mins) },
-                            )
-                        }
+                        // disabled worker. Phase 3 review: a named picker row
+                        // (sub-page on phone, inline on TV) like Apple's
+                        // "Interval" choice, not a bare list of checks under a
+                        // toggle that never said what it was choosing.
+                        SettingsPickerRow(
+                            title = "Interval",
+                            options = BG_REFRESH_INTERVAL_OPTIONS.map {
+                                SettingsPickerOption(it.mins, it.label)
+                            },
+                            selected = backgroundRefreshIntervalMins,
+                            onSelect = { viewModel.setBackgroundRefreshIntervalMins(it) },
+                            inlineTitle = true,
+                        )
                     }
                 }
 
@@ -175,18 +179,22 @@ fun GeneralSettingsScreen(
                     header = "Network",
                     footer = "Adjust timeouts if you have a slow or unstable connection.",
                 ) {
-                    TIMEOUT_OPTIONS.forEach { secs ->
-                        SettingsSelectionRow(
-                            label = if (secs == 1) "1 second" else "$secs seconds",
-                            selected = timeoutSecs.toInt() == secs,
-                            onClick = { viewModel.setNetworkTimeoutSecs(secs.toDouble()) },
-                        )
-                    }
+                    // Phase 3 review: same picker row Apple uses ("Request
+                    // Timeout"); the unlabeled list of seconds never said what
+                    // it set.
+                    SettingsPickerRow(
+                        title = "Request Timeout",
+                        options = TIMEOUT_OPTIONS.map {
+                            SettingsPickerOption(it, if (it == 1) "1 second" else "$it seconds")
+                        },
+                        selected = timeoutSecs.toInt(),
+                        onSelect = { viewModel.setNetworkTimeoutSecs(it.toDouble()) },
+                    )
                 }
 
                 // Max Retries stays a stepper (no tvOS equivalent), on a resting card.
                 SettingsSection(
-                    header = "Max Retries",
+                    header = "",
                     footer = "Per-request retry budget (0-10).",
                 ) {
                     Row(
@@ -197,7 +205,7 @@ fun GeneralSettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Retries",
+                            text = "Max Retries",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onBackground,
                             fontWeight = FontWeight.Medium,

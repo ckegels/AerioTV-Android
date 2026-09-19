@@ -56,7 +56,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.text.format.DateUtils
+import com.aeriotv.android.core.data.capability.Capability
+import com.aeriotv.android.core.data.db.entity.capabilities
+import com.aeriotv.android.core.data.db.entity.dispatcharrEffectiveDvrAccess
+import com.aeriotv.android.core.data.db.entity.isDispatcharrDirectConnect
 import com.aeriotv.android.core.data.db.entity.sourceTypeDisplayLabel
+import com.aeriotv.android.core.preferences.DispatcharrAccountFacts
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.ui.settings.settingsFormWidth
 import com.aeriotv.android.ui.settings.SettingsDialogTextButton
@@ -278,6 +284,151 @@ fun PlaylistDetailScreen(
                         DetailRow("Channels", playlist.channelCount.toString())
                         if (!playlist.epgUrl.isNullOrBlank()) {
                             DetailRow("EPG", playlist.epgUrl!!)
+                        }
+                    }
+                }
+            }
+
+            // Dispatcharr User Permissions (read-only), Apple
+            // ServerDetailView.swift parity. Direct Connect only: Xtream Codes
+            // rows -- including Dispatcharr's own XC emulation, which the app
+            // sees as an XC source -- and M3U rows have no per-user permission
+            // model to show. Nothing here probes: an inactive playlist shows
+            // whatever its last probe persisted, and a never-probed one says so.
+            if (playlist.isDispatcharrDirectConnect()) item {
+                val facts by viewModel.dispatcharrAccountFacts(playlist.id)
+                    .collectAsStateWithLifecycle(initialValue = DispatcharrAccountFacts())
+                Section(
+                    header = "Dispatcharr User Permissions",
+                    footer = "Set by your Dispatcharr admin. Use Refresh Session after your " +
+                        "admin changes them.",
+                ) {
+                    // One block, one focus stop on TV (or none on phones):
+                    // per-row focus stops here would trap the D-pad in a wall
+                    // of unactionable text.
+                    var permsFocused by remember { mutableStateOf(false) }
+                    Column(
+                        modifier = Modifier
+                            .then(
+                                if (isTv) {
+                                    Modifier
+                                        .onFocusChanged { permsFocused = it.isFocused }
+                                        .background(
+                                            if (permsFocused) {
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                            } else {
+                                                Color.Transparent
+                                            },
+                                        )
+                                        .focusable()
+                                } else {
+                                    Modifier
+                                },
+                            )
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                    ) {
+                        val caps = playlist.capabilities()
+                        // A denial reads as absence, never as an error: muted,
+                        // never red, and no icons.
+                        val mutedValue = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        val plainValue = MaterialTheme.colorScheme.onBackground
+                        if (caps.isUnknownSnapshot) {
+                            DetailRow(
+                                label = "Permissions",
+                                value = "Make this playlist active to load permissions",
+                                valueColor = mutedValue,
+                            )
+                        } else {
+                            val account = facts.username.takeIf { it.isNotBlank() }
+                                ?: playlist.username?.takeIf { it.isNotBlank() }
+                            if (account != null) DetailRow("Account", account)
+                            // Dispatcharr's own tiers: user_level 0 = Streamer,
+                            // 1 = Standard, 10 = Admin, with staff / superuser
+                            // promoted to 10 exactly as the server does.
+                            DetailRow(
+                                label = "Role",
+                                value = when {
+                                    caps.effectiveUserLevel >= 10 -> "Admin"
+                                    caps.effectiveUserLevel >= 1 -> "Standard"
+                                    else -> "Streamer"
+                                },
+                            )
+                            // Any account that can authenticate can watch live
+                            // TV; Dispatcharr has no per-user live gate.
+                            DetailRow("Live TV", "Allowed")
+                            // One row for two real flags (vod_movies_enabled,
+                            // vod_series_enabled) so a half-granted account is
+                            // not misreported.
+                            val movies = caps.allows(Capability.CanViewVod)
+                            val series = caps.allows(Capability.CanViewSeries)
+                            val vodText = when {
+                                movies && series -> "Allowed"
+                                movies -> "Movies Only"
+                                series -> "TV Shows Only"
+                                else -> "Not Allowed"
+                            }
+                            DetailRow(
+                                label = "Movies & TV Shows",
+                                value = vodText,
+                                valueColor = if (movies || series) plainValue else mutedValue,
+                            )
+                            val dvrText = when (playlist.dispatcharrEffectiveDvrAccess()) {
+                                "manage" -> "Allowed"
+                                "view" -> "View Only"
+                                else -> "Not Allowed"
+                            }
+                            DetailRow(
+                                label = "DVR",
+                                value = dvrText,
+                                valueColor = if (dvrText == "Allowed") plainValue else mutedValue,
+                            )
+                            // The server-wide catchup_enabled being off is a
+                            // server fact, not a permission, so it is worded
+                            // differently from a per-user denial.
+                            val catchupText = when {
+                                playlist.dispatcharrSystemCatchupEnabled == 0 -> "Not Supported by Server"
+                                caps.allows(Capability.CanUseCatchup) -> "Allowed"
+                                else -> "Not Allowed"
+                            }
+                            DetailRow(
+                                label = "Catch-Up",
+                                value = catchupText,
+                                valueColor = if (catchupText == "Allowed") plainValue else mutedValue,
+                            )
+                            // Assigned Channel Profile names when the last probe
+                            // could read them, else their ids, else the
+                            // unrestricted case.
+                            val profileIds = playlist.dispatcharrAccountProfileIds
+                                .split(',')
+                                .map { it.trim() }
+                                .filter { it.isNotEmpty() }
+                            DetailRow(
+                                label = "Channel Profiles",
+                                value = when {
+                                    facts.profileNames.isNotEmpty() ->
+                                        facts.profileNames.joinToString(", ")
+                                    profileIds.isEmpty() -> "All Channels"
+                                    else -> profileIds.joinToString(", ") { "#$it" }
+                                },
+                            )
+                            // Real, separately-derived flag: the /proxy control
+                            // endpoints (Switch Stream) stay server-side IsAdmin.
+                            val canSwitch = caps.allows(Capability.CanSwitchStream)
+                            DetailRow(
+                                label = "Switch Stream",
+                                value = if (canSwitch) "Allowed" else "Not Allowed",
+                                valueColor = if (canSwitch) plainValue else mutedValue,
+                            )
+                            playlist.dispatcharrCapabilitiesFetchedAt.takeIf { it > 0L }?.let { ts ->
+                                DetailRow(
+                                    label = "Last Checked",
+                                    value = DateUtils.getRelativeTimeSpanString(
+                                        ts,
+                                        System.currentTimeMillis(),
+                                        DateUtils.MINUTE_IN_MILLIS,
+                                    ).toString(),
+                                )
+                            }
                         }
                     }
                 }

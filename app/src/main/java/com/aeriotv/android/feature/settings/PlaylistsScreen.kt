@@ -3,7 +3,9 @@ package com.aeriotv.android.feature.settings
 import com.aeriotv.android.ui.scale.subtext
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,9 +26,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import com.aeriotv.android.ui.scale.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,13 +45,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
+import com.aeriotv.android.core.data.db.entity.playlistRowSubtitle
 import com.aeriotv.android.core.tv.TvActionMenuDialog
 import com.aeriotv.android.core.tv.TvMenuAction
 import com.aeriotv.android.core.tv.rememberTvMenuGuard
@@ -58,15 +61,59 @@ import com.aeriotv.android.ui.settings.SettingsDialogTextButton
 import com.aeriotv.android.ui.settings.SettingsHeaderTextButton
 import com.aeriotv.android.ui.settings.dpadFocusRing
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
-import sh.calvin.reorderable.ReorderableItem
-import sh.calvin.reorderable.rememberReorderableLazyListState
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
 
 /**
+ * Presentation-only order for every playlist list in Settings
+ * (Logan 2026-09-18, Apple `sortedServers`): by name, case-insensitive and
+ * numeric-aware, so "Playlist 2" sorts before "Playlist 10". Ties fall back to
+ * the id so the order is stable. Nothing here touches the STORED order or the
+ * sync payload.
+ */
+internal fun List<PlaylistEntity>.sortedForDisplay(): List<PlaylistEntity> =
+    sortedWith(
+        compareBy(NaturalNameOrder) { pl: PlaylistEntity -> pl.name }
+            .thenBy { pl: PlaylistEntity -> pl.id },
+    )
+
+/**
+ * Natural-order string comparator: digit runs compare as numbers, everything
+ * else case-insensitively. A java.text.Collator alone is not numeric-aware.
+ */
+internal val NaturalNameOrder: Comparator<String> = Comparator { a, b ->
+    var i = 0
+    var j = 0
+    var result = 0
+    while (result == 0 && i < a.length && j < b.length) {
+        val ca = a[i]
+        val cb = b[j]
+        if (ca.isDigit() && cb.isDigit()) {
+            var ia = i
+            var jb = j
+            while (ia < a.length && a[ia].isDigit()) ia++
+            while (jb < b.length && b[jb].isDigit()) jb++
+            // Compare digit runs by value, trimming leading zeros so the
+            // lengths are meaningful.
+            val na = a.substring(i, ia).trimStart('0')
+            val nb = b.substring(j, jb).trimStart('0')
+            result = if (na.length != nb.length) na.length - nb.length else na.compareTo(nb)
+            i = ia
+            j = jb
+        } else {
+            result = ca.lowercaseChar().compareTo(cb.lowercaseChar())
+            i++
+            j++
+        }
+    }
+    if (result != 0) result else (a.length - i) - (b.length - j)
+}
+
+/**
  * Multi-playlist switcher reachable from Settings root. Lists every saved
- * playlist with an Active checkmark on the current one; select to switch,
- * long-press for delete confirm (on TV the long-press opens a Move Up /
- * Move Down / Delete menu, since drag reorder is touch-only). The top-bar
+ * playlist with an Active checkmark on the current one; select to open its detail,
+ * long-press for delete confirm (on TV the long-press opens a Delete menu).
+ * Rows are sorted by name ([sortedForDisplay]), so there is no manual reorder
+ * on any form factor any more (Logan 2026-09-18). The top-bar
  * add action routes to the same
  * Choose-Source-Type onboarding screen used for first-run setup, except after
  * the new playlist persists the user pops back here instead of being thrown
@@ -84,8 +131,10 @@ fun PlaylistsScreen(
     onOpenPlaylistDetail: (String) -> Unit,
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
-    val playlists: List<PlaylistEntity> by viewModel.allPlaylists
+    val storedPlaylists: List<PlaylistEntity> by viewModel.allPlaylists
         .collectAsStateWithLifecycle(initialValue = emptyList<PlaylistEntity>())
+    // Presentation only: the stored order is left exactly as it is.
+    val playlists = remember(storedPlaylists) { storedPlaylists.sortedForDisplay() }
     val state by viewModel.state.collectAsStateWithLifecycle()
     // LIVE from the DAO, not the UiState snapshot: the selection indicator
     // has to move to the newly active row the moment the switch commits,
@@ -96,7 +145,7 @@ fun PlaylistsScreen(
     val isTv = rememberIsTvDevice()
 
     var pendingDelete by remember { mutableStateOf<PlaylistEntity?>(null) }
-    // TV-only long-press menu target (Move Up / Move Down / Delete / Cancel).
+    // TV-only long-press menu target (Delete / Cancel).
     var menuFor by remember { mutableStateOf<PlaylistEntity?>(null) }
     val tvGuard = rememberTvMenuGuard()
 
@@ -162,18 +211,6 @@ fun PlaylistsScreen(
             contentAlignment = Alignment.TopCenter,
         ) {
         val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
-        // Local working copy so the drag preview updates fluidly without
-        // hitting Room on every onMove frame. We commit the order to the
-        // repository on drag end (applyPlaylistOrder).
-        var workingOrder by remember(playlists) { mutableStateOf(playlists) }
-        androidx.compose.runtime.LaunchedEffect(playlists) {
-            workingOrder = playlists
-        }
-        val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
-            workingOrder = workingOrder.toMutableList().apply {
-                add(to.index, removeAt(from.index))
-            }
-        }
         LazyColumn(
             state = lazyListState,
             modifier = Modifier.settingsFormWidth(),
@@ -187,12 +224,10 @@ fun PlaylistsScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(workingOrder, key = { it.id }) { pl ->
-                ReorderableItem(reorderState, key = pl.id) { isDragging ->
+            items(playlists, key = { it.id }) { pl ->
                     SwipeablePlaylistRow(
                         playlist = pl,
                         isActive = pl.id == activeId,
-                        isDragging = isDragging,
                         // Guarded so the OK-release after a TV long-press can't
                         // also register as a tap on the row (see TvMenuGuard).
                         // Phase 3, item 5: selecting a row opens its detail
@@ -208,52 +243,24 @@ fun PlaylistsScreen(
                             }
                         },
                         onSwipedToDelete = { pendingDelete = pl },
-                        // Touch-only affordance; D-pad reorder lives in the
-                        // long-press menu instead.
-                        dragHandle = if (isTv) {
-                            null
-                        } else {
-                            {
-                                Icon(
-                                    imageVector = Icons.Filled.Menu,
-                                    contentDescription = "Drag to reorder",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier
-                                        .draggableHandle(
-                                            onDragStopped = {
-                                                viewModel.applyPlaylistOrder(workingOrder.map { it.id })
-                                            },
-                                        )
-                                        .size(24.dp),
-                                )
-                            }
-                        },
+                        // Leading-radio tap activates, exactly as on the
+                        // Settings root list. TV keeps one focus stop (the row
+                        // itself), which PlaylistRow decides.
+                        onActivate = { viewModel.switchToPlaylist(pl.id) },
                     )
-                }
             }
         }
 
         menuFor?.let { pl ->
-            val index = workingOrder.indexOfFirst { it.id == pl.id }
-            fun moveTo(target: Int) {
-                val swapped = workingOrder.toMutableList().apply { add(target, removeAt(index)) }
-                workingOrder = swapped
-                viewModel.applyPlaylistOrder(swapped.map { it.id })
-            }
             // TvActionMenuDialog dismisses (menuFor = null) before running the
             // row's onClick, so the actions only carry their own effect.
+            // No Move Up / Move Down: the list is name-sorted now.
             TvActionMenuDialog(
                 title = pl.name,
-                actions = buildList {
-                    if (index > 0) {
-                        add(TvMenuAction("Move Up", Icons.Filled.KeyboardArrowUp) { moveTo(index - 1) })
-                    }
-                    if (index in 0 until workingOrder.lastIndex) {
-                        add(TvMenuAction("Move Down", Icons.Filled.KeyboardArrowDown) { moveTo(index + 1) })
-                    }
-                    add(TvMenuAction("Delete", Icons.Filled.Delete, destructive = true) { pendingDelete = pl })
-                    add(TvMenuAction("Cancel", Icons.Filled.Close) {})
-                },
+                actions = listOf(
+                    TvMenuAction("Delete", Icons.Filled.Delete, destructive = true) { pendingDelete = pl },
+                    TvMenuAction("Cancel", Icons.Filled.Close) {},
+                ),
                 guard = tvGuard,
                 onDismiss = { menuFor = null },
             )
@@ -296,19 +303,17 @@ private fun PlaylistRow(
     isActive: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
-    dragHandle: @Composable (() -> Unit)? = null,
-    isDragging: Boolean = false,
+    /** Non-null on touch: the leading radio becomes its own 44dp control. */
+    onActivate: (() -> Unit)? = null,
 ) {
-    val elevation = if (isDragging) 6.dp else 0.dp
+    // One playlist row on every surface (Logan 2026-09-18): leading radio,
+    // name, "<Type> \u00B7 <N> channels", trailing chevron. Never the URL.
+    val isTv = rememberIsTvDevice()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(elevation, RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (isDragging) MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
-                else MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
-            )
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
             .dpadFocusRing(RoundedCornerShape(12.dp), washTint = MaterialTheme.colorScheme.primary)
             .combinedClickable(
                 onClick = onTap,
@@ -317,10 +322,36 @@ private fun PlaylistRow(
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (dragHandle != null) {
-            dragHandle()
-            Spacer(Modifier.size(10.dp))
+        val glyph: @Composable () -> Unit = {
+            Icon(
+                imageVector = if (isActive) Icons.Filled.RadioButtonChecked
+                else Icons.Outlined.RadioButtonUnchecked,
+                contentDescription = if (isActive) "Active" else "Set as active playlist",
+                tint = if (isActive) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
         }
+        // On TV the radio stays a pure glyph so the row keeps exactly one
+        // focus stop; on touch it is its own 44dp control that activates the
+        // playlist without opening the detail (Settings root parity).
+        if (!isTv && onActivate != null && !isActive) {
+            Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .requiredSize(44.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onActivate,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) { glyph() }
+            }
+        } else {
+            glyph()
+        }
+        Spacer(Modifier.size(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = playlist.name,
@@ -331,26 +362,17 @@ private fun PlaylistRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "${playlist.channelCount} channels • ${playlist.sourceType}",
+                text = playlist.playlistRowSubtitle(),
                 style = MaterialTheme.typography.bodySmall.subtext(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (isActive) {
-            Icon(
-                imageVector = Icons.Filled.CheckCircle,
-                contentDescription = "Active",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.size(6.dp))
-        }
-        Text(
-            text = "▸",
-            style = MaterialTheme.typography.bodyLarge.subtext(),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -366,11 +388,10 @@ private fun PlaylistRow(
 private fun SwipeablePlaylistRow(
     playlist: com.aeriotv.android.core.data.db.entity.PlaylistEntity,
     isActive: Boolean,
-    isDragging: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     onSwipedToDelete: () -> Unit,
-    dragHandle: @Composable (() -> Unit)?,
+    onActivate: (() -> Unit)? = null,
 ) {
     val dismissState = androidx.compose.material3.rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -416,10 +437,9 @@ private fun SwipeablePlaylistRow(
         PlaylistRow(
             playlist = playlist,
             isActive = isActive,
-            isDragging = isDragging,
-            dragHandle = dragHandle,
             onTap = onTap,
             onLongPress = onLongPress,
+            onActivate = onActivate,
         )
     }
 }

@@ -2017,7 +2017,14 @@ class AerioExoPlayerHolder @Inject constructor(
      *     join with no reload, exactly as the old single-extractor path did.
      *
      *  Both are sourced from DefaultExtractorsFactory so their configuration
-     *  matches what the default pipeline would build. */
+     *  matches what the default pipeline would build.
+     *
+     *  The TsExtractor is additionally wrapped in ContinuousTsExtractor, which
+     *  rebases sample timestamps when Dispatcharr swaps the channel's SOURCE
+     *  stream on this same connection: MODE_SINGLE_PMT only unwraps the 33-bit
+     *  roll, so the backup provider's unrelated PTS used to leave audio and
+     *  queued video on different timelines (video held as "too early", or a
+     *  31 min jump, plus the AudioSink discontinuity error). */
     private fun tsOnlyExtractorsFactory(): ExtractorsFactory = ExtractorsFactory {
         val all: Array<Extractor> = DefaultExtractorsFactory()
             .setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT)
@@ -2027,9 +2034,10 @@ class AerioExoPlayerHolder @Inject constructor(
             it is androidx.media3.extractor.mp4.FragmentedMp4Extractor
         }
         if (ts == null) return@ExtractorsFactory all
+        val continuous: Extractor = ContinuousTsExtractor(ts)
         buildList {
             fmp4?.let { add(it) }
-            add(object : Extractor by ts {
+            add(object : Extractor by continuous {
                 override fun sniff(
                     input: androidx.media3.extractor.ExtractorInput,
                 ): Boolean = true

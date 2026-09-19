@@ -55,6 +55,7 @@ class DispatcharrAuthBroker @Inject constructor(
         val initialKey = playlist.apiKey?.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("Playlist ${playlistId.take(8)} has no api_key")
         client.seedAuthMode(playlist)
+        client.seedUserAgent(playlist)
         // Breadcrumb between the Room read above and the network call in
         // block(): discriminates a DB stall from an HTTP stall in captures
         // (2026-08 EPG hang landed somewhere in this stretch).

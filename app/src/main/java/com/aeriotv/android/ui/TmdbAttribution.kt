@@ -39,7 +39,7 @@ fun TmdbAttribution(modifier: Modifier = Modifier, long: Boolean = true, isTv: B
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            text = "TMDB data is used only after configuring a TMDB API key in Settings > App Behaviors.",
+            text = "TMDB data is used only after configuring a TMDB API key in Settings > Movies & TV Shows.",
             style = style.subtext(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

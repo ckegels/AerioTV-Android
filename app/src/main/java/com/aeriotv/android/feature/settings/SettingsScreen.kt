@@ -11,13 +11,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -66,7 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
-import com.aeriotv.android.core.data.db.entity.sourceTypeBadgeLabel
+import com.aeriotv.android.core.data.db.entity.playlistRowSubtitle
 import com.aeriotv.android.core.tv.TvQrLink
 import com.aeriotv.android.core.tv.TvQrLinkDialog
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
@@ -138,6 +142,9 @@ fun SettingsScreen(
     // drifting from the phone root, which the plan freezes), the same screen
     // renders a subset of itself.
     content: SettingsRootContent = SettingsRootContent.Full,
+    /** Hoisted so the host can scroll this list back to the top when the
+     *  Settings tab is re-tapped at its root (see TabReselect). */
+    listState: LazyListState = rememberLazyListState(),
 ) {
     val fullRoot = content == SettingsRootContent.Full
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -150,7 +157,9 @@ fun SettingsScreen(
     val syncEnabled by settingsVm.syncMasterEnabled
         .collectAsStateWithLifecycle(initialValue = false)
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val playlists by viewModel.allPlaylists.collectAsStateWithLifecycle(initialValue = emptyList())
+    val storedPlaylists by viewModel.allPlaylists.collectAsStateWithLifecycle(initialValue = emptyList())
+    // Presentation only (Logan 2026-09-18): name-sorted, stored order untouched.
+    val playlists = remember(storedPlaylists) { storedPlaylists.sortedForDisplay() }
     // LIVE from the DAO, not the UiState snapshot (Logan 2026-09-16): the
     // radio button must fill in on the new row as soon as the switch commits.
     val activeIdLive by viewModel.activeIdLive
@@ -216,6 +225,7 @@ fun SettingsScreen(
             contentAlignment = Alignment.TopCenter,
         ) {
         LazyColumn(
+            state = listState,
             // Full-screen measures the WINDOW; a detail pane must measure the
             // PANE or it sizes itself against the whole tablet and overflows.
             modifier = Modifier.settingsFormWidth()
@@ -248,6 +258,10 @@ fun SettingsScreen(
                     // thing nobody could predict. Set Active is the first row
                     // of the detail's Actions section.
                     onTap = { pl -> onOpenPlaylistDetail(pl.id) },
+                    // Phase 3 (Logan 2026-09-18): the leading RADIO is its own
+                    // control and activates the playlist through the same path
+                    // as the detail page's Set Active, without opening details.
+                    onActivate = { pl -> viewModel.switchToPlaylist(pl.id) },
                     onAdd = onAddPlaylist,
                     onManage = onOpenPlaylists,
                 )
@@ -361,6 +375,9 @@ private fun PlaylistsSection(
     showHeader: Boolean = true,
     paneHost: Boolean = false,
     onTap: (PlaylistEntity) -> Unit,
+    /** Leading-radio tap: activate that playlist. Null on TV, which keeps a
+     *  single focus stop per row. */
+    onActivate: ((PlaylistEntity) -> Unit)? = null,
     onAdd: () -> Unit,
     onManage: () -> Unit,
 ) {
@@ -394,6 +411,7 @@ private fun PlaylistsSection(
                         playlist = pl,
                         isActive = pl.id == activeId,
                         onTap = { onTap(pl) },
+                        onActivate = onActivate?.let { act -> { act(pl) } },
                     )
                 }
                 RowDivider()
@@ -454,10 +472,7 @@ private fun PlaylistsSection(
             // One rule now, so one string. Input-appropriate verbs only: a
             // remote has no "tap".
             val verb = if (paneHost) "Select" else "Tap"
-            SectionFooter("Select a playlist to open it; Set Active is in its Actions")
-            if (playlists.size > 1) {
-                SectionFooter("$verb Manage Playlists to reorder")
-            }
+            SectionFooter("$verb a playlist to open it, or its circle to make it active.")
         }
     }
 }
@@ -467,6 +482,8 @@ private fun PlaylistRow(
     playlist: PlaylistEntity,
     isActive: Boolean,
     onTap: () -> Unit,
+    /** Non-null on touch: the radio becomes its own 44dp control. */
+    onActivate: (() -> Unit)? = null,
 ) {
     // No long-press menu: editing and deleting live on the Playlist Detail
     // screen (open the active playlist), so the row is a plain click target.
@@ -483,49 +500,64 @@ private fun PlaylistRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Radio-button active marker - filled cyan dot inside a ring on
-            // the active row, empty ring on the rest. Matches the iOS
-            // SettingsView footer hint "Tap ○ to set the active playlist".
-            Icon(
-                imageVector = if (isActive) Icons.Filled.RadioButtonChecked else Icons.Outlined.RadioButtonUnchecked,
-                contentDescription = if (isActive) "Active" else "Set active",
-                tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
+            // the active row, empty ring on the rest. On TOUCH it is also a
+            // control (Apple parity, Logan 2026-09-18): tapping it activates
+            // that playlist without opening the detail, and the rest of the
+            // row still opens the detail. On TV it stays a pure glyph so the
+            // row keeps exactly one focus stop.
+            val glyph: @Composable () -> Unit = {
+                Icon(
+                    imageVector = if (isActive) Icons.Filled.RadioButtonChecked
+                    else Icons.Outlined.RadioButtonUnchecked,
+                    contentDescription = if (isActive) "Active" else "Set as active playlist",
+                    tint = if (isActive) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            if (!isTv && onActivate != null && !isActive) {
+                // 44dp target without changing the drawn size: requiredSize
+                // overflows the row's own 14dp vertical padding box.
+                Box(
+                    modifier = Modifier.size(20.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .requiredSize(44.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onActivate,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) { glyph() }
+                }
+            } else {
+                glyph()
+            }
             Spacer(Modifier.size(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                // Phase 3, item 5: name + a source-type BADGE PILL on one line,
-                // then the channel count, then the URL in monospace truncated
-                // in the MIDDLE. Matches the Apple playlist row exactly, so a
-                // user with both apps reads the same row.
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = playlist.name,
-                        style = settingsRowTitleStyle(),
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Spacer(Modifier.size(8.dp))
-                    SourceTypeBadge(playlist.sourceTypeBadgeLabel())
-                }
+                // Logan 2026-09-18, one row on both platforms: name, then
+                // "<Type> \u00B7 <N> channels". The source-type pill and the
+                // monospace URL line are gone - a provider URL can carry
+                // credentials in its query string, and this is the row users
+                // screenshot.
                 Text(
-                    text = "${playlist.channelCount} channels",
+                    text = playlist.name,
+                    style = settingsRowTitleStyle(),
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = playlist.playlistRowSubtitle(),
                     style = settingsFootnoteStyle().subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
-                val shownUrl = middleTruncate(playlist.urlString, 44)
-                if (shownUrl.isNotBlank()) {
-                    Text(
-                        text = shownUrl,
-                        style = settingsFootnoteStyle().subtext().copy(
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                        maxLines = 1,
-                    )
-                }
             }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -536,39 +568,6 @@ private fun PlaylistRow(
     }
 }
 
-
-/**
- * The playlist row's source-type pill. A quiet tonal chip, not a focus ring:
- * no border, accent TEXT on a faint accent fill (Logan's restraint rule).
- */
-@Composable
-private fun SourceTypeBadge(label: String) {
-    Text(
-        text = label,
-        style = settingsFootnoteStyle(),
-        color = MaterialTheme.colorScheme.textAccent,
-        fontWeight = FontWeight.Medium,
-        maxLines = 1,
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-    )
-}
-
-/**
- * Truncates in the MIDDLE, which is what a URL wants: the scheme + host and
- * the tail both carry meaning, and trailing ellipsis throws away the half that
- * distinguishes two playlists on the same server. Apple's row does the same.
- */
-internal fun middleTruncate(text: String, max: Int): String {
-    val t = text.trim()
-    if (t.length <= max) return t
-    val keep = max - 1
-    val head = (keep + 1) / 2
-    val tail = keep - head
-    return t.take(head) + "\u2026" + t.takeLast(tail)
-}
 
 /**
  * D-pad focus highlight for rows inside the grouped settings cards. The

@@ -1609,7 +1609,19 @@ class OnDemandViewModel @Inject constructor(
         }
         movieSweepJob?.let { job ->
             job.invokeOnCompletion {
-                if (movieSweepJob === job) _state.update { st -> st.copy(sweepingMovies = false) }
+                if (movieSweepJob === job) {
+                    _state.update { st -> st.copy(sweepingMovies = false) }
+                    // Backstop for a watcher of a VodResetBus rebuild (Edit
+                    // Playlist's "Loading movies..." row): every terminal
+                    // outcome lands here - denied, unsupported source, failed,
+                    // or simply finished - so the row can never hang on a sweep
+                    // that ended without ever storing a page. The in-sweep mark
+                    // at the first stored page is what normally releases it.
+                    // Guarded by job identity: a reset CANCELS the previous
+                    // sweep, and that dying job must not report the rebuild it
+                    // was replaced by as settled.
+                    vodResetBus.markSettled(VodResetBus.Kind.Movies)
+                }
             }
         }
     }
@@ -1703,7 +1715,12 @@ class OnDemandViewModel @Inject constructor(
         }
         seriesSweepJob?.let { job ->
             job.invokeOnCompletion {
-                if (seriesSweepJob === job) _state.update { st -> st.copy(sweepingSeries = false) }
+                if (seriesSweepJob === job) {
+                    _state.update { st -> st.copy(sweepingSeries = false) }
+                    // See the movies half: terminal backstop for a rebuild
+                    // watcher, guarded by job identity for the same reason.
+                    vodResetBus.markSettled(VodResetBus.Kind.Series)
+                }
             }
         }
     }
@@ -1853,6 +1870,14 @@ class OnDemandViewModel @Inject constructor(
                 )
                 catalogStore.saveLane(updated)
                 if (next != null && !aborted) active.addLast(updated)
+                if (page.written > 0) {
+                    // The first page of THIS kind is the point a rebuild has
+                    // something to show, which is all a save screen waits for;
+                    // the rest of the walk (minutes, uncapped) runs on.
+                    vodResetBus.markSettled(
+                        if (isMovie) VodResetBus.Kind.Movies else VodResetBus.Kind.Series,
+                    )
+                }
                 if (!background && page.written > 0) {
                     if (!firstPainted) {
                         firstPainted = true

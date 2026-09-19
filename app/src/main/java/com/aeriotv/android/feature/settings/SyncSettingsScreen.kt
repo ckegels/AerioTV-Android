@@ -219,7 +219,7 @@ fun SyncSettingsScreen(
                         email = accountEmail,
                     )
                     SettingsToggleRow(
-                        title = "Sync enabled",
+                        title = "Sync Enabled",
                         subtitle = if (signedIn)
                             "Auto-syncing the categories you've toggled below."
                         else
@@ -628,7 +628,7 @@ private fun SignOutButton(enabled: Boolean, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = "Sign out",
+            text = "Sign Out",
             color = if (enabled) MaterialTheme.colorScheme.error
             else MaterialTheme.colorScheme.error.copy(alpha = 0.5f),
             style = MaterialTheme.typography.labelLarge,

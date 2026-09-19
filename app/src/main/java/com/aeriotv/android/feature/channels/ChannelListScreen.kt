@@ -176,6 +176,7 @@ fun ChannelListScreen(
     ) -> Unit = { _, _, _, _, _, _, _ -> },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val defaultGroupToken by viewModel.defaultGroupToken.collectAsStateWithLifecycle()
     val favoritesVm: FavoritesViewModel = hiltViewModel()
     val favoritesOrNull = favoritesVm.all.collectAsStateWithLifecycle().value
     val favoritesList = favoritesOrNull ?: emptyList()
@@ -399,6 +400,8 @@ fun ChannelListScreen(
             groups = groups,
             selectedGroup = state.selectedGroup,
             onSelectGroup = { viewModel.onGroupSelected(it) },
+            defaultToken = defaultGroupToken,
+            onSetDefault = viewModel::setDefaultGroup,
             collections = collections,
             collectionPillItem = collectionPillItem,
             searchActive = searchActive,
@@ -461,6 +464,12 @@ fun ChannelListScreen(
         // height collapse without snapping. Stays expanded on a
         // not-yet-scrolled list (initial state).
         val listState = rememberLazyListState()
+        // Re-tap of the Live TV tab while the list view is showing
+        // (TabReselect): back to the first channel. Phone and tablet only; TV
+        // never emits the event.
+        com.aeriotv.android.feature.main.OnTabReselect(
+            com.aeriotv.android.feature.main.AppTab.LiveTV,
+        ) { listState.animateScrollToItem(0) }
         val chipsVisible by remember {
             derivedStateOf { listState.firstVisibleItemIndex == 0 }
         }
@@ -753,6 +762,7 @@ fun ChannelListScreen(
         onDismiss = { phoneDrawerOpen = false },
         tokens = drawerTokens,
         selected = state.selectedGroup,
+        defaultToken = defaultGroupToken,
         labelFor = groupLabelFor,
         onSelect = { viewModel.onGroupSelected(it) },
         // A drag in the drawer is a manual order (the saved order is only
@@ -762,6 +772,7 @@ fun ChannelListScreen(
             settingsVm.setGroupOrder(order)
         },
         onManageGroups = { phoneDrawerOpen = false; manageGroupsOpen = true },
+        onSetDefault = viewModel::setDefaultGroup,
         hiddenGroupCount = hiddenGroups.size,
     )
     }
@@ -778,7 +789,6 @@ fun ChannelListScreen(
             onDismiss = { recordTarget = null },
         )
     }
-    val defaultGroupToken by viewModel.defaultGroupToken.collectAsStateWithLifecycle()
     if (manageGroupsOpen) {
         ManageGroupsSheet(
             allGroups = allGroupsRaw,
@@ -795,8 +805,6 @@ fun ChannelListScreen(
             sortMode = groupSortMode,
             onSortModeChange = { settingsVm.setGroupSortMode(it.name) },
             onReorder = { settingsVm.setGroupOrder(it) },
-            defaultGroup = defaultGroupToken,
-            onSetDefault = viewModel::setDefaultGroup,
         )
     }
 }

@@ -57,6 +57,7 @@ import com.aeriotv.android.core.category.CategoryPaletteState
 import com.aeriotv.android.core.category.ProgramCategory
 import com.aeriotv.android.core.category.parseHex
 import com.aeriotv.android.ui.adaptive.rememberViewport
+import com.aeriotv.android.ui.settings.SettingsSliderRow
 import com.aeriotv.android.ui.settings.LocalSettingsInPane
 import com.aeriotv.android.ui.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.settings.SettingsToggleAffordance
@@ -85,7 +86,7 @@ import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
  * Theme card -> 6 brand presets + Custom Accent override + a live Preview
  * tile so the user can see how their accent reads on a card without leaving
  * Settings. Display Scale card -> independent Movies & Series / Live TV
- * sliders (85-125%). Category Colors card -> master toggle. Palette card ->
+ * sliders (85-150%). Category Colors card -> master toggle. Palette card ->
  * default buckets + Add More Categories + Reset.
  *
  * Theme propagation: changes from `viewModel.setSelectedTheme` /
@@ -165,10 +166,12 @@ fun AppearanceSettingsScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                // THEME card - six brand presets + Custom Accent override row.
+                // COLOR THEME card - the brand presets. Apple splits the old
+                // combined "Theme" card into Color Theme / Light and Dark Mode
+                // / Accent; Android matches that structure here.
                 settingsCard(
-                    header = "Theme",
-                    footer = "Choose the palette and the light or dark appearance. Theme sets the color; Appearance sets light vs dark. They are independent, so any theme works in either appearance. Changes apply live; the preset accent kicks in unless Custom Accent is on.",
+                    header = "Color Theme",
+                    footer = "Sets the palette only. Light and Dark Mode below picks the surfaces, so any theme works in either mode. Changes apply live.",
                 ) {
                     // Plan B5: "theme swatch grid at doubled density" on
                     // tablet. A theme row is a 36dp swatch plus two short
@@ -183,7 +186,7 @@ fun AppearanceSettingsScreen(
                             if (twoColumn) {
                                 AppTheme.entries.chunked(2)
                                     .forEachIndexed { rowIndex, pair ->
-                                        if (rowIndex > 0) DividerRow()
+                                        if (rowIndex > 0) DividerRow(ThemeRowDividerInset)
                                         Row(modifier = Modifier.fillMaxWidth()) {
                                             pair.forEach { theme ->
                                                 ThemeRow(
@@ -203,7 +206,7 @@ fun AppearanceSettingsScreen(
                                     }
                             } else {
                                 AppTheme.entries.forEachIndexed { index, theme ->
-                                    if (index > 0) DividerRow()
+                                    if (index > 0) DividerRow(ThemeRowDividerInset)
                                     ThemeRow(
                                         theme = theme,
                                         selected = theme == currentTheme,
@@ -213,26 +216,45 @@ fun AppearanceSettingsScreen(
                             }
                         }
                     }
-                    // Appearance mode (Dark / Light / System). Orthogonal to the
-                    // theme above: this picks surface luminance, the theme picks
-                    // hue. Selecting the Light THEME does not flip this control.
-                    DividerRow()
-                    AppearanceModeHeaderRow()
-                    AppearanceMode.entries.forEach { mode ->
-                        DividerRow()
-                        AppearanceModeRow(
-                            mode = mode,
-                            selected = mode == appearanceMode,
-                            onClick = { viewModel.setAppearanceMode(mode) },
+                }
+
+                // LIGHT AND DARK MODE card. Orthogonal to the theme above:
+                // this picks surface luminance, the theme picks hue.
+                // Selecting the Light THEME does not flip this control.
+                item("light-dark-mode") {
+                    SettingsSection(
+                        header = "Light and Dark Mode",
+                        footer = "System follows your device's light or dark setting. Light and Dark force it for AerioTV only.",
+                    ) {
+                        SettingsPickerRow(
+                            title = "Mode",
+                            options = APPEARANCE_MODE_ORDER.map { mode ->
+                                SettingsPickerOption(
+                                    value = mode,
+                                    label = appearanceModeLabel(mode),
+                                    subtitle = appearanceModeSubtitle(mode),
+                                )
+                            },
+                            selected = appearanceMode,
+                            onSelect = viewModel::setAppearanceMode,
                         )
                     }
-                    DividerRow()
-                    CustomAccentRow(
-                        enabled = useCustomAccent,
-                        hex = customAccentHex,
-                        onToggle = viewModel::setUseCustomAccent,
-                        onPick = { accentPickerOpen = true },
-                    )
+                }
+
+                // ACCENT card - the custom accent override for the theme's
+                // preset accent color.
+                item("accent") {
+                    SettingsSection(
+                        header = "Accent",
+                        footer = "The accent tints titles, checkmarks and focus. Leave the override off to use the theme's own accent.",
+                    ) {
+                        CustomAccentRow(
+                            enabled = useCustomAccent,
+                            hex = customAccentHex,
+                            onToggle = viewModel::setUseCustomAccent,
+                            onPick = { accentPickerOpen = true },
+                        )
+                    }
                 }
 
                 // PREVIEW card - shows how the active theme reads on a card,
@@ -357,12 +379,18 @@ private val TIME_FORMAT_OPTIONS = listOf(
     "24" to "24-hour",
 )
 
+/**
+ * Divider inset for the theme rows: 16dp row padding + the 36dp swatch + the
+ * 14dp spacer, so the hairline starts at the title text like Apple's.
+ */
+internal val ThemeRowDividerInset = 66.dp
+
 @Composable
-internal fun DividerRow() {
+internal fun DividerRow(startInset: Dp = 16.dp) {
     HorizontalDivider(
         thickness = 0.5.dp,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.20f),
-        modifier = Modifier.padding(start = 16.dp),
+        modifier = Modifier.padding(start = startInset),
     )
 }
 
@@ -429,23 +457,16 @@ private fun themeSubtitle(theme: AppTheme): String = when (theme) {
     AppTheme.Sunset -> "Warm orange on near-black"
     AppTheme.Forest -> "Green on near-black"
     AppTheme.Lavender -> "Purple on near-black"
-    AppTheme.Monochrome -> "Greyscale on near-black"
+    AppTheme.Monochrome -> "Grayscale on near-black"
     AppTheme.Light -> "Neutral teal-grey on white"
 }
 
-/** Inline sub-header for the appearance-mode group inside the Theme card. */
-@Composable
-private fun AppearanceModeHeaderRow() {
-    Text(
-        text = "APPEARANCE",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontWeight = FontWeight.SemiBold,
-        // 20dp above matches the gap between top-level settings cards; at 12dp
-        // the eyebrow sat flush against the divider (screenshot pass).
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 6.dp),
-    )
-}
+/** Picker order for the Light and Dark Mode card, matching Apple. */
+private val APPEARANCE_MODE_ORDER = listOf(
+    AppearanceMode.System,
+    AppearanceMode.Light,
+    AppearanceMode.Dark,
+)
 
 private fun appearanceModeLabel(mode: AppearanceMode): String = when (mode) {
     AppearanceMode.Dark -> "Dark"
@@ -457,48 +478,6 @@ private fun appearanceModeSubtitle(mode: AppearanceMode): String = when (mode) {
     AppearanceMode.Dark -> "Dark surfaces everywhere (default)"
     AppearanceMode.Light -> "Light surfaces everywhere"
     AppearanceMode.System -> "Follow the device light or dark setting"
-}
-
-/**
- * A single Dark / Light / System option row inside the Theme card. Mirrors
- * [ThemeRow] chrome (D-pad wash + accent checkmark) but with no color swatch
- * since it selects luminance, not hue.
- */
-@Composable
-private fun AppearanceModeRow(
-    mode: AppearanceMode,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .dpadFocusWash()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = appearanceModeLabel(mode),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = appearanceModeSubtitle(mode),
-                style = MaterialTheme.typography.bodySmall.subtext(),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (selected) {
-            Icon(
-                imageVector = Icons.Filled.Check,
-                contentDescription = "Selected",
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
-    }
 }
 
 /**
@@ -688,13 +667,25 @@ internal fun ToggleRow(
     }
 }
 
-/** tvOS Display Scale segments (s_05/s_06): 85 / 92 / 100 / 114 / 125 %,
- *  plus two TV-readability steps above the tvOS ladder (GH #25: "even at
- *  125% the guide is hard to see" on a TV across the room). Fewer, larger
- *  items is the intended trade at 150/175. */
+/**
+ * Movies & TV Shows stops, matching Apple exactly (Logan 2026-09-18): the
+ * Movies scale runs 85% .. 150% on every platform, and Live TV now shares that
+ * ceiling (see [SCALE_SEGMENTS]).
+ */
+internal val MOVIES_SCALE_SEGMENTS: List<Pair<Float, String>> = listOf(
+    0.85f to "85%", 1.00f to "100%", 1.15f to "115%",
+    1.25f to "125%", 1.35f to "135%", 1.50f to "150%",
+)
+
+/**
+ * Live TV stops. Logan 2026-09-18: 85% .. 150%, the same ceiling Movies uses -
+ * the 175% step is gone on every platform and stored values above 1.5 are
+ * clamped when [com.aeriotv.android.core.preferences.AppPreferences.displayScaleLiveTV]
+ * is read.
+ */
 private val SCALE_SEGMENTS: List<Pair<Float, String>> = listOf(
-    0.85f to "85%", 0.92f to "92%", 1.00f to "100%", 1.14f to "114%",
-    1.25f to "125%", 1.50f to "150%", 1.75f to "175%",
+    0.85f to "85%", 0.92f to "92%", 1.00f to "100%", 1.15f to "115%",
+    1.25f to "125%", 1.50f to "150%",
 )
 
 /** Text Contrast stops: 0% .. 100% in 10% steps. */
@@ -705,10 +696,10 @@ private val TEXT_SCALE_STOPS: List<Float> =
     (0..((TEXT_SCALE_MAX - TEXT_SCALE_MIN) * 20f).roundToInt()).map { TEXT_SCALE_MIN + it * 0.05f }
 
 /**
- * Text Size / Subtext Size / Text Contrast row: label left, current percent right, a stepped Material
- * slider beneath. Same shape as the SteppedSliderRow in App Behaviors and
- * TV-safe the same way ([dpadFocusEscape]: UP/DOWN leave the slider,
- * LEFT/RIGHT step one 5% stop).
+ * Text Size / Subtext Size / Text Contrast row: label left, current percent
+ * right, the shared Settings slider beneath. Same composable the App Behaviors
+ * rows use, so the track, thumb and focus behavior can only be defined once
+ * (UP/DOWN leave the slider, LEFT/RIGHT step one 5% stop).
  */
 @Composable
 private fun TextSizeSliderRow(
@@ -718,37 +709,13 @@ private fun TextSizeSliderRow(
     onValueChange: (Float) -> Unit,
 ) {
     val idx = stops.indices.minByOrNull { kotlin.math.abs(stops[it] - value) } ?: 0
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = "${(stops[idx] * 100f).roundToInt()}%",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.textAccent,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        Slider(
-            value = idx.toFloat(),
-            onValueChange = { raw ->
-                val newIdx = raw.roundToInt().coerceIn(0, stops.lastIndex)
-                if (newIdx != idx) onValueChange(stops[newIdx])
-            },
-            valueRange = 0f..stops.lastIndex.toFloat(),
-            steps = (stops.size - 2).coerceAtLeast(0),
-            modifier = Modifier.dpadFocusEscape(),
-            colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.primary,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-            ),
-        )
-    }
+    SettingsSliderRow(
+        label = label,
+        valueText = "${(stops[idx] * 100f).roundToInt()}%",
+        index = idx,
+        lastIndex = stops.lastIndex,
+        onIndexChange = { newIdx -> if (newIdx != idx) onValueChange(stops[newIdx]) },
+    )
 }
 
 /**
@@ -769,6 +736,7 @@ internal fun ScaleSliderRow(
     value: Float,
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier.fillMaxWidth(),
+    segments: List<Pair<Float, String>> = SCALE_SEGMENTS,
 ) {
     // tvOS renders Display Scale as inline percentage segments, not a slider
     // (cleaner with a remote + no focus-trap). The selected segment is filled.
@@ -784,7 +752,7 @@ internal fun ScaleSliderRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                SCALE_SEGMENTS.forEach { (segValue, segLabel) ->
+                segments.forEach { (segValue, segLabel) ->
                     val selected = kotlin.math.abs(value - segValue) < 0.03f
                     Box(
                         modifier = Modifier
@@ -979,7 +947,7 @@ private fun AccentPickerDialog(
                 }
                 Spacer(Modifier.height(12.dp))
                 SettingsTextField(
-                    label = "Hex color",
+                    label = "Hex Color",
                     value = input,
                     onValueChange = { raw ->
                         input = raw.removePrefix("#").uppercase().filter { it in HEX_CHARS_ACCENT }.take(6)

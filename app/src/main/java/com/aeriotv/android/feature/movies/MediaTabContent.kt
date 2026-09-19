@@ -272,6 +272,16 @@ fun MediaTabContent(
     // first open of Movies for ~3 s and TV Shows for ~1 s on the Nothing
     // Phone (Logan 2026-09-09, "switching tabs freezes for a couple seconds").
     val gridState = if (com.aeriotv.android.ui.settings.rememberIsTvDevice()) com.aeriotv.android.ui.tv.rememberTvMediaGridState() else rememberLazyGridState()
+    // Re-tap of the Movies / TV Shows tab you are already on: the grid goes
+    // back to the top. A detail is a route of its own (the bar is not up
+    // there), so there is nothing to pop first. Phone and tablet only.
+    com.aeriotv.android.feature.main.OnTabReselect(
+        if (kind == MediaKind.Movies) {
+            com.aeriotv.android.feature.main.AppTab.Movies
+        } else {
+            com.aeriotv.android.feature.main.AppTab.TVShows
+        },
+    ) { gridState.animateScrollToItem(0) }
     // The filtered + sorted list and its rail letters are BUILT AND CACHED in
     // OnDemandViewModel, keyed by the source list identity plus the hidden
     // groups, the genre pill and the sort order. It runs in the background

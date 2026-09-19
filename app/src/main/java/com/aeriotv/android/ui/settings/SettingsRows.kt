@@ -138,11 +138,15 @@ fun settingsDimTint(): Color =
  * grouped-list header).
  */
 @Composable
-fun SettingsSectionHeader(text: String, modifier: Modifier = Modifier) {
+fun SettingsSectionHeader(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: androidx.compose.ui.graphics.Color? = null,
+) {
     Text(
         text = text.uppercase(),
         style = settingsEyebrowStyle().copy(letterSpacing = 0.9.sp),
-        color = MaterialTheme.colorScheme.textAccent,
+        color = color ?: MaterialTheme.colorScheme.textAccent,
         fontWeight = FontWeight.SemiBold,
         modifier = modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
     )
@@ -555,10 +559,11 @@ fun SettingsSection(
     header: String,
     modifier: Modifier = Modifier,
     footer: String? = null,
+    headerColor: androidx.compose.ui.graphics.Color? = null,
     content: ColumnScopeContent,
 ) {
     Column(modifier = modifier) {
-        if (header.isNotBlank()) SettingsSectionHeader(header)
+        if (header.isNotBlank()) SettingsSectionHeader(header, color = headerColor)
         SettingsCard { content() }
         if (footer != null) SettingsSectionFooter(footer)
     }

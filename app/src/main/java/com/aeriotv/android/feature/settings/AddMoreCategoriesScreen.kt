@@ -130,13 +130,13 @@ fun AddMoreCategoriesScreen(
         ) {
             item {
                 Text(
-                    text = "Extra buckets",
+                    text = "Extra Buckets",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "Toggle a bucket on to colour matching programmes. Select the swatch to override its hex.",
+                    text = "Toggle a bucket on to color matching programs. Select the swatch to override its hex.",
                     style = MaterialTheme.typography.bodySmall.subtext(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -162,7 +162,7 @@ fun AddMoreCategoriesScreen(
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = "Match an XMLTV category substring and pick its colour. Useful for genres outside the built-in buckets (e.g. Horror, Anime).",
+                            text = "Match an XMLTV category substring and pick its color. Useful for genres outside the built-in buckets (e.g. Horror, Anime).",
                             style = MaterialTheme.typography.bodySmall.subtext(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -398,7 +398,7 @@ private fun CustomEntryDialog(
                     )
                     Spacer(Modifier.width(10.dp))
                     com.aeriotv.android.ui.settings.SettingsTextField(
-                        label = "Hex color",
+                        label = "Hex Color",
                         value = hex,
                         onValueChange = {
                             hex = it.removePrefix("#").uppercase().filter { c -> c in HEX_CHARS_FOR_CUSTOM }.take(6)

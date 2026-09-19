@@ -24,6 +24,7 @@ import com.aeriotv.android.core.preferences.PLAYER_EDGE_LEFT
 import com.aeriotv.android.core.preferences.PLAYER_EDGE_RIGHT
 import com.aeriotv.android.core.ui.SkipIntervals
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
+import com.aeriotv.android.ui.settings.SettingsSliderRow
 import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsPickerOption
 import com.aeriotv.android.ui.settings.SettingsPickerRow
@@ -196,14 +197,14 @@ fun PlayerSettingsScreen(
                     },
                 ) {
                     SettingsToggleRow(
-                        title = "Pause & rewind live TV",
+                        title = "Pause & Rewind Live TV",
                         subtitle = "Buffer fullscreen live playback on this device",
                         checked = liveRewindEnabled,
                         onCheckedChange = viewModel::setLiveRewindEnabled,
                     )
                     if (liveRewindEnabled) {
                         SettingsPickerRow(
-                            title = "Rewind up to",
+                            title = "Rewind Up To",
                             inlineTitle = true,
                             options = REWIND_DEPTH_MINUTES.map {
                                 SettingsPickerOption(it, formatDepthMinutes(it))
@@ -214,14 +215,14 @@ fun PlayerSettingsScreen(
                             onSelect = viewModel::setLiveRewindDepthMinutes,
                         )
                         SettingsToggleRow(
-                            title = "Keep recent channels live",
+                            title = "Keep Recent Channels Live",
                             subtitle = "Buffer flipped-away channels in the background",
                             checked = keepRecent,
                             onCheckedChange = viewModel::setLiveRewindKeepRecent,
                         )
                         if (keepRecent) {
                             SteppedSliderRow(
-                                label = "Channels to keep",
+                                label = "Channels to Keep",
                                 values = listOf(1, 2, 3, 4, 5),
                                 selected = keepCount,
                                 format = { it.toString() },
@@ -256,14 +257,14 @@ fun PlayerSettingsScreen(
                         "next channel you tune.",
                 ) {
                     SteppedSliderRow(
-                        label = "Skip back",
+                        label = "Skip Back",
                         values = SkipIntervals.CHOICES,
                         selected = skipBackSeconds,
                         format = ::formatSkipSeconds,
                         onSelect = viewModel::setSkipBackSeconds,
                     )
                     SteppedSliderRow(
-                        label = "Skip forward",
+                        label = "Skip Forward",
                         values = SkipIntervals.CHOICES,
                         selected = skipForwardSeconds,
                         format = ::formatSkipSeconds,
@@ -290,11 +291,14 @@ fun PlayerSettingsScreen(
 
                 SettingsSection(
                     header = "Audio",
-                    footer = "Passthrough sends surround sound audio as a bitstream for your TV or receiver to decode. Some TVs decode it late, which shows up as voices out of sync with lips on live TV. Off, AerioTV decodes audio itself and stays in sync. Takes effect on the next playback.",
+                    footer = "Turn this on only if your audio gear supports surround formats. " +
+                        "Leave it off for TV speakers, headphones or Bluetooth, or if a " +
+                        "channel plays with no sound. When off, AerioTV decodes the audio " +
+                        "on this device, which works with every setup.",
                 ) {
                     SettingsToggleRow(
-                        title = "Surround sound passthrough",
-                        subtitle = "Send AC-3 and E-AC-3 audio to your receiver untouched. Leave off if lip sync drifts.",
+                        title = "Surround Sound Passthrough",
+                        subtitle = "Sends surround audio, such as 5.1, to your TV, soundbar or receiver untouched so it can decode it.",
                         checked = audioPassthrough,
                         onCheckedChange = viewModel::setAudioPassthroughEnabled,
                     )
@@ -315,7 +319,7 @@ fun PlayerSettingsScreen(
                     },
                 ) {
                     SettingsToggleRow(
-                        title = "Up / Down channel change",
+                        title = "Up / Down Channel Change",
                         subtitle = if (isTv) {
                             "While the player chrome is visible, press up for the next channel and down for the previous. Live single-stream playback only."
                         } else {
@@ -326,13 +330,13 @@ fun PlayerSettingsScreen(
                     )
                     if (!isTv) {
                         SettingsToggleRow(
-                            title = "Brightness edge slide",
+                            title = "Edge Slide for Brightness",
                             subtitle = "Slide a finger up or down the brightness edge to dim or brighten the screen. Applies to this app only and is restored when you leave the player.",
                             checked = playerBrightnessGesture,
                             onCheckedChange = viewModel::setPlayerBrightnessGesture,
                         )
                         SettingsToggleRow(
-                            title = "Volume edge slide",
+                            title = "Edge Slide for Volume",
                             subtitle = "Slide a finger up or down the other edge to change the media volume.",
                             checked = playerVolumeGesture,
                             onCheckedChange = viewModel::setPlayerVolumeGesture,
@@ -378,7 +382,7 @@ fun PlayerSettingsScreen(
                         onCheckedChange = viewModel::setMultiviewTilePadding,
                     )
                     SettingsPickerRow(
-                        title = "Tile corners",
+                        title = "Tile Corners",
                         inlineTitle = true,
                         options = listOf(
                             SettingsPickerOption(false, "Square"),
@@ -399,7 +403,7 @@ fun PlayerSettingsScreen(
                         footer = "Startup Refresh Rate switches the display once at app launch so it is already on your main content rate before the first channel (changes apply on next launch). Match Content Resolution outputs at the stream's resolution so your TV does the upscaling; the screen blinks briefly on each switch.",
                     ) {
                         SettingsToggleRow(
-                            title = "Match content resolution",
+                            title = "Match Content Resolution",
                             subtitle = "Output 1080p streams at 1080p and let the TV upscale. Off keeps the display at its native mode.",
                             checked = matchContentResolution,
                             onCheckedChange = viewModel::setMatchContentResolution,
@@ -498,8 +502,9 @@ private fun depthEstimateText(mins: Int): String {
 }
 
 /**
- * Discrete-stop slider row: label left, current value right, a stepped
- * Material slider beneath. TV-safe via [dpadFocusEscape] (the #90
+ * Discrete-stop slider row: label left, current value right, the shared
+ * Settings slider beneath (thin continuous track, no tick dots). TV-safe via
+ * the escape modifier [SettingsSlider] applies for every caller (the #90
  * lesson: UP/DOWN must move focus off the slider, LEFT/RIGHT adjust).
  */
 @Composable
@@ -514,35 +519,11 @@ internal fun SteppedSliderRow(
     // custom dialog) to the nearest ladder stop for display; the pref
     // itself is only rewritten when the user moves the slider.
     val idx = values.indices.minByOrNull { abs(values[it] - selected) } ?: 0
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = format(values[idx]),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.textAccent,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        Slider(
-            value = idx.toFloat(),
-            onValueChange = { raw ->
-                val newIdx = raw.roundToInt().coerceIn(0, values.lastIndex)
-                if (values[newIdx] != selected) onSelect(values[newIdx])
-            },
-            valueRange = 0f..values.lastIndex.toFloat(),
-            steps = (values.size - 2).coerceAtLeast(0),
-            modifier = Modifier.dpadFocusEscape(),
-            colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.primary,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-            ),
-        )
-    }
+    SettingsSliderRow(
+        label = label,
+        valueText = format(values[idx]),
+        index = idx,
+        lastIndex = values.lastIndex,
+        onIndexChange = { newIdx -> if (values[newIdx] != selected) onSelect(values[newIdx]) },
+    )
 }

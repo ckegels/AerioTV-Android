@@ -170,7 +170,7 @@ class DispatcharrClient @Inject constructor() {
             client.post("${baseUrl.trimEnd('/')}/api/accounts/token/") {
                 contentType(ContentType.Application.Json)
                 accept(ContentType.Application.Json)
-                header("User-Agent", dispatcharrUserAgent)
+                header("User-Agent", userAgentForUrl(baseUrl))
                 setBody(LoginRequest(username = username, password = password))
             }
         } catch (t: Throwable) {
@@ -226,7 +226,7 @@ class DispatcharrClient @Inject constructor() {
             client.post("${baseUrl.trimEnd('/')}/api/accounts/token/refresh/") {
                 contentType(ContentType.Application.Json)
                 accept(ContentType.Application.Json)
-                header("User-Agent", dispatcharrUserAgent)
+                header("User-Agent", userAgentForUrl(baseUrl))
                 setBody(RefreshRequest(refresh = refresh))
             }
         } catch (t: Throwable) {
@@ -264,7 +264,7 @@ class DispatcharrClient @Inject constructor() {
             client.get("${baseUrl.trimEnd('/')}/api/accounts/users/me/") {
                 accept(ContentType.Application.Json)
                 header("Authorization", "Bearer $accessToken")
-                header("User-Agent", dispatcharrUserAgent)
+                header("User-Agent", userAgentForUrl(baseUrl))
             }
         } catch (t: Throwable) {
             throw DispatcharrError.Transport(
@@ -546,9 +546,47 @@ class DispatcharrClient @Inject constructor() {
      * customisation lands when the Android Appearance / Device-name UI
      * ships (iOS deviceNickname pref equivalent).
      */
-    private val dispatcharrUserAgent: String by lazy {
-        "AerioTV/${BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})"
+    private val dispatcharrUserAgent: String get() = dispatcharrDefaultUserAgent
+
+    /**
+     * Per-HOST User-Agent override (Apple `ServerConnection.customUserAgent`).
+     * Same shape and lifecycle as [hostAuthModes]: keyed by host so a server's
+     * LAN and WAN routes both resolve, seeded from the persisted playlist row
+     * by [seedUserAgent] at the one base-URL choke point every Dispatcharr
+     * call goes through, and empty by default so the app default applies.
+     */
+    private val hostUserAgents = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * Prime [hostUserAgents] for both of a playlist's routes. A blank stored
+     * value REMOVES the override rather than storing an empty header, so
+     * clearing the field in Edit Playlist restores the default immediately.
+     */
+    fun seedUserAgent(playlist: com.aeriotv.android.core.data.db.entity.PlaylistEntity) {
+        val ua = sanitizeUserAgent(playlist.customUserAgent)
+        listOfNotNull(playlist.urlString, playlist.lanUrlString).forEach { raw ->
+            runCatching { Url(raw).host }.getOrNull()?.let { host ->
+                if (ua == null) hostUserAgents.remove(host) else hostUserAgents[host] = ua
+            }
+        }
     }
+
+    /**
+     * Keep only printable ASCII: an okhttp/ktor header value carrying a stray
+     * newline or a non-Latin-1 character throws, and a user typing into a text
+     * field can produce either. Null when nothing usable is left.
+     */
+    private fun sanitizeUserAgent(raw: String): String? =
+        raw.trim().filter { it.code in 0x20..0x7E }.trim().takeIf { it.isNotEmpty() }
+
+    /** The User-Agent for [host], falling back to the app default. */
+    private fun userAgentForHost(host: String): String =
+        hostUserAgents[host] ?: dispatcharrUserAgent
+
+    /** The User-Agent for a raw base URL (the pre-auth login / token calls). */
+    private fun userAgentForUrl(raw: String): String =
+        runCatching { Url(raw).host }.getOrNull()?.let { userAgentForHost(it) }
+            ?: dispatcharrUserAgent
 
     /**
      * GET /api/core/version/ - cheapest endpoint to verify connectivity + auth.
@@ -1030,7 +1068,7 @@ class DispatcharrClient @Inject constructor() {
                 header("Authorization", "ApiKey $apiKey")
             }
         }
-        header("User-Agent", dispatcharrUserAgent)
+        header("User-Agent", userAgentForHost(url.host))
     }
 
     /**
@@ -3339,3 +3377,14 @@ data class DispatcharrProgramDetail(
 data class DispatcharrProgramImage(
     val url: String? = null,
 )
+
+/**
+ * The app's default Dispatcharr User-Agent, also shown as the placeholder and
+ * in the helper line of Edit Playlist > User-Agent so the user can see what
+ * they are replacing.
+ *
+ *     AerioTV/<versionName> (Android; <Build.MODEL>)
+ */
+val dispatcharrDefaultUserAgent: String by lazy {
+    "AerioTV/${BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})"
+}

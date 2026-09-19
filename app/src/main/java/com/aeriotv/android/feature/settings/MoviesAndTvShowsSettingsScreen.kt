@@ -84,11 +84,11 @@ fun MoviesAndTvShowsSettingsScreen(
                     // everywhere even while the rows were TV-only.
                     item("refresh-library") {
                         SettingsSection(
-                            header = "Refresh library",
+                            header = "Refresh Library",
                             footer = "Live TV channels refresh on every launch. Movies and TV Shows open from the saved library and re-sweep the provider on this schedule. Pull down on either tab to refresh right away.",
                         ) {
                             SettingsPickerRow(
-                                title = "Refresh library",
+                                title = "Refresh Library",
                                 options = listOf(
                                     SettingsPickerOption(0, "Every Launch"),
                                     SettingsPickerOption(24, "Daily"),
@@ -107,8 +107,8 @@ fun MoviesAndTvShowsSettingsScreen(
                             footer = "Show posters in the Program Info panel and fill in missing artwork on On Demand detail screens, looked up on TMDB with your own free API key (themoviedb.org). Off by default. The key syncs across your devices via Google Drive (kept in your private app data).",
                         ) {
                             SettingsToggleRow(
-                                title = "TMDB poster fallback",
-                                subtitle = "When a poster is missing, look it up on TMDB. Needs the free API key below.",
+                                title = "Fetch Posters from TMDB",
+                                subtitle = "Fill in program artwork your provider doesn't supply, using TMDB.",
                                 checked = programPostersTmdb,
                                 onCheckedChange = viewModel::setProgramPostersTmdbEnabled,
                             )
@@ -176,12 +176,15 @@ fun MoviesAndTvShowsSettingsScreen(
                     // MARK: Display Scale
                     settingsCard(
                         header = "Display Scale",
-                        footer = "Independent scale for Movies & Series. 100% matches the default; 85-175% lets you trade density for readability (150%+ shows fewer, larger items - handy on a TV across the room). Changes apply live.",
+                        footer = "Independent scale for Movies & Series. 100% matches the default; " +
+                            "85-150% lets you trade density for readability. Changes apply live, " +
+                            "no restart needed.",
                     ) {
                         ScaleSliderRow(
                             label = "Movies & Series",
                             value = scaleMovies,
                             onValueChange = viewModel::setDisplayScaleMovies,
+                            segments = MOVIES_SCALE_SEGMENTS,
                         )
                     }
                 }
