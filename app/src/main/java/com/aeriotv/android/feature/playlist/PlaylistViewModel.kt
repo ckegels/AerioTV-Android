@@ -7,6 +7,7 @@ import com.aeriotv.android.DeepLinkTarget
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.M3UChannel
+import com.aeriotv.android.core.guide.guideChannelId
 import com.aeriotv.android.core.data.ChannelCollection
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.debug.LogSanitizer
@@ -1029,12 +1030,31 @@ class PlaylistViewModel @Inject constructor(
         val identityHash = com.aeriotv.android.core.guide.GuideIdentityHash.of(channelsForBridge)
         val storedHash = appPreferences.epgIdentityHash(playlist.id).first()
         val identityStale = hasCache && channelsForBridge.isNotEmpty() && storedHash != identityHash
+        // Rows painted from a stale-identity cache before the purge below.
+        var identityPainted = 0
         if (identityStale) {
             Log.w(
                 TAG,
                 "loadEpgIfConfigured: cached EPG keys do not match current channel " +
-                    "identity; treating cache as stale and refetching",
+                    "identity (stored=${storedHash.take(8)} current=${identityHash.take(8)} " +
+                    "channels=${channelsForBridge.size}); treating cache as stale and refetching",
             )
+            // Paint what is still unambiguous BEFORE the purge. The identity
+            // hash also covers each channel's guide key (Dispatcharr's EPGData
+            // tvg_id, which re-keys whenever the epgdata/sources lookups fail
+            // or the server re-matches EPG), but rows the fetch path wrote
+            // under a CANONICAL id (disp:<uuid>, m3u:<url hash>) are keyed to
+            // the channel itself and cannot land on the wrong one. Without
+            // this the guide sat blank, with no spinner (hasCache is true),
+            // for the whole purge plus refetch: 33 s + 5 s on a Shield with
+            // 1401 channels.
+            val canonicalIds = channelsForBridge.mapTo(HashSet()) { it.guideChannelId().value }
+            val unambiguous = cachedRaw.filter { it.channelId in canonicalIds }
+            if (unambiguous.isNotEmpty()) {
+                rebuildGuideCatalog(playlist, "cache-identity", preloadedRows = unambiguous)
+                identityPainted = unambiguous.size
+                Log.i(TAG, "loadEpgIfConfigured: painted $identityPainted canonically keyed programmes before the identity purge")
+            }
             // Cache-identity rule: rows keyed to a channel identity that no
             // longer exists are orphans no channel will ever look up, so they
             // are dropped outright rather than painted, AND the grid coverage
@@ -1121,7 +1141,7 @@ class PlaylistViewModel @Inject constructor(
             runCatching { repository.purgeEpgCoverage(playlist.id) }
                 .onFailure { Log.w(TAG, "purgeEpgCoverage failed", it) }
         }
-        if (!hasCache) _state.update { it.copy(isEpgLoading = true) }
+        if (!hasCache || (identityStale && identityPainted == 0)) _state.update { it.copy(isEpgLoading = true) }
         // iOS GuideStore audit P3 #13: pass the candidate-key set so the
         // XMLTV parser can drop any programme whose `channel="..."`
         // attribute will never match a M3UChannel before allocating an
