@@ -38,6 +38,7 @@ import com.aeriotv.android.ui.settings.SettingsDetailTopBar
 import com.aeriotv.android.ui.settings.SettingsInfoRow
 import com.aeriotv.android.ui.settings.SettingsRowContainer
 import com.aeriotv.android.ui.settings.SettingsSection
+import com.aeriotv.android.ui.settings.SettingsToggleRow
 import com.aeriotv.android.ui.adaptive.LocalTabBarBottomInset
 
 /**
@@ -56,6 +57,7 @@ fun AppUpdatesScreen(
     viewModel: UpdateViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val autoCheck by viewModel.autoCheck.collectAsStateWithLifecycle(initialValue = false)
 
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "App Updates", onBack = onBack)
@@ -81,6 +83,19 @@ fun AppUpdatesScreen(
                         label = "Check for updates",
                         leadingIcon = Icons.Filled.Refresh,
                         onClick = { viewModel.manualCheck() },
+                    )
+                }
+
+                SettingsSection(
+                    header = "Automatic checks",
+                    footer = "When on, AerioTV looks for a new version when you open it " +
+                        "and offers it. Off: nothing is checked " +
+                        "until you tap Check for updates.",
+                ) {
+                    SettingsToggleRow(
+                        title = "Check for updates automatically",
+                        checked = autoCheck,
+                        onCheckedChange = { viewModel.setAutoCheck(it) },
                     )
                 }
 

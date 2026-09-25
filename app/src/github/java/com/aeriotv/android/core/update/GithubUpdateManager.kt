@@ -96,6 +96,8 @@ class GithubUpdateManager @Inject constructor(
             -> return
             else -> Unit
         }
+        // Automatic checks are opt-in (Settings > App Updates, off by default).
+        if (!manual && !appPreferences.updateAutoCheckOnce()) return
         val now = System.currentTimeMillis()
         if (!manual) {
             // The 12h throttle applies to foreground RETURNS only. The first
