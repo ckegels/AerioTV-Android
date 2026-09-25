@@ -1607,6 +1607,17 @@ class AppPreferences @Inject constructor(
 
     /** versionName the user chose "Later" on; the launch prompt skips it.
      *  Manual checks in Settings ignore the skip. */
+    /**
+     * Updater (github flavor): download new releases in the background and
+     * install them the next time the app is opened. Off by default: the user
+     * is asked to download and to install.
+     */
+    val updateAuto: Flow<Boolean> = store.data.map { it[KEY_UPDATE_AUTO] ?: false }
+    suspend fun updateAutoOnce(): Boolean = updateAuto.first()
+    suspend fun setUpdateAuto(value: Boolean) {
+        store.edit { it[KEY_UPDATE_AUTO] = value }
+    }
+
     val updateSkippedVersion: Flow<String> = store.data.map { it[KEY_UPDATE_SKIPPED_VERSION] ?: "" }
     suspend fun setUpdateSkippedVersion(value: String) {
         store.edit { prefs ->
@@ -2053,6 +2064,7 @@ class AppPreferences @Inject constructor(
         val KEY_SYNC_INITIAL_PULL_DONE = booleanPreferencesKey("sync_initial_pull_done")
         // In-app updater (github flavor); device-local, never synced.
         val KEY_UPDATE_LAST_CHECK_AT = longPreferencesKey("update_last_check_at")
+        val KEY_UPDATE_AUTO = booleanPreferencesKey("update_auto")
         val KEY_UPDATE_SKIPPED_VERSION = stringPreferencesKey("update_skipped_version")
         val KEY_UPDATE_PENDING = stringPreferencesKey("update_pending")
         val KEY_UPDATE_COMPLETED_VERSION = stringPreferencesKey("update_completed_version")

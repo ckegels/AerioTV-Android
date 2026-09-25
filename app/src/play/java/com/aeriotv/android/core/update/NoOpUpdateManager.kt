@@ -26,6 +26,7 @@ class NoOpUpdateManager @Inject constructor() : UpdateManager {
     override fun dismissError() = Unit
     override fun refreshInstallPermission() = Unit
     override suspend fun resumePending() = Unit
+    override suspend fun autoInstallIfReady() = Unit
 }
 
 /** play flavor: bind the inert stub. */
