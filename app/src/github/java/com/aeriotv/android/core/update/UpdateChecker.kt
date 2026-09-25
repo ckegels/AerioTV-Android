@@ -141,8 +141,9 @@ class UpdateChecker @Inject constructor() {
     )
 
     companion object {
-        private const val LATEST_RELEASE_URL =
-            "https://api.github.com/repos/jonzey231/AerioTV-Android/releases/latest"
+        /** BuildConfig.UPDATE_REPO: the official releases unless a fork overrides it. */
+        private val LATEST_RELEASE_URL =
+            "https://api.github.com/repos/${com.aeriotv.android.BuildConfig.UPDATE_REPO}/releases/latest"
 
         /**
          * Semver-ish compare for our vX.Y.Z tags. Numeric triple compare; a
@@ -162,7 +163,19 @@ class UpdateChecker @Inject constructor() {
             for (i in 0..2) {
                 if (r[i] != l[i]) return r[i] > l[i]
             }
-            // Same triple: only "remote bare vs local suffixed" counts as newer.
+            // Same triple, both suffixed with the same label: the trailing
+            // number decides (a fork's 0.5.9-arr.2 over 0.5.9-arr.1, or
+            // 0.3.0-beta2 over 0.3.0-beta1).
+            if (rSuf.isNotEmpty() && lSuf.isNotEmpty()) {
+                val label = Regex("^(.*?)(\\d+)$")
+                val rm = label.find(rSuf)
+                val lm = label.find(lSuf)
+                if (rm != null && lm != null && rm.groupValues[1] == lm.groupValues[1]) {
+                    return (rm.groupValues[2].toLongOrNull() ?: 0L) > (lm.groupValues[2].toLongOrNull() ?: 0L)
+                }
+                return false
+            }
+            // Otherwise only "remote bare vs local suffixed" counts as newer.
             return rSuf.isEmpty() && lSuf.isNotEmpty()
         }
     }
