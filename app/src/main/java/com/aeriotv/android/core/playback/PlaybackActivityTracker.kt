@@ -26,6 +26,15 @@ object PlaybackActivityTracker {
         active.updateAndGet { if (it > 0) it - 1 else 0 }
     }
 
-    val isPlaybackActive: Boolean
-        get() = active.get() > 0
+    /**
+     * True while more than one player exists, i.e. multiview. Background
+     * maintenance yields only then. The single main player is NOT a signal:
+     * the holder keeps its instance across stops and zaps (it is released on
+     * app exit), so "any player exists" was true for the whole session after
+     * the first tune and the scheduled refresh never ran on a TV that had
+     * played anything (seen on a Shield: "Playback active; deferring" on
+     * every retry with nothing on screen).
+     */
+    val isMultiStreamActive: Boolean
+        get() = active.get() > 1
 }

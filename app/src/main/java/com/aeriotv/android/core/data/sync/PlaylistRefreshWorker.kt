@@ -57,13 +57,15 @@ class PlaylistRefreshWorker @AssistedInject constructor(
             Log.i(TAG, "Background refresh disabled in settings; skipping")
             return@runCatching Result.success()
         }
-        if (com.aeriotv.android.core.playback.PlaybackActivityTracker.isPlaybackActive) {
+        if (com.aeriotv.android.core.playback.PlaybackActivityTracker.isMultiStreamActive) {
             // 2026-08-31 Streamer multiview stutter hunt: a refresh's download +
             // gunzip + XMLTV parse at normal priority starves the MediaCodec
             // loops when decoders own every core. Yield and let WorkManager
             // retry after backoff; the cache staying warm is never worth
-            // visible judder on what the user is watching right now.
-            Log.i(TAG, "Playback active; deferring background refresh")
+            // visible judder on what the user is watching right now. A single
+            // stream does not block the refresh: its player instance lives
+            // for the whole session, so waiting on it meant never refreshing.
+            Log.i(TAG, "Multiview active; deferring background refresh")
             return@runCatching Result.retry()
         }
         val playlist = repository.activePlaylist()
