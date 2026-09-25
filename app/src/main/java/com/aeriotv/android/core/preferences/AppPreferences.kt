@@ -510,6 +510,56 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * "Compact modern layout" (TV, Settings > Appearance): a TiviMate-style
+     * guide with a left navigation rail. Off by default; see
+     * [CompactModernLayout] for what it changes.
+     */
+    val compactModernLayout: Flow<Boolean> = store.data.map { it[KEY_COMPACT_MODERN_LAYOUT] ?: false }
+
+    /**
+     * Turn the compact modern layout on or off in ONE DataStore transaction,
+     * so a crash can never leave the preset half applied. On: the current
+     * values of the settings the preset changes are saved, then the preset is
+     * written. Off: the saved values are put back exactly, keys that were
+     * never set are removed again. A setting changed by hand while the layout
+     * was on is overwritten by the saved value when it is turned off.
+     */
+    suspend fun setCompactModernLayout(enabled: Boolean) {
+        store.edit { prefs ->
+            val on = prefs[KEY_COMPACT_MODERN_LAYOUT] ?: false
+            if (enabled == on) return@edit
+            if (enabled) {
+                prefs[KEY_COMPACT_MODERN_SNAPSHOT] = CompactModernLayout.Snapshot(
+                    liveTvLayout = prefs[KEY_LIVE_TV_LAYOUT],
+                    guideGroupSelector = prefs[KEY_GUIDE_GROUP_SELECTOR],
+                    guideSidebarLayout = prefs[KEY_GUIDE_SIDEBAR_LAYOUT],
+                    displayScaleLiveTv = prefs[KEY_DISPLAY_SCALE_LIVE_TV],
+                    remoteControlMap = prefs[KEY_REMOTE_CONTROL_MAP],
+                ).toJson()
+                prefs[KEY_LIVE_TV_LAYOUT] = CompactModernLayout.LIVE_TV_LAYOUT
+                prefs[KEY_GUIDE_GROUP_SELECTOR] = CompactModernLayout.GUIDE_GROUP_SELECTOR
+                prefs[KEY_GUIDE_SIDEBAR_LAYOUT] = CompactModernLayout.GUIDE_SIDEBAR_LAYOUT
+                prefs[KEY_DISPLAY_SCALE_LIVE_TV] = CompactModernLayout.DISPLAY_SCALE_LIVE_TV
+                prefs[KEY_REMOTE_CONTROL_MAP] = CompactModernLayout.remoteMapWithPreset(prefs[KEY_REMOTE_CONTROL_MAP])
+                prefs[KEY_COMPACT_MODERN_LAYOUT] = true
+            } else {
+                CompactModernLayout.Snapshot.fromJson(prefs[KEY_COMPACT_MODERN_SNAPSHOT])?.let { snap ->
+                    fun <T> restore(key: Preferences.Key<T>, value: T?) {
+                        if (value == null) prefs.remove(key) else prefs[key] = value
+                    }
+                    restore(KEY_LIVE_TV_LAYOUT, snap.liveTvLayout)
+                    restore(KEY_GUIDE_GROUP_SELECTOR, snap.guideGroupSelector)
+                    restore(KEY_GUIDE_SIDEBAR_LAYOUT, snap.guideSidebarLayout)
+                    restore(KEY_DISPLAY_SCALE_LIVE_TV, snap.displayScaleLiveTv)
+                    restore(KEY_REMOTE_CONTROL_MAP, snap.remoteControlMap)
+                }
+                prefs.remove(KEY_COMPACT_MODERN_SNAPSHOT)
+                prefs[KEY_COMPACT_MODERN_LAYOUT] = false
+            }
+        }
+    }
+
+    /**
      * Phone / tablet Live TV group selector (Logan 2026-09-05, Apple parity
      * with `phoneGroupSelectorKey`): "sidebar" (default) = a slide-in group
      * drawer opened from the header's groups button, "pills" = the group pill
@@ -1954,6 +2004,8 @@ class AppPreferences @Inject constructor(
         val KEY_SYNC_REMOTE_CONTROL_MAP = booleanPreferencesKey("sync_remote_control_map")
         val KEY_GUIDE_GROUP_SELECTOR = stringPreferencesKey("guide_group_selector")
         val KEY_GUIDE_SIDEBAR_LAYOUT = stringPreferencesKey("guide_sidebar_layout")
+        val KEY_COMPACT_MODERN_LAYOUT = booleanPreferencesKey("compact_modern_layout")
+        val KEY_COMPACT_MODERN_SNAPSHOT = stringPreferencesKey("compact_modern_snapshot")
         val KEY_PHONE_GROUP_SELECTOR = stringPreferencesKey("phone_group_selector")
         val KEY_GUIDE_TUNE_IN_MINI = booleanPreferencesKey("guide_tune_in_mini")
         val KEY_SHOW_REMOTE_HINTS = booleanPreferencesKey("show_remote_hints")

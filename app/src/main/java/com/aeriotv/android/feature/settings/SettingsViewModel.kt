@@ -571,6 +571,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setBackgroundRefreshIntervalMins(value) }
     }
 
+    // Compact modern layout (TV): preset + left navigation rail.
+    val compactModernLayout: Flow<Boolean> = prefs.compactModernLayout
+    fun setCompactModernLayout(value: Boolean) {
+        viewModelScope.launch { prefs.setCompactModernLayout(value) }
+    }
+
     // Multiview (Phase 11c)
     val multiviewAudioFocusStyle: Flow<String> = prefs.multiviewAudioFocusStyle
     fun setMultiviewAudioFocusStyle(value: String) {
