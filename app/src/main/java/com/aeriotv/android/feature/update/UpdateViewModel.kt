@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class UpdateViewModel @Inject constructor(
     private val manager: UpdateManager,
-    appPreferences: AppPreferences,
+    private val preferences: AppPreferences,
 ) : ViewModel() {
 
     val isEnabled: Boolean get() = manager.isEnabled
@@ -27,7 +27,7 @@ class UpdateViewModel @Inject constructor(
 
     /** What's New sequencing: the launch prompt waits until the current
      *  version's notes were seen/seeded so two sheets never stack. */
-    val lastSeenWhatsNewVersion: Flow<String> = appPreferences.lastSeenWhatsNewVersion
+    val lastSeenWhatsNewVersion: Flow<String> = preferences.lastSeenWhatsNewVersion
 
     fun autoCheck() = viewModelScope.launch { manager.check(manual = false) }
     fun manualCheck() = viewModelScope.launch { manager.check(manual = true) }
@@ -37,4 +37,9 @@ class UpdateViewModel @Inject constructor(
     fun later() = manager.skipAvailableVersion()
     fun dismissError() = manager.dismissError()
     fun refreshInstallPermission() = manager.refreshInstallPermission()
+
+    /** Automatic updates (App Updates screen), off by default. */
+    val autoUpdates: Flow<Boolean> = preferences.updateAuto
+    fun setAutoUpdates(value: Boolean) = viewModelScope.launch { preferences.setUpdateAuto(value) }
+    fun autoInstallIfReady() = viewModelScope.launch { manager.autoInstallIfReady() }
 }

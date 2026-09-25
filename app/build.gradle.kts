@@ -122,6 +122,18 @@ android {
         create("github") {
             dimension = "distribution"
             buildConfigField("boolean", "UPDATER_ENABLED", "true")
+            // Where the in-app updater looks for releases and which signing
+            // certificate it trusts. Defaults are the official releases; a
+            // fork that ships its own APKs overrides both, e.g. in
+            // ~/.gradle/gradle.properties or with -P:
+            //   aerio.updateRepo=owner/repo
+            //   aerio.updateKeySha256=<SHA-256 of the release certificate>
+            val updateRepo = providers.gradleProperty("aerio.updateRepo")
+                .getOrElse("jonzey231/AerioTV-Android")
+            val updateKeySha256 = providers.gradleProperty("aerio.updateKeySha256")
+                .getOrElse("ab94078f621e6b65b75d1bf1f49a1b2fd657cc6629eb4729cae5e74d280df005")
+            buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
+            buildConfigField("String", "UPDATE_KEY_SHA256", "\"${updateKeySha256.lowercase()}\"")
         }
         create("play") {
             dimension = "distribution"
