@@ -63,14 +63,6 @@ interface UpdateManager {
      * kill the process), or clean up after a completed one.
      */
     suspend fun resumePending()
-
-    /**
-     * Automatic updates (setting, off by default): install a staged, verified
-     * update right away when the app is opened. No-op when the setting is
-     * off, nothing is staged, or the one-time "Install unknown apps" grant is
-     * still missing (the prompt asks for it instead).
-     */
-    suspend fun autoInstallIfReady()
 }
 
 /** A newer GitHub release the app can update to. */

@@ -56,7 +56,6 @@ fun AppUpdatesScreen(
     viewModel: UpdateViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val autoUpdates by viewModel.autoUpdates.collectAsStateWithLifecycle(initialValue = false)
 
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "App Updates", onBack = onBack)
@@ -82,20 +81,6 @@ fun AppUpdatesScreen(
                         label = "Check for updates",
                         leadingIcon = Icons.Filled.Refresh,
                         onClick = { viewModel.manualCheck() },
-                    )
-                }
-
-                SettingsSection(
-                    header = "Automatic updates",
-                    footer = "Downloads new versions in the background and installs them the next time " +
-                        "you open the app, never in the middle of a stream. Android 12 and newer can " +
-                        "then update without asking; older Android shows one confirmation. Off: you are " +
-                        "asked before each download and install.",
-                ) {
-                    com.aeriotv.android.ui.settings.SettingsToggleRow(
-                        title = "Install updates automatically",
-                        checked = autoUpdates,
-                        onCheckedChange = { viewModel.setAutoUpdates(it) },
                     )
                 }
 

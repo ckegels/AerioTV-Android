@@ -71,7 +71,6 @@ fun UpdateGate(currentRoute: String?) {
     // Resume a staged update that survived a process death (unknown-sources
     // grant / install commit both kill the process).
     LaunchedEffect(Unit) { vm.resumePending() }
-    val autoUpdates by vm.autoUpdates.collectAsStateWithLifecycle(initialValue = false)
 
     // Auto-check on every app foreground. The first check of each process
     // is unthrottled (sideload builds check at launch, so a fresh release is
@@ -86,9 +85,6 @@ fun UpdateGate(currentRoute: String?) {
                 // ReadyToInstall so the prompt offers Install immediately.
                 vm.refreshInstallPermission()
                 vm.autoCheck()
-                // Automatic updates: a download staged in an earlier session
-                // installs now, as the app opens (never mid-stream).
-                vm.autoInstallIfReady()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -97,14 +93,7 @@ fun UpdateGate(currentRoute: String?) {
 
     val onMainTabs = currentRoute == Routes.MAIN
     val whatsNewSettled = lastSeenWhatsNew == BuildConfig.VERSION_NAME
-    // Automatic updates run the offer, download and verify steps quietly;
-    // the sheet only appears when the user has to act (the one-time install
-    // grant, a failure) or once the install itself is under way.
-    val quiet = autoUpdates && (
-        state is UpdateState.Available || state is UpdateState.Downloading ||
-            state is UpdateState.Verifying || state is UpdateState.ReadyToInstall
-        )
-    val visible = !sessionDismissed && onMainTabs && !quiet && when (state) {
+    val visible = !sessionDismissed && onMainTabs && when (state) {
         is UpdateState.Available -> whatsNewSettled
         is UpdateState.Downloading,
         is UpdateState.Verifying,

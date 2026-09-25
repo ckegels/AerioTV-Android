@@ -115,9 +115,6 @@ class GithubUpdateManager @Inject constructor(
                     _state.value = UpdateState.UpToDate(now)
                 } else {
                     _state.value = UpdateState.Available(outcome.info)
-                    // Automatic updates: fetch it in the background now; it is
-                    // installed the next time the app is opened.
-                    if (appPreferences.updateAutoOnce()) startDownload()
                 }
             }
             UpdateChecker.Outcome.UpToDate -> {
@@ -172,20 +169,6 @@ class GithubUpdateManager @Inject constructor(
         }
     }
 
-    override suspend fun autoInstallIfReady() {
-        if (!isEnabled || !appPreferences.updateAutoOnce()) return
-        if (_state.value !is UpdateState.ReadyToInstall) return
-        // Without the one-time grant install() would open Settings unasked;
-        // leave the prompt to ask for it instead.
-        if (!context.packageManager.canRequestPackageInstalls()) return
-        Log.i(TAG, "automatic update: installing on app open")
-        autoInstall = true
-        install()
-    }
-
-    /** Set for an install started by [autoInstallIfReady]: see [commitSession]. */
-    @Volatile private var autoInstall = false
-
     override fun install() {
         val current = _state.value
         val info = when (current) {
@@ -193,10 +176,6 @@ class GithubUpdateManager @Inject constructor(
             is UpdateState.AwaitingInstallPermission -> current.info
             else -> return
         }
-        // Taken once per install: only an install started by
-        // autoInstallIfReady skips the confirm dialog request.
-        val auto = autoInstall
-        autoInstall = false
         scope.launch {
             // A self-update kills this process; mid-recording that orphans the
             // in-flight DVR file (MediaStore row stays IS_PENDING and is
@@ -226,7 +205,7 @@ class GithubUpdateManager @Inject constructor(
             }
             try {
                 _state.value = UpdateState.Installing(info)
-                commitSession(staged, auto)
+                commitSession(staged)
             } catch (t: Throwable) {
                 Log.w(TAG, "install commit failed", t)
                 _state.value = UpdateState.Error(
@@ -415,7 +394,7 @@ class GithubUpdateManager @Inject constructor(
         )
     }
 
-    private fun commitSession(staged: File, auto: Boolean) {
+    private fun commitSession(staged: File) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(
             PackageInstaller.SessionParams.MODE_FULL_INSTALL,
@@ -423,14 +402,7 @@ class GithubUpdateManager @Inject constructor(
             setSize(staged.length())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 // Attended install (Phase A): the system confirm dialog shows.
-                // Automatic updates ask for none: Android 12+ then installs
-                // without a dialog when this app installed its current
-                // version itself, and falls back to the dialog otherwise
-                // (STATUS_PENDING_USER_ACTION). Android 11 always asks.
-                setRequireUserAction(
-                    if (auto) PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED
-                    else PackageInstaller.SessionParams.USER_ACTION_REQUIRED,
-                )
+                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
             }
         }
         val sessionId = installer.createSession(params)
