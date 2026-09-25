@@ -188,6 +188,12 @@ class PlaylistViewModel @Inject constructor(
          */
         private const val EPG_CACHE_TTL_MS = 30L * 60L * 1000L
 
+        /** Launch quick paint: the cached rows read before the first guide
+         *  frame (the pre-9be8071 quick pass window). The full window follows
+         *  in the background. */
+        private const val QUICK_PAINT_BACK_MS = 2L * 60L * 60L * 1000L
+        private const val QUICK_PAINT_AHEAD_MS = 8L * 60L * 60L * 1000L
+
         /** Generation of the on-disk EPG cache this build trusts. BUMP THIS
          *  whenever a shipped defect could have written a corrupt cache: the
          *  next launch forces one full refetch, re-stamps, and resumes normal
@@ -978,15 +984,19 @@ class PlaylistViewModel @Inject constructor(
         // fraction. Logan 2026-09-11: the span comes from the playlist's
         // Guide Days setting, not the retired Settings > Network preference.
         //
-        // ONE windowed read for the whole launch: [guideWindow] is the exact
-        // span the catalog will be built over, so the rows read here are
-        // handed straight to [rebuildGuideCatalog] below instead of being
-        // queried again. Before this, launch did a now-1h..+24h read here and
-        // then two more reads for the quick and full catalog rebuilds.
+        // Launch paints a QUICK window first (what the guide shows on its
+        // first frame), then [rebuildGuideCatalog] widens to the full
+        // [guideWindow] in the background. The single now-1d..now+1d read that
+        // replaced the old quick pass (9be8071) is ~5x the rows: on a Shield
+        // with 1401 channels it returned 133297 programmes in 18.7 s, and the
+        // guide was blank for all of it.
         val (cacheFromMs, cacheToMs) = guideWindow(playlist)
+        val launchNowMs = System.currentTimeMillis()
+        val quickFromMs = maxOf(cacheFromMs, launchNowMs - QUICK_PAINT_BACK_MS)
+        val quickToMs = minOf(cacheToMs, launchNowMs + QUICK_PAINT_AHEAD_MS)
         val readStartedAt = android.os.SystemClock.elapsedRealtime()
         val cachedRaw = runCatching {
-            repository.loadCachedEpg(playlist.id, cacheFromMs, cacheToMs)
+            repository.loadCachedEpg(playlist.id, quickFromMs, quickToMs)
         }.getOrDefault(emptyList())
         val readMs = android.os.SystemClock.elapsedRealtime() - readStartedAt
         // Off-main, same reason as the network path below: on a 30-day Guide
@@ -1040,12 +1050,14 @@ class PlaylistViewModel @Inject constructor(
                 "loadEpgIfConfigured: painted ${cached.size} cached programmes " +
                     "(read ${readMs}ms, bridge ${bridgeMs}ms)",
             )
-            // Single build over the rows just read; no second Room query, and
-            // no separate quick pass, because the window IS the quick window.
-            rebuildGuideCatalog(playlist, "cache", preloadedRows = cached)
+            // Quick paint over the rows just read, then widen to the full
+            // window off the critical path. Unchanged channels keep their list
+            // instances across the two builds (GuideCatalog previous=).
+            rebuildGuideCatalog(playlist, "cache-quick", preloadedRows = cached)
             _state.update { it.copy(isEpgLoading = false) }
             AppLaunchTrace.noteGuidePrograms(cached.size)
             publishCachedEpgSpan(playlist)
+            viewModelScope.launch { rebuildGuideCatalog(playlist, "cache") }
         }
         // Release the other sections' cached restores whether or not there WAS
         // a cache to paint: a fresh install has no guide rows, and On Demand
