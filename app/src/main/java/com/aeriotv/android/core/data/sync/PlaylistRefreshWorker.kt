@@ -80,6 +80,10 @@ class PlaylistRefreshWorker @AssistedInject constructor(
             Log.w(TAG, "Channel refresh failed", channels.exceptionOrNull())
             return@runCatching Result.retry()
         }
+        // An open app repaints from this instead of waiting for the next launch.
+        repository.announceCacheUpdate(
+            PlaylistRepository.CacheUpdate.Channels(playlist.id, channels.getOrThrow()),
+        )
         // EPG refresh: writes epg_programme. loadEpg already updates the
         // playlist's lastEpgRefreshedAt on success. Pass the candidate-key
         // set (P3 #13) so the XMLTV parser filters dead programmes inline.
@@ -116,6 +120,7 @@ class PlaylistRefreshWorker @AssistedInject constructor(
             channels.getOrThrow(),
         )
         runCatching { repository.saveEpgToCache(playlist.id, bridged) }
+            .onSuccess { repository.announceCacheUpdate(PlaylistRepository.CacheUpdate.Guide(playlist.id)) }
             .onFailure { Log.w(TAG, "saveEpgToCache failed", it) }
         Log.i(
             TAG,

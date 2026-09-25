@@ -1044,6 +1044,33 @@ class PlaylistRepository @Inject constructor(
     val upstreamEpgLayered = _upstreamEpgLayered.asSharedFlow()
 
     /**
+     * Fresh data for a playlist reached the cache OUTSIDE the ViewModel's own
+     * load paths: the scheduled background refresh, the quiet EPG sweep, a
+     * server change notification. Before this, that data sat in Room until
+     * the next launch while the open app kept showing the old lineup and
+     * guide. Process-local and fire-and-forget: with no collector (app not
+     * open) the next launch simply reads the cache.
+     */
+    sealed interface CacheUpdate {
+        val playlistId: String
+
+        /** A channel refresh finished; [channels] is the lineup it persisted. */
+        data class Channels(override val playlistId: String, val channels: List<M3UChannel>) : CacheUpdate
+
+        /** Guide rows for this playlist were written. */
+        data class Guide(override val playlistId: String) : CacheUpdate
+    }
+
+    private val _cacheUpdates = MutableSharedFlow<CacheUpdate>(extraBufferCapacity = 8)
+    val cacheUpdates = _cacheUpdates.asSharedFlow()
+
+    fun announceCacheUpdate(update: CacheUpdate) {
+        if (!_cacheUpdates.tryEmit(update)) {
+            Log.w("PlaylistRepo", "cache update dropped (buffer full): ${update::class.simpleName}")
+        }
+    }
+
+    /**
      * Fetch + parse the upstream XMLTV sources OFF the EPG critical path and
      * merge the result into the cache. Same budget model as 0.4.5, with the
      * enforcement fixed: the wall-clock deadline is checked INSIDE the parse
@@ -1500,6 +1527,7 @@ class PlaylistRepository @Inject constructor(
                     "PlaylistRepo",
                     "[EPG] background sweep complete: $refreshed of ${chunks.size} chunk(s) refreshed",
                 )
+                if (refreshed > 0) announceCacheUpdate(CacheUpdate.Guide(playlistId))
                 // End of every sweep: drop the history that is no longer
                 // reachable for catch-up, including the coverage rows for those
                 // days, so the cache does not keep growing a past nothing can

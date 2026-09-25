@@ -352,6 +352,48 @@ class PlaylistViewModel @Inject constructor(
         bootstrap()
         observeMemoryPressure()
         observeUpstreamLayering()
+        observeCacheUpdates()
+    }
+
+    /**
+     * Repaint when fresh data reaches the cache outside this ViewModel's own
+     * load paths (scheduled background refresh, quiet EPG sweep, server
+     * change notifications). Without this the open app kept the old lineup
+     * and guide until the next launch. A channel refresh that returned the
+     * same lineup changes nothing on screen.
+     */
+    private fun observeCacheUpdates() {
+        viewModelScope.launch {
+            repository.cacheUpdates.collect { update ->
+                val active = runCatching { repository.activePlaylist() }.getOrNull()
+                if (active?.id != update.playlistId) return@collect
+                when (update) {
+                    is PlaylistRepository.CacheUpdate.Channels -> {
+                        // A foreground load owns the channel state while it runs.
+                        if (_state.value.isLoading) {
+                            Log.i(TAG, "cache update: channels skipped (foreground load in progress)")
+                            return@collect
+                        }
+                        val diff = com.aeriotv.android.core.data.ChannelListDiff.between(
+                            _state.value.channels, update.channels,
+                        )
+                        if (!diff.hasChanges) {
+                            Log.i(TAG, "cache update: channels unchanged (${update.channels.size})")
+                            return@collect
+                        }
+                        Log.i(TAG, "cache update: channels $diff -> ${update.channels.size} channels")
+                        _state.update { it.copy(channels = update.channels) }
+                        runCatching { rebuildGuideCatalog(active, "channels-update") }
+                            .onFailure { Log.w(TAG, "guide rebuild after channel update failed", it) }
+                    }
+                    is PlaylistRepository.CacheUpdate.Guide -> {
+                        Log.i(TAG, "cache update: guide rows written, rebuilding the guide")
+                        runCatching { rebuildGuideCatalog(active, "guide-update") }
+                            .onFailure { Log.w(TAG, "guide rebuild after cache update failed", it) }
+                    }
+                }
+            }
+        }
     }
 
     /**
