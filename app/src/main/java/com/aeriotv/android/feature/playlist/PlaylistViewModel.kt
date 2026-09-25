@@ -393,15 +393,31 @@ class PlaylistViewModel @Inject constructor(
      * diagnostics; even modest EPG shedding here keeps us out of the
      * low-memory killer queue when other apps want to come up.
      */
+    /** Set when a trim shed the in-memory guide; [refreshEpgIfStale] (the
+     *  return-to-foreground hook) rebuilds it from the Room cache. */
+    @Volatile private var guideShedByTrim = false
+
     private fun observeMemoryPressure() {
         viewModelScope.launch {
             memoryPressureBus.level.collect { level ->
                 if (MemoryPressureBus.isCritical(level)) {
                     val cleared = _state.value.epgByChannel.isNotEmpty()
-                    if (cleared) {
-                        Log.i(TAG, "onTrimMemory=$level: shedding in-memory EPG map")
-                        epgWriteMutex.withLock { _state.update { it.copy(epgByChannel = emptyMap()) } }
+                    if (!cleared) return@collect
+                    // Foreground: never blank the guide the user is looking at.
+                    // RUNNING_CRITICAL reports SYSTEM-wide pressure (seen on a
+                    // 3 GB Shield with ~650 MB available while this app sat at
+                    // ~410 MB PSS); shedding there blanked the visible guide
+                    // until the next launch and the rebuild cost ~23 s of
+                    // allocation on that device, which is worse than keeping it.
+                    // Shed only once backgrounded (COMPLETE), where it is
+                    // invisible and rebuilt on return.
+                    if (com.aeriotv.android.core.data.repository.EpgSweepGate.appInForeground) {
+                        Log.i(TAG, "onTrimMemory=$level: in foreground, keeping in-memory EPG map")
+                        return@collect
                     }
+                    Log.i(TAG, "onTrimMemory=$level: shedding in-memory EPG map")
+                    epgWriteMutex.withLock { _state.update { it.copy(epgByChannel = emptyMap()) } }
+                    guideShedByTrim = true
                 }
             }
         }
@@ -1592,6 +1608,26 @@ class PlaylistViewModel @Inject constructor(
      */
     fun refreshEpgIfStale(maxAgeMillis: Long = 30L * 60L * 1000L) {
         viewModelScope.launch {
+            // A background trim shed the in-memory guide: repaint it from the
+            // cache before anything else (the staleness gate below may skip).
+            if (guideShedByTrim) {
+                guideShedByTrim = false
+                _state.value.playlist?.let { playlist ->
+                    // Same two-step paint as launch: the quick window first
+                    // (~4 s on a Shield), then the full window (~18 s).
+                    val (fromMs, toMs) = guideWindow(playlist)
+                    val nowMs = System.currentTimeMillis()
+                    val quick = runCatching {
+                        repository.loadCachedEpg(
+                            playlist.id,
+                            maxOf(fromMs, nowMs - QUICK_PAINT_BACK_MS),
+                            minOf(toMs, nowMs + QUICK_PAINT_AHEAD_MS),
+                        )
+                    }.getOrDefault(emptyList())
+                    if (quick.isNotEmpty()) rebuildGuideCatalog(playlist, "after-trim-quick", preloadedRows = quick)
+                    rebuildGuideCatalog(playlist, "after-trim")
+                }
+            }
             val s = _state.value
             if (s.isLoading || s.isEpgLoading) return@launch
             val active = repository.activePlaylist() ?: return@launch
