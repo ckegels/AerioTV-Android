@@ -46,6 +46,40 @@ interface EpgProgrammeDao {
     ): List<EpgProgrammeEntity>
 
     /**
+     * Every cached row that can resolve to a given set of channels, for a
+     * partial guide repaint (GuideCatalog.patched): rows stored under the
+     * channels' canonical ids plus legacy rows under a raw feed key
+     * ([rawKeys] are GuideMatchMaps-normalized: trimmed, lower-case; SQLite
+     * lower() folds ASCII only). Served by the (playlistId, endMillis) index.
+     */
+    @Query(
+        "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
+            "AND endMillis > :fromMillis AND startMillis < :toMillis " +
+            "AND (channelId IN (:canonicalIds) OR lower(trim(channelId)) IN (:rawKeys))"
+    )
+    suspend fun forChannelKeysInWindow(
+        playlistId: String,
+        canonicalIds: List<String>,
+        rawKeys: List<String>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<EpgProgrammeEntity>
+
+    /** Raw-keyed rows (never canonical ones) for [rawKeys] overlapping the window; see PlaylistRepository.deleteRawKeyedEpg. */
+    @Query(
+        "DELETE FROM epg_programme WHERE playlistId = :playlistId " +
+            "AND endMillis > :fromMillis AND startMillis < :toMillis " +
+            "AND channelId NOT LIKE 'disp:%' AND channelId NOT LIKE 'm3u:%' " +
+            "AND lower(trim(channelId)) IN (:rawKeys)"
+    )
+    suspend fun deleteRawKeyedInWindow(
+        playlistId: String,
+        rawKeys: List<String>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): Int
+
+    /**
      * EPG-scope search for the global Search surface (parity task #41 / iOS
      * SearchView EPG scope). Matches title OR description, case-insensitive
      * (Room LIKE is case-insensitive for ASCII), time-windowed to now-forward
