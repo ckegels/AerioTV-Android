@@ -135,6 +135,8 @@ fun GuideGrid(
     onClockLongPress: () -> Unit = {},
     /** Channel Preview layout: cells keep the title and tags (the banner carries the rest). */
     compact: Boolean = false,
+    /** Compact modern layout (TiviMate style): number, logo and name side by side in the rail, one title line per cell, no hairlines. */
+    modern: Boolean = false,
     /** Host gate snapshot for the trace (AerioFocus [KEY]/[GUIDE] lines); read only when a line is logged. */
     traceGates: () -> String = { "" },
     /** Bumped by the host to park the cursor on the clock (Down from the banner, tvOS). */
@@ -502,6 +504,7 @@ fun GuideGrid(
                     pxPerMs = pxPerMs,
                     gridFocused = gridFocused && !clockSelected,
                     compact = compact,
+                    modern = modern,
                     isTv = isTv,
                     isFavorite = rows.channel(row).id in favoriteIds,
                     recordingWindows = rows.channel(row).dispatcharrChannelId?.let { recordingWindows[it] } ?: emptyList(),
@@ -636,6 +639,7 @@ private fun GridRow(
     onOpenMenu: (M3UChannel, EPGProgramme) -> Unit,
     onTapFocus: (Int, EPGProgramme) -> Unit,
     compact: Boolean = false,
+    modern: Boolean = false,
     isTv: Boolean = false,
 ) {
     val channel = state.rows.channel(row)
@@ -684,7 +688,7 @@ private fun GridRow(
     // measuring through TextMeasurer on every draw was ~1 ms per row.
     // Keyed on fontScale too: cached layouts are measured in sp, so a live
     // Text Size change must re-measure instead of drawing stale sizes.
-    val textCache = remember(state.rows, row, showBadges, showSubtitles, clockMode, rail, LocalDensity.current.fontScale, subScale, textContrast, accent) { HashMap<Long, CellText>() }
+    val textCache = remember(state.rows, row, showBadges, showSubtitles, clockMode, rail, LocalDensity.current.fontScale, subScale, textContrast, accent, modern) { HashMap<Long, CellText>() }
     val rangeCache = remember(state.rows, row, clockMode) { HashMap<Long, String>() }
     val railWidthPx = with(LocalDensity.current) { railWidth.toPx() }
     val logos = LocalLogoCache.current
@@ -692,6 +696,9 @@ private fun GridRow(
     val tertiary = colors.tertiary
     val surface = colors.surface
     val railNameStyle = TextStyle(color = onSurface, fontSize = 10.sp)
+    // Compact modern rail: name and number at the programme title's size.
+    val modernNameStyle = TextStyle(color = onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    val modernNumberStyle = TextStyle(color = tertiary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     // TV BAND number (Logan 2026-09-16, Apple TV parity): the number lives in
     // the rail's own top band, sized to fill it, so it reads from the couch.
     val railBandNumberStyle = TextStyle(color = tertiary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -746,6 +753,74 @@ private fun GridRow(
         Trace.beginSection("GuideGrid.row")
         // Rail: number, logo, name. Drawn here so a row is ONE draw node and
         // composing a newly visible row costs nothing measurable.
+        if (modern) {
+            // COMPACT MODERN RAIL (TiviMate): number | logo | name on one line,
+            // vertically centered, favorite star and catch-up clock at the end.
+            // No rail fill and no hairline: the page background runs through.
+            val padX = 6.dp.toPx()
+            val gap = 8.dp.toPx()
+            val midY = size.height / 2f
+            var x = padX
+            if (rail.numbers) {
+                // Fixed column, right-aligned, so logos line up down the guide.
+                val colW = textCache.getOrPut(RAIL_MODERN_NUMBER_COL_KEY) {
+                    CellText(textMeasurer.measure("0000", style = modernNumberStyle, maxLines = 1), null)
+                }.title.size.width.toFloat()
+                channel.channelNumber?.takeIf { it.isNotBlank() }?.let { num ->
+                    val t = textCache.getOrPut(RAIL_MODERN_NUMBER_KEY) {
+                        CellText(textMeasurer.measure(num, style = modernNumberStyle, maxLines = 1, overflow = TextOverflow.Clip, constraints = Constraints(maxWidth = colW.toInt().coerceAtLeast(1))), null)
+                    }.title
+                    drawText(t, topLeft = Offset(x + colW - t.size.width, midY - t.size.height / 2f))
+                }
+                x += colW + gap
+            }
+            if (rail.logos) {
+                // Logo box: nearly the row's height, 1.8:1, the logo fitted
+                // inside and centered. Kept even when a channel has no logo so
+                // the names line up.
+                val boxH = size.height - 6.dp.toPx()
+                val boxW = boxH * 1.8f
+                val image = if (channel.tvgLogo.isNotBlank()) logos.bitmap(channel.tvgLogo) else null
+                if (image != null) {
+                    val fitted = com.aeriotv.android.core.ui.fitArtwork(
+                        slotWidth = boxW,
+                        slotHeight = boxH,
+                        imageWidth = image.width.toFloat(),
+                        imageHeight = image.height.toFloat(),
+                    )
+                    drawImage(
+                        image,
+                        dstOffset = IntOffset((x + fitted.left).toInt(), (midY - boxH / 2f + fitted.top).toInt()),
+                        dstSize = IntSize(fitted.width.toInt(), fitted.height.toInt()),
+                    )
+                }
+                x += boxW + gap
+            }
+            val glyph = 10.dp.toPx()
+            val glyphGap = 4.dp.toPx()
+            var glyphX = railWidthPx - padX - glyph
+            if (channel.hasCatchup) {
+                translate(left = glyphX, top = midY - glyph / 2f) {
+                    with(catchupPainter) { draw(Size(glyph, glyph), colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(tertiary.copy(alpha = 0.8f))) }
+                }
+                glyphX -= glyph + glyphGap
+            }
+            if (isFavorite) {
+                translate(left = glyphX, top = midY - glyph / 2f) {
+                    with(starPainter) { draw(Size(glyph, glyph), colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color(0xFFFFA502))) }
+                }
+                glyphX -= glyph + glyphGap
+            }
+            if (rail.names) {
+                val nameMaxW = (glyphX + glyph - glyphGap - x).toInt()
+                if (nameMaxW > 0) {
+                    val t = textCache.getOrPut(RAIL_MODERN_NAME_KEY) {
+                        CellText(textMeasurer.measure(channel.name, style = modernNameStyle, maxLines = 1, overflow = TextOverflow.Ellipsis, constraints = Constraints(maxWidth = nameMaxW)), null)
+                    }.title
+                    drawText(t, topLeft = Offset(x, midY - t.size.height / 2f))
+                }
+            }
+        } else {
         drawRect(surface, topLeft = Offset.Zero, size = Size(railWidthPx, size.height))
         // TV RAIL BAND (Logan 2026-09-16, final Apple TV layout). Every TV rail
         // cell opens with a dedicated band of [GUIDE_TV_RAIL_BAND]: the channel
@@ -973,6 +1048,7 @@ private fun GridRow(
         // Neutral hairlines (tvOS: the app background shows through a 1 pt
         // gap; accent-tinted rules read as heavy borders, Logan 2026-09-10).
         drawLine(Color.White.copy(alpha = 0.08f), Offset(railWidthPx - 0.5f, 0f), Offset(railWidthPx - 0.5f, size.height), strokeWidth = 1.dp.toPx())
+        }
 
         // Programme strip.
         clipRect(railWidthPx, 0f, size.width, size.height) {
@@ -1017,7 +1093,8 @@ private fun GridRow(
                 }
                 if (w >= 40.dp.toPx()) {
                     val textW = (w - 2 * padH).toInt().coerceAtLeast(1)
-                    val tall = size.height >= 44.dp.toPx()
+                    // Compact modern: one title line per cell, whatever the height.
+                    val tall = !modern && size.height >= 44.dp.toPx()
                     // Phone rows (98dp, Logan 2026-09-05 / EPGGuideView.swift)
                     // have room for TWO description lines under the title and
                     // subtitle; the 72dp / TV rows keep one.
@@ -1069,7 +1146,7 @@ private fun GridRow(
                     }
                     clipRect(x0, 0f, x0 + w, size.height) {
                         val x = x0 + padH
-                        var y = 3.dp.toPx()
+                        var y = if (modern) (size.height - text.title.size.height) / 2f else 3.dp.toPx()
                         // Per-program catch-up badge (iPhone EPGGuideView cell,
                         // ChannelListView.canReplay): aired, and still inside the
                         // channel's archive window (capped at 30 days). Drawn
@@ -1133,7 +1210,7 @@ private fun GridRow(
             }
         }
         }
-        drawLine(Color.White.copy(alpha = 0.07f), Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), strokeWidth = 1f)
+        if (!modern) drawLine(Color.White.copy(alpha = 0.07f), Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), strokeWidth = 1f)
         Trace.endSection()
     }
 }
@@ -1212,6 +1289,9 @@ private fun GuideRemoteAction.orDefault(default: GuideRemoteAction) = if (this =
 private const val MIN_CELL_PX = 6f
 private const val RAIL_NAME_KEY = Long.MIN_VALUE + 2
 private const val RAIL_UNDER_NUMBER_KEY = Long.MIN_VALUE + 3
+private const val RAIL_MODERN_NAME_KEY = Long.MIN_VALUE + 4
+private const val RAIL_MODERN_NUMBER_KEY = Long.MIN_VALUE + 5
+private const val RAIL_MODERN_NUMBER_COL_KEY = Long.MIN_VALUE + 6
 
 // Grown rail logo (number and/or name hidden): inset from the rail edges,
 // top clearance under the 12 dp corner icons (4 dp top + 12 dp + 2 dp), and

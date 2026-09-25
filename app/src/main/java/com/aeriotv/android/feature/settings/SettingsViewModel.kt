@@ -584,6 +584,12 @@ class SettingsViewModel @Inject constructor(
             .map { com.aeriotv.android.core.network.DispatcharrLiveEligibility.of(it) }
             .distinctUntilChanged()
 
+    // Compact modern layout (TV): preset + left navigation rail.
+    val compactModernLayout: Flow<Boolean> = prefs.compactModernLayout
+    fun setCompactModernLayout(value: Boolean) {
+        viewModelScope.launch { prefs.setCompactModernLayout(value) }
+    }
+
     // Multiview (Phase 11c)
     val multiviewAudioFocusStyle: Flow<String> = prefs.multiviewAudioFocusStyle
     fun setMultiviewAudioFocusStyle(value: String) {
