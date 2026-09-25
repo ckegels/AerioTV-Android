@@ -1044,6 +1044,45 @@ class PlaylistRepository @Inject constructor(
     val upstreamEpgLayered = _upstreamEpgLayered.asSharedFlow()
 
     /**
+     * Fresh data for a playlist reached the cache OUTSIDE the ViewModel's own
+     * load paths: the scheduled background refresh, the quiet EPG sweep, a
+     * server change notification. Before this, that data sat in Room until
+     * the next launch while the open app kept showing the old lineup and
+     * guide. Process-local and fire-and-forget: with no collector (app not
+     * open) the next launch simply reads the cache.
+     */
+    sealed interface CacheUpdate {
+        val playlistId: String
+
+        /** A channel refresh finished; [channels] is the lineup it persisted. */
+        data class Channels(override val playlistId: String, val channels: List<M3UChannel>) : CacheUpdate
+
+        /** Guide rows for this playlist were written. */
+        data class Guide(override val playlistId: String) : CacheUpdate
+
+        /**
+         * A fresh server window to compare against the guide on screen
+         * (Dispatcharr live updates). The ViewModel writes and repaints only
+         * the channels whose schedule in [fromMs, toMs) changed.
+         */
+        data class GuideWindow(
+            override val playlistId: String,
+            val programmes: List<EPGProgramme>,
+            val fromMs: Long,
+            val toMs: Long,
+        ) : CacheUpdate
+    }
+
+    private val _cacheUpdates = MutableSharedFlow<CacheUpdate>(extraBufferCapacity = 8)
+    val cacheUpdates = _cacheUpdates.asSharedFlow()
+
+    fun announceCacheUpdate(update: CacheUpdate) {
+        if (!_cacheUpdates.tryEmit(update)) {
+            Log.w("PlaylistRepo", "cache update dropped (buffer full): ${update::class.simpleName}")
+        }
+    }
+
+    /**
      * Fetch + parse the upstream XMLTV sources OFF the EPG critical path and
      * merge the result into the cache. Same budget model as 0.4.5, with the
      * enforcement fixed: the wall-clock deadline is checked INSIDE the parse
@@ -1500,6 +1539,7 @@ class PlaylistRepository @Inject constructor(
                     "PlaylistRepo",
                     "[EPG] background sweep complete: $refreshed of ${chunks.size} chunk(s) refreshed",
                 )
+                if (refreshed > 0) announceCacheUpdate(CacheUpdate.Guide(playlistId))
                 // End of every sweep: drop the history that is no longer
                 // reachable for catch-up, including the coverage rows for those
                 // days, so the cache does not keep growing a past nothing can
@@ -2174,6 +2214,56 @@ class PlaylistRepository @Inject constructor(
                 .map { it.toProgramme() }
         }
 
+    /**
+     * Cached rows for just [channels] in [fromMillis, toMillis): the input for
+     * a partial guide repaint (GuideCatalog.patched). Must include every row
+     * that can resolve to these channels, so the key set mirrors
+     * GuideMatchMaps.build: canonical id, bound guide key and declared tvg-id,
+     * Dispatcharr uuid, channel number.
+     */
+    suspend fun loadCachedEpgForChannels(
+        playlistId: String,
+        channels: List<M3UChannel>,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<EPGProgramme> = withContext(layeringDispatcher) {
+        // Up to 5 keys per channel; 150 channels keeps a batch under SQLite's 999 parameters.
+        channels.chunked(150).flatMap { batch ->
+            val canonical = batch.map { it.guideChannelId().value }
+            val raw = batch.flatMap {
+                com.aeriotv.android.core.guide.GuideMatchMaps.rawKeysOf(it, withNumber = true)
+            }.distinct()
+            epgProgrammeDao.forChannelKeysInWindow(playlistId, canonical, raw, fromMillis, toMillis)
+        }.distinctBy { it.id }.map { it.toProgramme() }
+    }
+
+    /**
+     * Delete rows stored under raw grid keys ([rawKeys], normalized) that end
+     * after [fromMillis] and start before [toMillis]. Before a partial repaint
+     * writes fresh rows under the canonical ids, the stale copies the stock
+     * day-chunk sweep stored under raw keys must go: GuideMerge.dedup keeps
+     * the EARLIER of two rows in one slot, so an old raw row would keep
+     * winning over the new canonical one. Canonical rows are never touched.
+     */
+    suspend fun deleteRawKeyedEpg(playlistId: String, rawKeys: Collection<String>, fromMillis: Long, toMillis: Long): Int =
+        withContext(layeringDispatcher) {
+            rawKeys.distinct().chunked(900).sumOf { chunk ->
+                epgProgrammeDao.deleteRawKeyedInWindow(playlistId, chunk, fromMillis, toMillis)
+            }
+        }
+
+    /**
+     * Dispatcharr's live grid window (now-1h..now+24h, the window launch
+     * fetches), raw keys as the grid sends them. For comparing against the
+     * guide on screen after a server EPG refresh; nothing is written here.
+     */
+    suspend fun fetchLiveGridProgrammes(playlist: PlaylistEntity, fromMillis: Long, toMillis: Long): List<EPGProgramme> {
+        val base = effectiveBaseUrl(playlist)
+        return dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+            dispatcharrClient.getEpgGrid(base, key, fromMillis, toMillis).toProgrammes()
+        }
+    }
+
     suspend fun newestEpgFetch(playlistId: String): Long? =
         epgProgrammeDao.newestFetchedAt(playlistId)
 
@@ -2236,8 +2326,17 @@ class PlaylistRepository @Inject constructor(
         authoritative: Boolean = true,
     ) {
         val now = System.currentTimeMillis()
+        // Dispatcharr live updates on: every writer (launch fetch, sweep,
+        // background refresh, live window) writes in store order, so the
+        // survivor of a (channel, start) slot does not depend on the server's
+        // response order (GuideCatalog.inStoreOrder). Off: stock order.
+        val ordered = if (EpgSweepGate.holdWhileWatching) {
+            withContext(layeringDispatcher) { com.aeriotv.android.core.guide.GuideCatalog.inStoreOrder(programmes) }
+        } else {
+            programmes
+        }
         val entities = withContext(layeringDispatcher) {
-            programmes.map { it.toCacheEntity(playlistId, now) }
+            ordered.map { it.toCacheEntity(playlistId, now) }
         }
         // Catch-up (task #135): MERGE the feed instead of replacing the whole
         // cache, so already-aired rows survive refreshes and accumulate into a
@@ -2589,6 +2688,10 @@ class PlaylistRepository @Inject constructor(
      */
     fun observeActiveId(): kotlinx.coroutines.flow.Flow<String?> =
         dao.observeActive().map { it.firstOrNull()?.id }.distinctUntilChanged()
+
+    /** The active playlist row as it changes (edits, switches, deletion). */
+    fun observeActivePlaylist(): kotlinx.coroutines.flow.Flow<PlaylistEntity?> =
+        dao.observeActive().map { it.firstOrNull() }.distinctUntilChanged()
     suspend fun allOnce(): List<PlaylistEntity> = dao.allOnce()
 
     /**
