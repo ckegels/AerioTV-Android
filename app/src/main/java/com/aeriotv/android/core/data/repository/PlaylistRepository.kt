@@ -2617,6 +2617,10 @@ class PlaylistRepository @Inject constructor(
      */
     fun observeActiveId(): kotlinx.coroutines.flow.Flow<String?> =
         dao.observeActive().map { it.firstOrNull()?.id }.distinctUntilChanged()
+
+    /** The active playlist row as it changes (edits, switches, deletion). */
+    fun observeActivePlaylist(): kotlinx.coroutines.flow.Flow<PlaylistEntity?> =
+        dao.observeActive().map { it.firstOrNull() }.distinctUntilChanged()
     suspend fun allOnce(): List<PlaylistEntity> = dao.allOnce()
 
     /**
