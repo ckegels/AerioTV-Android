@@ -222,8 +222,9 @@ fun GuideScreen(
     val guideLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val guideResumed by guideLifecycle.currentStateFlow.collectAsState()
     val guideOnScreen = tabActive && guideResumed.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-    LaunchedEffect(guideOnScreen) { viewModel.setGuideOnScreen(guideOnScreen) }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { viewModel.setGuideOnScreen(false) } }
+    val guideScreenToken = remember { Any() }
+    LaunchedEffect(guideOnScreen) { viewModel.setGuideOnScreen(guideScreenToken, guideOnScreen) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { viewModel.setGuideOnScreen(guideScreenToken, false) } }
     var groupSidebarOpen by remember { mutableStateOf(false) }
     var searchActive by remember { mutableStateOf(false) }
     com.aeriotv.android.ui.search.CloseSearchOnLeave(searchActive) {

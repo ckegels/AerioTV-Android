@@ -406,12 +406,19 @@ class PlaylistViewModel @Inject constructor(
      * leaves, everything owed is applied, so the guide is current the next
      * time it opens.
      */
-    fun setGuideOnScreen(onScreen: Boolean) {
+    fun setGuideOnScreen(owner: Any, onScreen: Boolean) {
+        // Per guide instance: during a screen transition the outgoing guide's
+        // "gone" can arrive after the incoming one's "on screen".
+        if (onScreen) guideScreenOwners.add(owner) else guideScreenOwners.remove(owner)
         val gate = com.aeriotv.android.core.data.repository.EpgSweepGate
-        if (gate.guideOnScreen == onScreen) return
-        gate.guideOnScreen = onScreen
-        if (!onScreen) viewModelScope.launch { applyDeferredGuideUpdates() }
+        val now = guideScreenOwners.isNotEmpty()
+        if (gate.guideOnScreen == now) return
+        gate.guideOnScreen = now
+        Log.i(TAG, "guide ${if (now) "on screen: background guide updates wait" else "left the screen"}")
+        if (!now) viewModelScope.launch { applyDeferredGuideUpdates() }
     }
+
+    private val guideScreenOwners = HashSet<Any>()
 
     private suspend fun applyDeferredGuideUpdates() {
         val gate = com.aeriotv.android.core.data.repository.EpgSweepGate
