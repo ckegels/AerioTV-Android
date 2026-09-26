@@ -877,7 +877,29 @@ fun GuideScreen(
                 )
             }
         }
-        if (previewMode) {
+        if (previewMode && modernRows) {
+            // Compact modern (TiviMate): the video large at the top left, the
+            // focused programme beside it.
+            val topNav = com.aeriotv.android.feature.main.LocalTvTopNavFocusRequester.current
+            val pillsShown = !sidebarGroupMode && !favoritesOnly
+            TiviGuideBanner(
+                program = previewProgram,
+                channel = previewChannel,
+                nowMs = nowMs,
+                groupName = com.aeriotv.android.feature.livetv.groupDisplayName(state.selectedGroup, collections),
+                isFavorite = previewChannel?.id in favoriteIds,
+                miniActive = miniActive,
+                onOpenInfo = {
+                    previewProgram?.let { cell ->
+                        programInfoTarget = cell.toInfoTarget(previewChannel?.name ?: "", previewChannel?.dispatcharrChannelId)
+                    }
+                },
+                descriptionFocus = bannerFocus,
+                downTarget = if (pillsShown) pillsFocus else gridFocus,
+                upTarget = topNav,
+                onDown = if (pillsShown) null else ({ clockSelectTrigger += 1; true }),
+            )
+        } else if (previewMode) {
             val topNav = com.aeriotv.android.feature.main.LocalTvTopNavFocusRequester.current
             val pillsShown = !sidebarGroupMode && !favoritesOnly
             GuidePreviewBanner(
@@ -1046,7 +1068,11 @@ fun GuideScreen(
         // banner (lifted 14 dp under the bar) when that layout is on. Drawn
         // in the shell's full-screen slot so the scrim dims the whole screen,
         // nav bar included (tvOS); the pane is offset by the guide's own top.
-        val drawerTop = headerHeight + (if (previewMode) GuidePreviewBanner.height - 14.dp else 0.dp)
+        val drawerTop = headerHeight + when {
+            previewMode && modernRows -> TiviGuideBanner.height
+            previewMode -> GuidePreviewBanner.height - 14.dp
+            else -> 0.dp
+        }
         val density = androidx.compose.ui.platform.LocalDensity.current
         val guideTop = with(density) { guideTopPx.toDp() }
         val drawerSlot = com.aeriotv.android.feature.main.LocalTvFullScreenOverlay.current

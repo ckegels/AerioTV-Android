@@ -610,7 +610,7 @@ private fun TimeHeader(
             if (modern && jumpLabel == null) {
                 Text(
                     clock,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     color = accentColor,
                     maxLines = 1,
