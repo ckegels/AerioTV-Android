@@ -23,7 +23,8 @@ interface UpdateManager {
 
     /**
      * Check GitHub for a newer release. Automatic checks (app foregrounded)
-     * are throttled to once per 12h and stay silent on failure; [manual]
+     * only run when the user turned them on in Settings (off by default), are
+     * throttled to once per 12h and stay silent on failure; [manual]
      * checks (Settings button) bypass the throttle, ignore a skipped
      * version, and surface errors.
      */

@@ -96,6 +96,8 @@ class GithubUpdateManager @Inject constructor(
             -> return
             else -> Unit
         }
+        // Automatic checks are opt-in (Settings > App Updates, off by default).
+        if (!manual && !appPreferences.updateAutoCheckOnce()) return
         val now = System.currentTimeMillis()
         if (!manual) {
             // The 12h throttle applies to foreground RETURNS only. The first
@@ -489,9 +491,10 @@ class GithubUpdateManager @Inject constructor(
 
         /** SHA-256 of the release/upload signing certificate (the cert on
          *  every GitHub release APK). Builds signed with anything else --
-         *  debug, or Play's re-signed deliveries -- are not this lineage. */
-        private const val UPLOAD_KEY_SHA256 =
-            "ab94078f621e6b65b75d1bf1f49a1b2fd657cc6629eb4729cae5e74d280df005"
+         *  debug, or Play's re-signed deliveries -- are not this lineage.
+         *  BuildConfig.UPDATE_KEY_SHA256: the official key unless a fork
+         *  overrides it (aerio.updateKeySha256). */
+        private val UPLOAD_KEY_SHA256 = BuildConfig.UPDATE_KEY_SHA256
     }
 }
 
