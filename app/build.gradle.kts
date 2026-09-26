@@ -73,6 +73,11 @@ android {
         // falls back to Aerio. A theme the user picked always wins.
         val defaultTheme = providers.gradleProperty("aerio.defaultTheme").getOrElse("Aerio")
         buildConfigField("String", "DEFAULT_THEME", "\"$defaultTheme\"")
+        // What's New after an update (the upstream release notes). A fork
+        // whose changes those notes do not describe turns it off with
+        // -Paerio.showWhatsNew=false.
+        val showWhatsNew = providers.gradleProperty("aerio.showWhatsNew").getOrElse("true").toBoolean()
+        buildConfigField("boolean", "SHOW_WHATS_NEW", "$showWhatsNew")
     }
 
     if (hasReleaseSigning) {
