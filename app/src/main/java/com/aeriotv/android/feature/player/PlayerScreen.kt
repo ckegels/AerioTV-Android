@@ -1917,7 +1917,10 @@ fun PlayerScreen(
             if (cur < 0 || list.isEmpty()) return@flip false
             val now = android.os.SystemClock.uptimeMillis()
             if (now - lastFlipAt < FLIP_DEBOUNCE_MS) return@flip true // eat repeats, stay responsive
-            val next = (cur + delta).coerceIn(0, list.lastIndex)
+            // Wrap around the ends: Down on the first channel goes to the
+            // last and Up on the last to the first (it used to stop there, so
+            // Down on channel 1 looked broken).
+            val next = Math.floorMod(cur + delta, list.size)
             if (next != cur) {
                 lastFlipAt = now
                 // Trace: stamp the real D-pad press for press->firstFrame.
