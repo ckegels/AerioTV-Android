@@ -815,7 +815,32 @@ fun GuideScreen(
             }
             false
         }) {
+    // Compact modern (TiviMate): the group pane runs the full height at the
+    // left and the whole page (banner with its video, header, grid) moves
+    // right beside it, instead of the pane docking under the banner.
+    val fullHeightSidebar = isTv && modernRows && sidebarShiftMode
     Row(modifier = Modifier.fillMaxSize()) {
+    if (fullHeightSidebar) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = groupSidebarOpen,
+            enter = androidx.compose.animation.slideInHorizontally(
+                animationSpec = androidx.compose.animation.core.tween(180),
+            ) { -it },
+            exit = androidx.compose.animation.ExitTransition.None,
+        ) {
+            GuideGroupSidebarPane(
+                groups = groups,
+                selectedToken = state.selectedGroup,
+                topOffset = 0.dp,
+                onPreview = previewSidebarGroup,
+                onCommit = commitSidebarGroup,
+                refocusToken = sidebarActiveToken,
+                refocusRequest = sidebarRefocusRequest,
+                onManageGroups = openSidebarManageGroups,
+                hiddenGroupCount = hiddenGroups.size,
+            )
+        }
+    }
     if (groupSidebarOpen && !isTv) {
         GuideGroupSidebarPane(
             groups = groups,
@@ -963,7 +988,7 @@ fun GuideScreen(
         // the grid width changes once instead of re-laying rows every frame.
         Row(modifier = Modifier.fillMaxSize()) {
         androidx.compose.animation.AnimatedVisibility(
-            visible = sidebarShiftMode && groupSidebarOpen,
+            visible = sidebarShiftMode && groupSidebarOpen && !fullHeightSidebar,
             enter = androidx.compose.animation.slideInHorizontally(
                 animationSpec = androidx.compose.animation.core.tween(180),
             ) { -it },
