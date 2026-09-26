@@ -204,6 +204,9 @@ fun GuideScreen(
     val collections by collectionsVm.collections.collectAsStateWithLifecycle()
     val stagedMultiview by multiviewStore.selected.collectAsStateWithLifecycle(initialValue = emptyList())
     val groupSelector by settingsVm.guideGroupSelector.collectAsStateWithLifecycle()
+    // Compact modern layout (Settings > Appearance, TV): TiviMate-style rows.
+    val compactModern by settingsVm.compactModernLayout.collectAsStateWithLifecycle(initialValue = false)
+    val modernRows = isTv && compactModern
     val sidebarGroupMode = isTv && groupSelector == "sidebar" && !favoritesOnly
     // Sidebar layout (Logan 2026-09-14): "shift" docks the pane beside the
     // grid, which narrows instead of being covered; "overlay" keeps the scrim.
@@ -239,7 +242,10 @@ fun GuideScreen(
     // with the app Text Size (not the system font size, unchanged from before).
     val appTextScale = com.aeriotv.android.ui.scale.LocalAppTextScale.current
     val hourWidth = if (isTv) 300.dp * guideScale * tvComfortScale else 320.dp * guideScale
-    val railWidth = if (isTv) 120.dp * tvComfortScale else 78.dp
+    // Compact modern: number, logo and name side by side need a wider rail.
+    // 405 dp leaves the name ~3x the room 230 dp did (~225 dp vs ~75 dp at
+    // display scale 0.85 and text size 1.15), so long names read in full.
+    val railWidth = if (modernRows) 405.dp * tvComfortScale else if (isTv) 120.dp * tvComfortScale else 78.dp
     // Phone cells carry the subtitle and two description lines (Logan
     // 2026-09-05, EPGGuideView.swift:3415: 98pt on the phone idiom, 72 on
     // the iPad), so they are taller. Phone = smallest width under 600dp,
@@ -274,7 +280,11 @@ fun GuideScreen(
     // more of it), so the row count, not the row height, is what has to match.
     // The phone / tablet column still takes its small net growth: there the
     // band replaces a number line that used to sit under the logo.
-    val rowHeight = (if (isTv) (if (previewMode) 48.dp else 66.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth +
+    val rowHeight = if (modernRows) {
+        // Compact modern (TiviMate): one title line per row, so the row only
+        // grows with the text size, not with the subtext or display scale.
+        34.dp * fontScale
+    } else (if (isTv) (if (previewMode) 48.dp else 66.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth +
         (if (isTv) 0.dp else com.aeriotv.android.feature.livetv.grid.GUIDE_PHONE_ROW_BAND_GROWTH)
     val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
 
@@ -994,6 +1004,7 @@ fun GuideScreen(
                     }
                 },
                 compact = previewMode,
+                modern = modernRows,
                 clockSelectTrigger = clockSelectTrigger,
                 remoteAction = { slot -> remoteMap.guideAction(slot, sidebarGroupMode) },
                 onHostAction = hostAction,
