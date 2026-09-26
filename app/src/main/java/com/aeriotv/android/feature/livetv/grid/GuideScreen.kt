@@ -423,6 +423,11 @@ fun GuideScreen(
         }
     }
     val grid = remember { GuideGridState(initialViewportStartMs = System.currentTimeMillis() - 15 * 60_000L) }
+    // Scrolling towards an edge of the in-memory guide widens it (the
+    // low-memory profile loads only a few hours around now).
+    LaunchedEffect(grid.viewportStartMs, grid.viewportDurationMs) {
+        viewModel.ensureGuideCovers(grid.viewportStartMs, grid.viewportStartMs + grid.viewportDurationMs)
+    }
     val rows = remember(displayChannels, state.epgByChannel, windowStartMs, windowEndMs) {
         com.aeriotv.android.feature.livetv.GuideMemo.get(
             "rows",
