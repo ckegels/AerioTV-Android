@@ -2699,6 +2699,9 @@ private fun LiveRewindChromeSection(
                 }
                 else -> exoHolder.setPaused(!exoHolder.isPaused())
             }
+            // The ticker only refreshes this while a Live Rewind buffer rolls;
+            // without one the play / pause icon must follow the press itself.
+            tsPaused = exoHolder.isPaused()
         },
         onRewindSeekWall = { target ->
             // Read the buffer window FRESH from the writer at action

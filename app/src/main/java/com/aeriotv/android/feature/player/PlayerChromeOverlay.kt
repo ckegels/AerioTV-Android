@@ -836,6 +836,8 @@ fun PlayerChromeOverlay(
                 }
             },
             onInteraction = onInteraction,
+            paused = isPlayerPaused,
+            onTogglePause = onRewindTogglePause,
         )
         // Options menu (hold OK), centered on the screen: a zero-height
         // anchor as wide as the menu sits at the center; the menu is taller

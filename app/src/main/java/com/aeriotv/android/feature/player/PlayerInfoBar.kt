@@ -29,6 +29,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -114,6 +116,9 @@ internal fun PlayerInfoBarOverlay(
      *  read-only programme progress line. */
     timeline: (@Composable () -> Unit)?,
     onInteraction: () -> Unit,
+    /** Play / pause (OK view): Up from the card row reaches the button. */
+    paused: Boolean = false,
+    onTogglePause: () -> Unit = {},
 ) {
     AnimatedVisibility(
         visible = visible && channel != null,
@@ -174,10 +179,21 @@ internal fun PlayerInfoBarOverlay(
                 )
                 if (expanded) {
                     Spacer(Modifier.height(14.dp))
-                    if (timeline != null) {
-                        timeline()
-                    } else {
-                        ProgrammeLine(programme, modifier = Modifier.padding(horizontal = EDGE))
+                    // Play / pause at the left of the timeline (Up from the cards).
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PlayPauseButton(
+                            paused = paused,
+                            onClick = { onInteraction(); onTogglePause() },
+                            onInteraction = onInteraction,
+                            modifier = Modifier.padding(start = EDGE),
+                        )
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (timeline != null) {
+                                timeline()
+                            } else {
+                                ProgrammeLine(programme, modifier = Modifier.padding(start = 16.dp, end = EDGE))
+                            }
+                        }
                     }
                     Spacer(Modifier.height(14.dp))
                     InfoBarCardRow(model = model, onInteraction = onInteraction)
@@ -452,6 +468,36 @@ private fun ChannelCardContent(channel: M3UChannel, now: EPGProgramme?) {
                     .background(Color.White.copy(alpha = 0.85f)),
             )
         }
+    }
+}
+
+/** Round play / pause control: quiet at rest, white platter with a dark glyph when focused. */
+@Composable
+private fun PlayPauseButton(
+    paused: Boolean,
+    onClick: () -> Unit,
+    onInteraction: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .tvFocusScale(focused, focusedScale = 1.08f)
+            .clip(CircleShape)
+            .background(if (focused) Color.White else Color.White.copy(alpha = 0.18f))
+            .onFocusChanged { if (it.isFocused) onInteraction() }
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .focusable(interactionSource = interaction),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+            contentDescription = if (paused) "Play" else "Pause",
+            tint = if (focused) Color.Black else Color.White,
+            modifier = Modifier.size(26.dp),
+        )
     }
 }
 
