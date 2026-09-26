@@ -58,6 +58,13 @@ fun GeneralSettingsScreen(
         .collectAsStateWithLifecycle(initialValue = true)
     val backgroundRefreshIntervalMins by viewModel.backgroundRefreshIntervalMins
         .collectAsStateWithLifecycle(initialValue = 360)
+    val dispatcharrLiveUpdates by viewModel.dispatcharrLiveUpdates
+        .collectAsStateWithLifecycle(initialValue = false)
+    // Null until the active playlist has been read. That read can queue behind
+    // heavy guide work at launch for tens of seconds, and a row rendered as
+    // disabled meanwhile is skipped by D-pad focus, so it reads as broken.
+    val dispatcharrLiveEligibility: com.aeriotv.android.core.network.DispatcharrLiveEligibility? by viewModel
+        .dispatcharrLiveEligibility.collectAsStateWithLifecycle(initialValue = null)
     val timeoutSecs by viewModel.networkTimeoutSecs.collectAsStateWithLifecycle(initialValue = 15.0)
     val maxRetries by viewModel.maxRetries.collectAsStateWithLifecycle(initialValue = 3)
 
@@ -161,6 +168,36 @@ fun GeneralSettingsScreen(
                             )
                         }
                     }
+                }
+
+                // MARK: Live updates
+                // Dispatcharr's change notifications. The row stays visible for
+                // every source type and greys out with the reason, so users of
+                // an API key login learn what would enable it.
+                val liveAvailable = dispatcharrLiveEligibility ==
+                    com.aeriotv.android.core.network.DispatcharrLiveEligibility.AVAILABLE
+                SettingsSection(
+                    header = "Live updates",
+                    footer = "While AerioTV is open, Dispatcharr tells it when a playlist or EPG refresh finishes, " +
+                        "and the channel list and guide update within seconds instead of on the next refresh.",
+                ) {
+                    SettingsToggleRow(
+                        title = "Update automatically when Dispatcharr changes",
+                        checked = liveAvailable && dispatcharrLiveUpdates,
+                        onCheckedChange = { if (liveAvailable) viewModel.setDispatcharrLiveUpdates(it) },
+                        // Focusable while still checking; greyed out only once known unavailable.
+                        enabled = dispatcharrLiveEligibility == null || liveAvailable,
+                        subtitle = when (dispatcharrLiveEligibility) {
+                            null -> "Checking your playlist\u2026"
+                            com.aeriotv.android.core.network.DispatcharrLiveEligibility.AVAILABLE -> null
+                            com.aeriotv.android.core.network.DispatcharrLiveEligibility.NEEDS_PASSWORD_LOGIN ->
+                                "Requires logging in to Dispatcharr with username and password (not an API key)."
+                            com.aeriotv.android.core.network.DispatcharrLiveEligibility.NOT_DISPATCHARR ->
+                                "Only available for Dispatcharr playlists."
+                            com.aeriotv.android.core.network.DispatcharrLiveEligibility.NO_PLAYLIST ->
+                                "Add a Dispatcharr playlist to use this."
+                        },
+                    )
                 }
 
                 // MARK: Network
