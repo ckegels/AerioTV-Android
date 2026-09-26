@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Adaptive launcher icon for API 26+. The system masks the composite to the
-    device shape (circle, squircle, ...). The foreground is the "Arr TV" mark:
-    a large white "TV" centered on the canvas, a small amber "Arr" above its
-    left edge and an amber stand bar below, all inside the 66dp safe zone.
+    Adaptive launcher icon for API 26+. The Android system masks the
+    foreground+background composite to the device-appropriate shape
+    (circle on Pixel, squircle on Samsung, etc.), so the foreground
+    glyph is centered with built-in padding to survive any mask. The
+    background is the iOS AppIcon navy.
+
+    Foreground source is the iOS AerioLogo.imageset/logo@3x.png with
+    the iOS rounded-square baked in. That softens the look when the
+    system mask is squarer than iOS's mask; on Pixel's circle mask the
+    iOS corners fall outside the visible area, so the result is the
+    pure glyph on navy.
 -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
+    <background android:drawable="@color/launcher_background" />
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>
