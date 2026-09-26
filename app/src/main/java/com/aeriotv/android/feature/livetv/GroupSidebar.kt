@@ -325,6 +325,40 @@ private fun groupSidebarRowStyle(): androidx.compose.ui.text.TextStyle {
     }
 }
 
+/** Compact modern guide (TiviMate): group rows as filled pills, no ring. */
+internal val LocalTiviGroupRows = androidx.compose.runtime.compositionLocalOf { false }
+
+@Composable
+private fun TiviGroupRow(
+    label: String,
+    isActive: Boolean,
+    focused: Boolean,
+    interaction: MutableInteractionSource,
+    onClick: () -> Unit,
+    modifier: Modifier,
+) {
+    // Focused: a light filled pill with grey text. The active group while
+    // focus is elsewhere: a translucent lighter pill with white text.
+    val page = MaterialTheme.colorScheme.background
+    val bg = when {
+        focused -> androidx.compose.ui.graphics.lerp(page, Color.White, 0.85f)
+        isActive -> androidx.compose.ui.graphics.lerp(page, Color.White, 0.3f)
+        else -> Color.Transparent
+    }
+    val fg = if (focused) androidx.compose.ui.graphics.lerp(page, Color.White, 0.3f) else Color.White
+    Text(
+        text = label, fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium,
+        color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .focusable(interactionSource = interaction)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    )
+}
+
 @Composable
 private fun GroupSidebarRow(
     label: String,
@@ -340,6 +374,10 @@ private fun GroupSidebarRow(
     val focused by interaction.collectIsFocusedAsState()
     LaunchedEffect(focused) { if (focused) onFocused() }
     val isTv = rememberIsTvDevice()
+    if (isTv && LocalTiviGroupRows.current) {
+        TiviGroupRow(label, isActive, focused, interaction, onClick, modifier)
+        return
+    }
     if (isTv) {
         // tvOS GroupSidebarRowButtonStyle (halved): 30 pt text, 20/12 padding,
         // corner 10, focused = white 16% wash + inset accent ring + white

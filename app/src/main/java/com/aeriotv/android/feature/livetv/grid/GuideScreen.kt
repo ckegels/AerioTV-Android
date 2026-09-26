@@ -819,7 +819,8 @@ fun GuideScreen(
     // left and the whole page (banner with its video, header, grid) moves
     // right beside it, instead of the pane docking under the banner.
     val fullHeightSidebar = isTv && modernRows && sidebarShiftMode
-    Row(modifier = Modifier.fillMaxSize()) {
+    var pageWidthPx by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    Row(modifier = Modifier.fillMaxSize().onSizeChanged { pageWidthPx = it.width }) {
     if (fullHeightSidebar) {
         androidx.compose.animation.AnimatedVisibility(
             visible = groupSidebarOpen,
@@ -828,17 +829,21 @@ fun GuideScreen(
             ) { -it },
             exit = androidx.compose.animation.ExitTransition.None,
         ) {
-            GuideGroupSidebarPane(
-                groups = groups,
-                selectedToken = state.selectedGroup,
-                topOffset = 0.dp,
-                onPreview = previewSidebarGroup,
-                onCommit = commitSidebarGroup,
-                refocusToken = sidebarActiveToken,
-                refocusRequest = sidebarRefocusRequest,
-                onManageGroups = openSidebarManageGroups,
-                hiddenGroupCount = hiddenGroups.size,
-            )
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.aeriotv.android.feature.livetv.LocalTiviGroupRows provides true,
+            ) {
+                GuideGroupSidebarPane(
+                    groups = groups,
+                    selectedToken = state.selectedGroup,
+                    topOffset = 0.dp,
+                    onPreview = previewSidebarGroup,
+                    onCommit = commitSidebarGroup,
+                    refocusToken = sidebarActiveToken,
+                    refocusRequest = sidebarRefocusRequest,
+                    onManageGroups = openSidebarManageGroups,
+                    hiddenGroupCount = hiddenGroups.size,
+                )
+            }
         }
     }
     if (groupSidebarOpen && !isTv) {
@@ -851,7 +856,23 @@ fun GuideScreen(
             hiddenGroupCount = hiddenGroups.size,
         )
     }
-    Column(modifier = Modifier.weight(1f).fillMaxSize().then(if (isTv) Modifier else Modifier.statusBarsPadding())) {
+    Column(
+        modifier = Modifier.weight(1f).fillMaxSize()
+            .then(if (isTv) Modifier else Modifier.statusBarsPadding())
+            .then(
+                // TiviMate: the page keeps its full width while the group
+                // pane is open and slides right, the right edge running off
+                // the screen, instead of narrowing (no grid relayout either).
+                if (fullHeightSidebar && pageWidthPx > 0) {
+                    Modifier.layout { measurable, constraints ->
+                        val placeable = measurable.measure(
+                            constraints.copy(minWidth = pageWidthPx, maxWidth = pageWidthPx),
+                        )
+                        layout(constraints.maxWidth, placeable.height) { placeable.placeRelative(0, 0) }
+                    }
+                } else Modifier,
+            ),
+    ) {
         if (!isTv) {
             // Phone / tablet: NO title bar (Logan 2026-09-05, Apple parity).
             // The header row carries the groups control, the pills or the
