@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -222,7 +223,13 @@ fun GuideGrid(
     // number resolves against the rows on screen, so it respects the
     // active group / filter.
     val channelNumberEntry = com.aeriotv.android.feature.livetv.rememberChannelNumberEntry { entry ->
-        val target = com.aeriotv.android.feature.livetv.resolveChannelNumber(entry, state.rows.channels)
+        // Compact modern numbers rows 1..n (TiviMate), so a typed number is
+        // that position first; the provider number is the fallback.
+        val byPosition = if (modern) {
+            com.aeriotv.android.feature.livetv.normalizeChannelNumber(entry).toIntOrNull()
+                ?.let { state.rows.channels.getOrNull(it - 1) }
+        } else null
+        val target = byPosition ?: com.aeriotv.android.feature.livetv.resolveChannelNumber(entry, state.rows.channels)
         target != null && state.focusChannel(target.id)
     }
     // TV: the clock cell is a focus target above row 1 (tvOS GuideCornerClock):
@@ -571,7 +578,21 @@ private fun TimeHeader(
     val rule = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f)
     val clockMode = rememberClockMode()
     val fmt = remember(clockMode) { ClockFormat.guideLabel(clockMode) }
-    Row(modifier = Modifier.fillMaxWidth().height(headerHeight)) {
+    Row(
+        modifier = Modifier.fillMaxWidth().height(headerHeight).then(
+            if (modern) {
+                // TiviMate: a clear rule under the whole header, from under the
+                // date to the right edge.
+                Modifier.drawBehind {
+                    val ry = size.height - 1.dp.toPx()
+                    drawLine(
+                        androidx.compose.ui.graphics.Color.White.copy(alpha = 0.5f),
+                        Offset(8.dp.toPx(), ry), Offset(size.width, ry), strokeWidth = 1.dp.toPx(),
+                    )
+                }
+            } else Modifier,
+        ),
+    ) {
         // Clock cell: tap snaps to now, long press opens Jump To (Roman via
         // Discord 2026-09-06). While a jump is active it shows the target in
         // the accent colour.
@@ -655,9 +676,9 @@ private fun TimeHeader(
                 }
             }
             if (modern) {
-                // The rule under the labels, and the now-dot sitting on it.
+                // The now-dot on the rule (the rule itself runs under the
+                // whole header, date included: see the Row above).
                 val ry = size.height - 1.dp.toPx()
-                drawLine(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.35f), Offset(0f, ry), Offset(size.width, ry), strokeWidth = 1.dp.toPx())
                 val nx = (nowMs - vs) * pxPerMs
                 if (nx >= 0f && nx <= size.width) {
                     drawLine(accentColor, Offset(nx, ry), Offset(nx, size.height), strokeWidth = 1.5.dp.toPx())
@@ -699,7 +720,7 @@ private fun GridRow(
     }
     val titleStyle = if (modern) {
         // TiviMate: regular-weight white titles, a size up from the stock cell.
-        TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Normal)
+        TextStyle(color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Normal)
     } else {
         TextStyle(color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
@@ -742,7 +763,8 @@ private fun GridRow(
     val fmt = remember(clockMode) { ClockFormat.guideLabel(clockMode) }
     // tvOS: a 1 pt hairline gap between cells and rows, nothing wider.
     val seam = 1f
-    val padH = 8f
+    // Compact modern (TiviMate): more room before the title.
+    val padH = if (modern) with(LocalDensity.current) { 10.dp.toPx() } else 8f
     val appTextScale = com.aeriotv.android.ui.scale.LocalAppTextScale.current
     // Same growth GuideScreen applies to the phone row height.
     val subRowGrowth = 1f + (com.aeriotv.android.ui.scale.LocalSubtextScale.current - 1f).coerceAtLeast(0f) * GUIDE_PHONE_SUBTEXT_SHARE
@@ -759,8 +781,18 @@ private fun GridRow(
     val surface = colors.surface
     val railNameStyle = TextStyle(color = onSurface, fontSize = 10.sp)
     // Compact modern rail: name and number at the programme title's size.
-    val modernNameStyle = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-    val modernNumberStyle = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+    val modernNameStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    val modernNumberStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    // TiviMate: on the focused row a name that does not fit scrolls (a
+    // marquee). The clock is read in the draw phase, so only this row redraws.
+    val marqueeOn = modern && gridFocused && rowIsFocused
+    var marqueeMs by remember(row) { androidx.compose.runtime.mutableLongStateOf(0L) }
+    LaunchedEffect(marqueeOn) {
+        marqueeMs = 0L
+        if (!marqueeOn) return@LaunchedEffect
+        val start = androidx.compose.runtime.withFrameMillis { it }
+        while (true) androidx.compose.runtime.withFrameMillis { marqueeMs = it - start }
+    }
     // TV BAND number (Logan 2026-09-16, Apple TV parity): the number lives in
     // the rail's own top band, sized to fill it, so it reads from the couch.
     val railBandNumberStyle = TextStyle(color = tertiary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -827,10 +859,13 @@ private fun GridRow(
             var x = padX
             if (rail.numbers) {
                 // Fixed column, right-aligned, so logos line up down the guide.
+                // TiviMate numbering: the position in the list shown (each
+                // group counts 1..n), not the provider's channel number. The
+                // column fits the longest position.
                 val colW = textCache.getOrPut(RAIL_MODERN_NUMBER_COL_KEY) {
-                    CellText(textMeasurer.measure("0000", style = modernNumberStyle, maxLines = 1), null)
+                    CellText(textMeasurer.measure("0".repeat(state.rows.size.toString().length), style = modernNumberStyle, maxLines = 1), null)
                 }.title.size.width.toFloat()
-                channel.channelNumber?.takeIf { it.isNotBlank() }?.let { num ->
+                (row + 1).toString().let { num ->
                     val t = textCache.getOrPut(RAIL_MODERN_NUMBER_KEY) {
                         CellText(textMeasurer.measure(num, style = modernNumberStyle, maxLines = 1, overflow = TextOverflow.Clip, constraints = Constraints(maxWidth = colW.toInt().coerceAtLeast(1))), null)
                     }.title
@@ -884,10 +919,25 @@ private fun GridRow(
                     val t = textCache.getOrPut(RAIL_MODERN_NAME_KEY) {
                         CellText(textMeasurer.measure(channel.name, style = modernNameStyle, maxLines = 1, overflow = TextOverflow.Ellipsis, constraints = Constraints(maxWidth = nameMaxW)), null)
                     }.title
-                    drawText(
-                        t, topLeft = Offset(x, midY - t.size.height / 2f),
-                        color = if (gridFocused && rowIsFocused) accent else Color.Unspecified,
-                    )
+                    val nameColor = if (gridFocused && rowIsFocused) accent else Color.Unspecified
+                    val full = if (marqueeOn && t.hasVisualOverflow) {
+                        textCache.getOrPut(RAIL_MODERN_NAME_FULL_KEY) {
+                            CellText(textMeasurer.measure(channel.name, style = modernNameStyle, maxLines = 1, softWrap = false), null)
+                        }.title
+                    } else null
+                    val elapsed = marqueeMs - MARQUEE_DELAY_MS
+                    if (full != null && elapsed > 0) {
+                        // Loop: the name, a gap, the name again, sliding left.
+                        val loop = full.size.width + MARQUEE_GAP.toPx()
+                        val shift = (elapsed * MARQUEE_SPEED.toPx() / 1000f) % loop
+                        val ty = midY - full.size.height / 2f
+                        clipRect(x, 0f, x + nameMaxW, size.height) {
+                            drawText(full, topLeft = Offset(x - shift, ty), color = nameColor)
+                            drawText(full, topLeft = Offset(x - shift + loop, ty), color = nameColor)
+                        }
+                    } else {
+                        drawText(t, topLeft = Offset(x, midY - t.size.height / 2f), color = nameColor)
+                    }
                 }
             }
         } else {
@@ -1129,6 +1179,9 @@ private fun GridRow(
             val focusStart = focusedCellStart
             val focusedHere = gridFocused && focusStart != Long.MIN_VALUE
             val cells = state.rows.cells(row)
+            // The focused cell's span, so the modern now-line can pass behind it.
+            var focusedX0 = Float.NaN
+            var focusedX1 = Float.NaN
             var i = state.rows.cellIndexAt(row, vs).let { if (it < 0) 0 else it }
             while (i < cells.size) {
                 val cell = cells[i]
@@ -1141,6 +1194,7 @@ private fun GridRow(
                 val w = (x1 - x0 - (if (modern) MODERN_CELL_GAP.toPx() else seam)).coerceAtLeast(MIN_CELL_PX)
                 val cellH = if (modern) size.height - MODERN_ROW_GAP.toPx() else size.height - 1f
                 val focused = focusedHere && cell.startMillis == focusStart
+                if (focused) { focusedX0 = x0; focusedX1 = x0 + w }
                 val airing = nowMs in cell.startMillis until cell.endMillis
                 val rowLit = gridFocused && rowIsFocused
                 val fill = if (modern) {
@@ -1292,7 +1346,11 @@ private fun GridRow(
                 // Compact modern (TiviMate): a thin accent line through the rows
                 // and their gaps; the dot sits on the time header's rule.
                 if (modern) {
-                    drawLine(accent, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.5.dp.toPx())
+                    // Behind the focused cell (TiviMate): only the row gap
+                    // under it shows the line, so the title stays readable.
+                    val underFocus = !focusedX0.isNaN() && x >= focusedX0 && x <= focusedX1
+                    val top = if (underFocus) size.height - MODERN_ROW_GAP.toPx() else 0f
+                    drawLine(accent, Offset(x, top), Offset(x, size.height), strokeWidth = 1.5.dp.toPx())
                 } else {
                     drawLine(NOW_RED, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
                 }
@@ -1385,6 +1443,12 @@ private const val RAIL_UNDER_NUMBER_KEY = Long.MIN_VALUE + 3
 private const val RAIL_MODERN_NAME_KEY = Long.MIN_VALUE + 4
 private const val RAIL_MODERN_NUMBER_KEY = Long.MIN_VALUE + 5
 private const val RAIL_MODERN_NUMBER_COL_KEY = Long.MIN_VALUE + 6
+private const val RAIL_MODERN_NAME_FULL_KEY = Long.MIN_VALUE + 7
+
+/** Focused-row channel name marquee (compact modern): start delay, speed, loop gap. */
+private const val MARQUEE_DELAY_MS = 1_000L
+private val MARQUEE_SPEED = 30.dp
+private val MARQUEE_GAP = 40.dp
 
 // Grown rail logo (number and/or name hidden): inset from the rail edges,
 // top clearance under the 12 dp corner icons (4 dp top + 12 dp + 2 dp), and

@@ -240,13 +240,15 @@ fun GuideScreen(
     // Phone / tablet rows keep their fixed canon heights at 100% and grow only
     // with the app Text Size (not the system font size, unchanged from before).
     val appTextScale = com.aeriotv.android.ui.scale.LocalAppTextScale.current
-    val hourWidth = if (isTv) 300.dp * guideScale * tvComfortScale else 320.dp * guideScale
+    val stockHourWidth = if (isTv) 300.dp * guideScale * tvComfortScale else 320.dp * guideScale
     // Compact modern (TiviMate): the channel column is a fixed share of the
     // screen. It used to be 405 dp x the Live TV display scale, which took a
     // third of a 960 dp TV at 0.85 and half of it at about 1.15; names that
     // do not fit are ellipsized instead.
     val screenWidthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
     val railWidth = if (modernRows) (screenWidthDp * MODERN_RAIL_FRACTION).dp else if (isTv) 120.dp * tvComfortScale else 78.dp
+    // Compact modern (TiviMate): the programme area shows two hours.
+    val hourWidth = if (modernRows) (screenWidthDp.dp - railWidth) / 2 else stockHourWidth
     // Phone cells carry the subtitle and two description lines (Logan
     // 2026-09-05, EPGGuideView.swift:3415: 98pt on the phone idiom, 72 on
     // the iPad), so they are taller. Phone = smallest width under 600dp,
