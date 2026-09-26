@@ -93,6 +93,23 @@ enum class AppTheme(
     ),
 
     /**
+     * Blue-grey with a light-blue accent, the palette of classic IPTV set-top
+     * apps. With the compact modern layout the guide draws its cells from this
+     * background (see GuideGrid's modern palette).
+     */
+    Slate(
+        displayName = "Slate",
+        accentPrimary = Color(0xFF4FC3F7),
+        accentSecondary = Color(0xFF29B6F6),
+        appBackground = Color(0xFF263238),
+        cardBackground = Color(0xFF37474F),
+        lightAppBackground = Color(0xFFECEFF1),
+        lightCardBackground = Color(0xFFFFFFFF),
+        // Light blue is too pale as ink on white -> a deep blue.
+        lightAccentPrimary = Color(0xFF0277BD),
+    ),
+
+    /**
      * Standalone neutral "Light" theme. A low-chroma teal-grey accent that
      * reads on white. Orthogonal to [AppearanceMode]: picking this theme does
      * NOT flip the mode. It ships a dark rendition too so it stays consistent

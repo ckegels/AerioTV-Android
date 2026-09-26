@@ -287,7 +287,7 @@ fun GuideScreen(
         MODERN_ROW_HEIGHT * fontScale + MODERN_ROW_GAP
     } else (if (isTv) (if (previewMode) 48.dp else 66.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth +
         (if (isTv) 0.dp else com.aeriotv.android.feature.livetv.grid.GUIDE_PHONE_ROW_BAND_GROWTH)
-    val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
+    val headerHeight = if (modernRows) 32.dp * fontScale else if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
 
     // Clock: 30 s tick for the now-line and the airing tint.
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -1355,7 +1355,7 @@ private const val QUANTUM_MS = 15 * 60_000L
 private const val MODERN_RAIL_FRACTION = 0.25f
 
 /** Compact modern layout: row height before the text size, and the gap under each row. */
-private val MODERN_ROW_HEIGHT = 38.dp
+private val MODERN_ROW_HEIGHT = 30.dp
 internal val MODERN_ROW_GAP = 4.dp
 
 /**

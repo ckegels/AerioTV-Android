@@ -468,6 +468,7 @@ private fun themeSubtitle(theme: AppTheme): String = when (theme) {
     AppTheme.Forest -> "Green on near-black"
     AppTheme.Lavender -> "Purple on near-black"
     AppTheme.Monochrome -> "Greyscale on near-black"
+    AppTheme.Slate -> "Light blue on blue-grey"
     AppTheme.Light -> "Neutral teal-grey on white"
 }
 
