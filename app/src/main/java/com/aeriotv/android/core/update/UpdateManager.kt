@@ -72,6 +72,12 @@ data class UpdateInfo(
     val notes: String,
     val apkUrl: String,
     val apkSizeBytes: Long,
+    /** Optional ART dex metadata (compile profile) for this device's Android
+     *  version, attached to the release as `*-api31.dm` / `*-api28.dm`.
+     *  Installed alongside the APK so Android compiles the update at install
+     *  instead of running it interpreted until its overnight idle job. */
+    val dmUrl: String? = null,
+    val dmSizeBytes: Long = 0L,
 )
 
 sealed interface UpdateState {
@@ -112,4 +118,6 @@ data class PendingUpdate(
     val apkPath: String,
     val notes: String = "",
     val apkSizeBytes: Long = 0L,
+    /** Staged dex metadata next to the APK, or null (none / not usable). */
+    val dmPath: String? = null,
 )

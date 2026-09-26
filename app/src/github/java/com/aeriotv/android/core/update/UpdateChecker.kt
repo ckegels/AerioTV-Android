@@ -1,5 +1,6 @@
 package com.aeriotv.android.core.update
 
+import android.os.Build
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
@@ -97,12 +98,27 @@ class UpdateChecker @Inject constructor() {
         if (!apk.browserDownloadUrl.startsWith("https://")) {
             return Outcome.Failed("non-https asset URL")
         }
+        // Optional compile profile for this device (see UpdateInfo.dmUrl).
+        // Android 8 cannot use one; a missing or odd asset just means none.
+        val dmSuffix = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> "-api31.dm"
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> "-api28.dm"
+            else -> null
+        }
+        val dm = dmSuffix?.let { suffix ->
+            release.assets.singleOrNull {
+                it.name.endsWith(suffix, ignoreCase = true) && it.state == "uploaded" && it.size > 0 &&
+                    it.browserDownloadUrl.startsWith("https://")
+            }
+        }
         return Outcome.UpdateAvailable(
             UpdateInfo(
                 versionName = remote,
                 notes = plainTextNotes(release.body.orEmpty()),
                 apkUrl = apk.browserDownloadUrl,
                 apkSizeBytes = apk.size,
+                dmUrl = dm?.browserDownloadUrl,
+                dmSizeBytes = dm?.size ?: 0L,
             ),
         )
     }

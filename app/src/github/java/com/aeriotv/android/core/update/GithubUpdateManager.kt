@@ -158,8 +158,10 @@ class GithubUpdateManager @Inject constructor(
                 _state.value = UpdateState.Verifying(info)
                 val verified = verifyStagedApk(target, info.apkSizeBytes)
                     ?: return@launch // verifyStagedApk set the Error state
+                // Best effort: the compile profile never blocks the update.
+                val dmPath = stageDexMetadata(dir, info)
                 appPreferences.setUpdatePendingJson(
-                    json.encodeToString(PendingUpdate.serializer(), verified),
+                    json.encodeToString(PendingUpdate.serializer(), verified.copy(dmPath = dmPath)),
                 )
                 _state.value = UpdateState.ReadyToInstall(info)
             } catch (t: Throwable) {
@@ -207,7 +209,11 @@ class GithubUpdateManager @Inject constructor(
             }
             try {
                 _state.value = UpdateState.Installing(info)
-                commitSession(staged)
+                val dm = pending.dmPath?.let(::File)?.takeIf { it.isFile }
+                // Kept for onInstallStatus: if Android rejects the session
+                // because of the dex metadata, install again without it.
+                retryWithoutDm = if (dm != null) staged else null
+                commitSession(staged, dm)
             } catch (t: Throwable) {
                 Log.w(TAG, "install commit failed", t)
                 _state.value = UpdateState.Error(
@@ -277,11 +283,38 @@ class GithubUpdateManager @Inject constructor(
         }
     }
 
+    /** APK of an install committed WITH dex metadata, for one retry without
+     *  it if the session fails (see [onInstallStatus]). */
+    @Volatile private var retryWithoutDm: File? = null
+
     /** Callback target for InstallStatusReceiver (session status sink). */
     fun onInstallStatus(status: Int, message: String?) {
         val info = when (val s = _state.value) {
             is UpdateState.Installing -> s.info
             else -> null
+        }
+        val retryApk = retryWithoutDm
+        retryWithoutDm = null
+        if (retryApk != null && status != PackageInstaller.STATUS_SUCCESS &&
+            status != PackageInstaller.STATUS_FAILURE_ABORTED && retryApk.isFile
+        ) {
+            // A bad or mismatched .dm fails the whole install; the APK alone
+            // is always installable, so try once more without the profile.
+            Log.w(TAG, "install with dex metadata failed ($status: $message); retrying without it")
+            scope.launch {
+                readPending()?.let { p ->
+                    p.dmPath?.let { File(it).delete() }
+                    appPreferences.setUpdatePendingJson(
+                        json.encodeToString(PendingUpdate.serializer(), p.copy(dmPath = null)),
+                    )
+                }
+                runCatching { commitSession(retryApk, null) }.onFailure { t ->
+                    _state.value = UpdateState.Error(
+                        "Install failed: ${t.message ?: t::class.simpleName}", info,
+                    )
+                }
+            }
+            return
         }
         when (status) {
             PackageInstaller.STATUS_SUCCESS -> Unit // self-update: process dies
@@ -316,9 +349,41 @@ class GithubUpdateManager @Inject constructor(
         }
     }
 
-    private suspend fun downloadTo(target: File, info: UpdateInfo) {
-        require(info.apkUrl.startsWith("https://")) { "refusing non-https download" }
-        downloadClient.prepareGet(info.apkUrl).execute { response ->
+    /**
+     * Download and check the release's compile profile for this device
+     * (UpdateInfo.dmUrl) next to the staged APK. Returns its path, or null
+     * when there is none or anything about it is off; never fails the update.
+     */
+    private suspend fun stageDexMetadata(dir: File, info: UpdateInfo): String? {
+        val url = info.dmUrl ?: return null
+        val target = File(dir, "AerioTV-${info.versionName}.dm")
+        return try {
+            downloadTo(target, info, url = url, sizeBytes = info.dmSizeBytes, reportProgress = false)
+            val ok = target.length() == info.dmSizeBytes &&
+                java.util.zip.ZipFile(target).use { zip -> zip.getEntry("primary.prof") != null }
+            if (ok) {
+                target.absolutePath
+            } else {
+                Log.w(TAG, "dex metadata rejected (size ${target.length()} vs ${info.dmSizeBytes})")
+                target.delete()
+                null
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "dex metadata download failed; installing without it", t)
+            target.delete()
+            null
+        }
+    }
+
+    private suspend fun downloadTo(
+        target: File,
+        info: UpdateInfo,
+        url: String = info.apkUrl,
+        sizeBytes: Long = info.apkSizeBytes,
+        reportProgress: Boolean = true,
+    ) {
+        require(url.startsWith("https://")) { "refusing non-https download" }
+        downloadClient.prepareGet(url).execute { response ->
             if (response.status != HttpStatusCode.OK) {
                 throw IllegalStateException("HTTP ${response.status.value}")
             }
@@ -332,10 +397,12 @@ class GithubUpdateManager @Inject constructor(
                     if (n > 0) {
                         out.write(buffer, 0, n)
                         written += n
-                        val pct = if (info.apkSizeBytes > 0) {
-                            ((written * 100) / info.apkSizeBytes).toInt().coerceIn(0, 100)
-                        } else 0
-                        _state.value = UpdateState.Downloading(info, pct)
+                        if (reportProgress) {
+                            val pct = if (sizeBytes > 0) {
+                                ((written * 100) / sizeBytes).toInt().coerceIn(0, 100)
+                            } else 0
+                            _state.value = UpdateState.Downloading(info, pct)
+                        }
                     }
                 }
                 out.fd.sync()
@@ -396,12 +463,14 @@ class GithubUpdateManager @Inject constructor(
         )
     }
 
-    private fun commitSession(staged: File) {
+    /** [dm]: optional dex metadata (compile profile) written as base.dm, so
+     *  Android compiles the update during the install. */
+    private fun commitSession(staged: File, dm: File?) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(
             PackageInstaller.SessionParams.MODE_FULL_INSTALL,
         ).apply {
-            setSize(staged.length())
+            setSize(staged.length() + (dm?.length() ?: 0L))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 // Attended install (Phase A): the system confirm dialog shows.
                 setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
@@ -412,6 +481,12 @@ class GithubUpdateManager @Inject constructor(
             session.openWrite("base.apk", 0, staged.length()).use { out ->
                 staged.inputStream().use { it.copyTo(out, 64 * 1024) }
                 session.fsync(out)
+            }
+            if (dm != null) {
+                session.openWrite("base.dm", 0, dm.length()).use { out ->
+                    dm.inputStream().use { it.copyTo(out, 64 * 1024) }
+                    session.fsync(out)
+                }
             }
             val callback = Intent(context, InstallStatusReceiver::class.java)
                 .setPackage(context.packageName)
