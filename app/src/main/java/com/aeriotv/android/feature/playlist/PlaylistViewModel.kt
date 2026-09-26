@@ -391,12 +391,13 @@ class PlaylistViewModel @Inject constructor(
     @Volatile private var fullRebuildPending = false
 
     private fun deferCacheUpdate(update: PlaylistRepository.CacheUpdate) {
-        when (update) {
-            is PlaylistRepository.CacheUpdate.Channels -> deferredChannelsUpdate = update
-            is PlaylistRepository.CacheUpdate.Guide -> fullRebuildPending = true
-            is PlaylistRepository.CacheUpdate.GuideWindow -> deferredGuideWindow = update
+        // Plain labels: class names are obfuscated in release builds.
+        val what = when (update) {
+            is PlaylistRepository.CacheUpdate.Channels -> { deferredChannelsUpdate = update; "channel lineup" }
+            is PlaylistRepository.CacheUpdate.Guide -> { fullRebuildPending = true; "guide rows" }
+            is PlaylistRepository.CacheUpdate.GuideWindow -> { deferredGuideWindow = update; "guide window" }
         }
-        Log.i(TAG, "cache update: ${update::class.simpleName} kept until the guide leaves the screen")
+        Log.i(TAG, "cache update: $what kept until the guide leaves the screen")
     }
 
     /**
@@ -1418,7 +1419,7 @@ class PlaylistViewModel @Inject constructor(
                 // same way (one deterministic build, no map surgery).
                 runCatching { repository.saveEpgToCache(playlist.id, programmes) }
                     .also {
-                        rebuildGuideCatalog(playlist, "fetch")
+                        rebuildGuideCatalog(playlist, if (forceRefresh) "fetch-forced" else "fetch")
                         _state.update { it.copy(isEpgLoading = false) }
                     }
                     .onSuccess {
