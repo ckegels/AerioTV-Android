@@ -1788,6 +1788,7 @@ fun PlayerScreen(
             chromeMenuOpenState = chromeMenuOpenState,
             optionsMenuRequest = optionsMenuRequestState.intValue,
             infoBarStyle = infoBarStyle,
+            numberingGroup = initialGroup,
             epgByChannel = epgByChannel,
             currentIndexState = currentIndexState,
             onHideChrome = { chromeVisible = false },
@@ -2482,6 +2483,7 @@ private fun LiveRewindChromeSection(
     chromeMenuOpenState: MutableState<Boolean>,
     optionsMenuRequest: Int,
     infoBarStyle: Boolean,
+    numberingGroup: String,
     epgByChannel: Map<String, List<EPGProgramme>>,
     currentIndexState: MutableIntState,
     onHideChrome: () -> Unit,
@@ -2612,7 +2614,18 @@ private fun LiveRewindChromeSection(
         }
         TvInfoBarModel(
             upcoming = upcoming,
-            position = idx.takeIf { it >= 0 }?.plus(1),
+            position = remember(channels, currentChannel?.id, numberingGroup) {
+                // The guide numbers each group 1..n (TiviMate): the position
+                // within the channel's own group, or in the whole list when
+                // the guide showed All Channels.
+                val ch = currentChannel ?: return@remember null
+                val list = if (numberingGroup == com.aeriotv.android.feature.playlist.PlaylistViewModel.ALL_GROUPS) {
+                    channels
+                } else {
+                    channels.filter { it.groupTitle.equals(ch.groupTitle, ignoreCase = true) }
+                }
+                list.indexOfFirst { it.id == ch.id }.takeIf { it >= 0 }?.plus(1)
+            },
             nextProgramme = nextProgramme,
             nowFor = { ch -> epgByChannel[ch.guideMatchKey]?.nowPlaying() },
             onTuneChannel = { ch ->
