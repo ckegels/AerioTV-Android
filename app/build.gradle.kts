@@ -68,6 +68,11 @@ android {
             "CAST_RECEIVER_APP_ID",
             "\"$castReceiverAppId\"",
         )
+        // Theme a fresh install starts with (an AppTheme name). A fork can
+        // change it with -Paerio.defaultTheme=Monochrome; an unknown name
+        // falls back to Aerio. A theme the user picked always wins.
+        val defaultTheme = providers.gradleProperty("aerio.defaultTheme").getOrElse("Aerio")
+        buildConfigField("String", "DEFAULT_THEME", "\"$defaultTheme\"")
     }
 
     if (hasReleaseSigning) {

@@ -110,8 +110,8 @@ class AppPreferences @Inject constructor(
     private val store get() = context.appDataStore
 
     val selectedTheme: Flow<AppTheme> = store.data.map { prefs ->
-        val raw = prefs[KEY_SELECTED_THEME] ?: AppTheme.Aerio.name
-        AppTheme.entries.firstOrNull { it.name == raw } ?: AppTheme.Aerio
+        val raw = prefs[KEY_SELECTED_THEME] ?: AppTheme.Default.name
+        AppTheme.entries.firstOrNull { it.name == raw } ?: AppTheme.Default
     }
 
     suspend fun setSelectedTheme(theme: AppTheme) {
