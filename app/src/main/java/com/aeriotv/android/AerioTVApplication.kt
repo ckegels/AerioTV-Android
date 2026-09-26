@@ -146,6 +146,22 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
         // A pending report from the previous run is folded into the debug log
         // file the Settings screens already view and share.
         com.aeriotv.android.core.debug.CrashReporter.install(this)
+        // "Is the app in the foreground" for the guide sweep and the guide's
+        // memory-pressure rule, from the PROCESS lifecycle. It used to follow
+        // the main screen, which stops whenever the fullscreen player covers
+        // it: watching a channel then read as "backgrounded", the sweep
+        // paused and a RUNNING_CRITICAL trim threw the guide away.
+        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(
+            androidx.lifecycle.LifecycleEventObserver { _, event ->
+                when (event) {
+                    androidx.lifecycle.Lifecycle.Event.ON_START ->
+                        com.aeriotv.android.core.data.repository.EpgSweepGate.appInForeground = true
+                    androidx.lifecycle.Lifecycle.Event.ON_STOP ->
+                        com.aeriotv.android.core.data.repository.EpgSweepGate.appInForeground = false
+                    else -> Unit
+                }
+            },
+        )
         appScope.launch {
             com.aeriotv.android.core.debug.CrashReporter
                 .publishToDebugLog(this@AerioTVApplication, debugLogger.logFile())

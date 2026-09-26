@@ -48,8 +48,9 @@ import kotlinx.coroutines.withContext
  * throughout the day) are coalesced into one window check (one request) with
  * a cooldown; the open app writes and repaints only the channels whose
  * schedule changed. While this runs, the stock full sweep waits while
- * something is being watched ([EpgSweepGate.holdWhileWatching]) and full
- * guide rebuilds wait for playback to stop. Nothing runs during multiview.
+ * the guide is on screen ([EpgSweepGate.guideOnScreen]) and guide swaps
+ * wait for it to leave the screen: updates land while the user watches, not
+ * while they browse. Nothing runs during multiview.
  */
 @Singleton
 class DispatcharrLiveUpdates @Inject constructor(
@@ -139,19 +140,18 @@ class DispatcharrLiveUpdates @Inject constructor(
         }
 
         // Days past the live window are the stock sweep's job. A change owes
-        // one; it runs as soon as nothing is watched full screen (right away
-        // when the user is in the guide) instead of waiting for the next
-        // 15-minute tick. The sweep is gated server-side by the sources
+        // one; it runs as soon as the guide is not on screen (right away while
+        // the user watches) instead of waiting for the next 15-minute tick. The sweep is gated server-side by the sources
         // fingerprint, so an owed sweep with nothing new costs one request.
         var sweepOwed = false
         var lastSweepAt = 0L
         var sweepTimer: Job? = null
-        // Runs the owed sweep when allowed: not watching full screen, and at
+        // Runs the owed sweep when allowed: the guide not on screen, and at
         // most once per SWEEP_MIN_INTERVAL_MS (sources refresh every few
         // minutes; days past tomorrow are not urgent). Otherwise it stays owed
-        // and is retried when the interval ends or playback leaves full screen.
+        // and is retried when the interval ends or the guide leaves the screen.
         fun tryOwedSweep(reason: String) {
-            if (!sweepOwed || PlaybackActivityTracker.watching.value) return
+            if (!sweepOwed || EpgSweepGate.guideOnScreen) return
             val wait = SWEEP_MIN_INTERVAL_MS - (System.currentTimeMillis() - lastSweepAt)
             if (wait > 0) {
                 if (sweepTimer?.isActive != true) sweepTimer = launch { delay(wait); tryOwedSweep(reason) }
@@ -166,8 +166,8 @@ class DispatcharrLiveUpdates @Inject constructor(
             tryOwedSweep(reason)
         }
         launch {
-            PlaybackActivityTracker.watching.collect { watching ->
-                if (!watching) tryOwedSweep("playback left full screen")
+            EpgSweepGate.guideOnScreenFlow.collect { onScreen ->
+                if (!onScreen) tryOwedSweep("guide left the screen")
             }
         }
 

@@ -170,6 +170,11 @@ class PlaylistViewModel @Inject constructor(
     data class ActiveRoute(val isLan: Boolean, val url: String)
 
     companion object {
+        /** rebuildGuideCatalog reasons that come from background refreshes. */
+        private val BACKGROUND_GUIDE_REBUILDS = setOf(
+            "fetch", "enrich", "history", "guide-update", "channels-update", "guide-window",
+        )
+
         const val ALL_GROUPS = "All"
         /** Pinned Favorites group inside Live TV (Apple parity: Favorites is a
          *  channel group, not a tab). Never a provider group name. */
@@ -366,77 +371,113 @@ class PlaylistViewModel @Inject constructor(
     private fun observeCacheUpdates() {
         viewModelScope.launch {
             repository.cacheUpdates.collect { update ->
-                val active = runCatching { repository.activePlaylist() }.getOrNull()
-                if (active?.id != update.playlistId) return@collect
-                when (update) {
-                    is PlaylistRepository.CacheUpdate.Channels -> {
-                        // A foreground load owns the channel state while it runs.
-                        if (_state.value.isLoading) {
-                            Log.i(TAG, "cache update: channels skipped (foreground load in progress)")
-                            return@collect
-                        }
-                        val diff = com.aeriotv.android.core.data.ChannelListDiff.between(
-                            _state.value.channels, update.channels,
-                        )
-                        if (!diff.hasChanges) {
-                            Log.i(TAG, "cache update: channels unchanged (${update.channels.size})")
-                            return@collect
-                        }
-                        Log.i(TAG, "cache update: channels $diff -> ${update.channels.size} channels")
-                        _state.update { it.copy(channels = update.channels) }
-                        if (appPreferences.dispatcharrLiveUpdates.first()) {
-                            // Live updates change the lineup mid-session. Keep the
-                            // cache's identity stamp in step, or the next launch
-                            // purges the whole guide cache (the identity rule in
-                            // doLoadEpg) although its rows, stored under disp:<uuid>,
-                            // are still valid for every channel that stayed.
-                            appPreferences.setEpgIdentityHash(
-                                active.id,
-                                com.aeriotv.android.core.guide.GuideIdentityHash.of(update.channels),
-                            )
-                        }
-                        runCatching { rebuildGuideCatalog(active, "channels-update") }
-                            .onFailure { Log.w(TAG, "guide rebuild after channel update failed", it) }
-                    }
-                    is PlaylistRepository.CacheUpdate.Guide -> {
-                        // Dispatcharr live updates on: a full rebuild (~20 s of
-                        // work on a Shield) waits until nothing is being watched.
-                        // Off: stock behaviour, rebuild now.
-                        if (appPreferences.dispatcharrLiveUpdates.first() &&
-                            com.aeriotv.android.core.playback.PlaybackActivityTracker.watching.value
-                        ) {
-                            Log.i(TAG, "cache update: guide rows written, full rebuild deferred until playback stops")
-                            fullRebuildPending = true
-                            return@collect
-                        }
-                        Log.i(TAG, "cache update: guide rows written, rebuilding the guide")
-                        runCatching { rebuildGuideCatalog(active, "guide-update") }
-                            .onFailure { Log.w(TAG, "guide rebuild after cache update failed", it) }
-                    }
-                    is PlaylistRepository.CacheUpdate.GuideWindow ->
-                        runCatching { applyGuideWindow(active, update) }
-                            .onFailure {
-                                if (it is kotlinx.coroutines.CancellationException) throw it
-                                Log.w(TAG, "guide window update failed", it)
-                            }
+                // Guide updates are applied while the user watches, not while
+                // they browse the guide: the rows are already in the cache, so
+                // only the swap into the visible guide waits (setGuideOnScreen).
+                if (com.aeriotv.android.core.data.repository.EpgSweepGate.guideOnScreen) {
+                    deferCacheUpdate(update)
+                } else {
+                    applyCacheUpdate(update)
                 }
-            }
-        }
-        // The deferred full rebuild runs once playback stops.
-        viewModelScope.launch {
-            com.aeriotv.android.core.playback.PlaybackActivityTracker.watching.collect { watching ->
-                if (watching || !fullRebuildPending) return@collect
-                fullRebuildPending = false
-                val active = runCatching { repository.activePlaylist() }.getOrNull() ?: return@collect
-                Log.i(TAG, "playback stopped: running the deferred full guide rebuild")
-                runCatching { rebuildGuideCatalog(active, "deferred") }
-                    .onFailure { Log.w(TAG, "deferred guide rebuild failed", it) }
             }
         }
     }
 
-    /** A full guide rebuild owed to data written while something was being watched. */
+    /** Updates that arrived while the guide was on screen, newest kept. */
+    private var deferredChannelsUpdate: PlaylistRepository.CacheUpdate.Channels? = null
+    private var deferredGuideWindow: PlaylistRepository.CacheUpdate.GuideWindow? = null
+
+    /** A full guide rebuild owed to data written while the guide was on screen. */
     @Volatile private var fullRebuildPending = false
+
+    private fun deferCacheUpdate(update: PlaylistRepository.CacheUpdate) {
+        when (update) {
+            is PlaylistRepository.CacheUpdate.Channels -> deferredChannelsUpdate = update
+            is PlaylistRepository.CacheUpdate.Guide -> fullRebuildPending = true
+            is PlaylistRepository.CacheUpdate.GuideWindow -> deferredGuideWindow = update
+        }
+        Log.i(TAG, "cache update: ${update::class.simpleName} kept until the guide leaves the screen")
+    }
+
+    /**
+     * The guide screen reports whether it is on screen (its tab showing, not
+     * covered by the fullscreen player). While it is, background updates are
+     * saved but not swapped into the guide and the full sweep waits; when it
+     * leaves, everything owed is applied, so the guide is current the next
+     * time it opens.
+     */
+    fun setGuideOnScreen(onScreen: Boolean) {
+        val gate = com.aeriotv.android.core.data.repository.EpgSweepGate
+        if (gate.guideOnScreen == onScreen) return
+        gate.guideOnScreen = onScreen
+        if (!onScreen) viewModelScope.launch { applyDeferredGuideUpdates() }
+    }
+
+    private suspend fun applyDeferredGuideUpdates() {
+        val gate = com.aeriotv.android.core.data.repository.EpgSweepGate
+        deferredChannelsUpdate?.let { deferredChannelsUpdate = null; applyCacheUpdate(it) }
+        if (gate.guideOnScreen) return
+        val window = deferredGuideWindow
+        deferredGuideWindow = null
+        if (fullRebuildPending) {
+            // A full rebuild covers any window update that came with it.
+            fullRebuildPending = false
+            val active = runCatching { repository.activePlaylist() }.getOrNull() ?: return
+            Log.i(TAG, "guide left the screen: applying the deferred guide rebuild")
+            runCatching { rebuildGuideCatalog(active, "deferred") }
+                .onFailure { Log.w(TAG, "deferred guide rebuild failed", it) }
+        } else if (window != null) {
+            Log.i(TAG, "guide left the screen: applying the deferred guide window")
+            applyCacheUpdate(window)
+        }
+    }
+
+    private suspend fun applyCacheUpdate(update: PlaylistRepository.CacheUpdate) {
+        val active = runCatching { repository.activePlaylist() }.getOrNull()
+        if (active?.id != update.playlistId) return
+        when (update) {
+            is PlaylistRepository.CacheUpdate.Channels -> {
+                // A foreground load owns the channel state while it runs.
+                if (_state.value.isLoading) {
+                    Log.i(TAG, "cache update: channels skipped (foreground load in progress)")
+                    return
+                }
+                val diff = com.aeriotv.android.core.data.ChannelListDiff.between(
+                    _state.value.channels, update.channels,
+                )
+                if (!diff.hasChanges) {
+                    Log.i(TAG, "cache update: channels unchanged (${update.channels.size})")
+                    return
+                }
+                Log.i(TAG, "cache update: channels $diff -> ${update.channels.size} channels")
+                _state.update { it.copy(channels = update.channels) }
+                if (appPreferences.dispatcharrLiveUpdates.first()) {
+                    // Live updates change the lineup mid-session. Keep the
+                    // cache's identity stamp in step, or the next launch
+                    // purges the whole guide cache (the identity rule in
+                    // doLoadEpg) although its rows, stored under disp:<uuid>,
+                    // are still valid for every channel that stayed.
+                    appPreferences.setEpgIdentityHash(
+                        active.id,
+                        com.aeriotv.android.core.guide.GuideIdentityHash.of(update.channels),
+                    )
+                }
+                runCatching { rebuildGuideCatalog(active, "channels-update") }
+                    .onFailure { Log.w(TAG, "guide rebuild after channel update failed", it) }
+            }
+            is PlaylistRepository.CacheUpdate.Guide -> {
+                Log.i(TAG, "cache update: guide rows written, rebuilding the guide")
+                runCatching { rebuildGuideCatalog(active, "guide-update") }
+                    .onFailure { Log.w(TAG, "guide rebuild after cache update failed", it) }
+            }
+            is PlaylistRepository.CacheUpdate.GuideWindow ->
+                runCatching { applyGuideWindow(active, update) }
+                    .onFailure {
+                        if (it is kotlinx.coroutines.CancellationException) throw it
+                        Log.w(TAG, "guide window update failed", it)
+                    }
+        }
+    }
 
     /**
      * Dispatcharr live updates: a server EPG refresh delivered a fresh window.
@@ -1063,6 +1104,18 @@ class PlaylistViewModel @Inject constructor(
     ) {
         val channels = _state.value.channels
         if (channels.isEmpty()) return
+        // Background refreshes do not swap the guide while it is being
+        // browsed (a rebuild is seconds of work and moves everything under
+        // the user); it is owed and applied once the guide leaves the screen.
+        // An empty guide, the launch paint and a user's jump always apply.
+        if (reason in BACKGROUND_GUIDE_REBUILDS &&
+            com.aeriotv.android.core.data.repository.EpgSweepGate.guideOnScreen &&
+            _state.value.epgByChannel.isNotEmpty()
+        ) {
+            fullRebuildPending = true
+            Log.i(TAG, "guide rebuild ($reason) kept until the guide leaves the screen")
+            return
+        }
         val (fromMillis, toMillis) = guideWindow(playlist)
         val stableOrder = appPreferences.dispatcharrLiveUpdates.first()
         val t0 = android.os.SystemClock.elapsedRealtime()

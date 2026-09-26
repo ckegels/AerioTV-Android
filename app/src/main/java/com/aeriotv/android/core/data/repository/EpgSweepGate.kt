@@ -13,7 +13,7 @@ import android.os.SystemClock
  * flow: nothing here should cost a subscription or a recomposition.
  */
 object EpgSweepGate {
-    /** Set from the app scaffold's ProcessLifecycle observer. Starts true so a
+    /** Set from the app's ProcessLifecycleOwner (MainScaffold). Starts true so a
      *  cold launch (which is by definition foreground) never stalls the sweep
      *  waiting for an ON_START it already missed. */
     @Volatile
@@ -45,19 +45,34 @@ object EpgSweepGate {
         }
 
     /**
-     * Set while Dispatcharr live updates are active. The sweep then also waits
-     * while something is being watched (Kodi's "prevent updates while
-     * playing"): its bulk chunk writes underran a playing stream's audio on a
-     * Shield, and live updates already keep the on-screen window current.
-     * False (stock) when the setting is off.
+     * Set while Dispatcharr live updates are active; writers then store rows
+     * in store order (PlaylistRepository.saveEpgToCache). The sweep used to
+     * wait while something was watched; it now waits while the guide is on
+     * screen instead ([guideOnScreen]). False (stock) when the setting is off.
      */
     @Volatile
     var holdWhileWatching: Boolean = false
 
-    /** The one question the sweep asks between chunks. */
+    /**
+     * True while the guide is on screen (its tab showing, not covered by the
+     * fullscreen player). Guide updates are applied while the user watches,
+     * not while they browse the guide: the sweep waits, and the ViewModel
+     * saves updates but only swaps them into the guide once it leaves the
+     * screen (PlaylistViewModel.setGuideOnScreen).
+     */
+    var guideOnScreen: Boolean
+        get() = guideOnScreenFlow.value
+        set(value) { guideOnScreenFlow.value = value }
+
+    /** [guideOnScreen] as a flow, for work that waits for the guide to leave. */
+    val guideOnScreenFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    /** The one question the sweep asks between chunks: the app is in front,
+     *  no tune is starting, the guide is not being browsed and no multiview
+     *  is running. Watching a single stream is when it works. */
     val sweepAllowed: Boolean
-        get() = appInForeground && !tuneInProgress &&
-            !(holdWhileWatching && com.aeriotv.android.core.playback.PlaybackActivityTracker.watching.value)
+        get() = appInForeground && !tuneInProgress && !guideOnScreen &&
+            !com.aeriotv.android.core.playback.PlaybackActivityTracker.isMultiStreamActive
 
     private const val TUNE_MAX_MS = 30_000L
 }
