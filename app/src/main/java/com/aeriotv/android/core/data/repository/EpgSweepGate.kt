@@ -44,9 +44,20 @@ object EpgSweepGate {
             return started != 0L && SystemClock.elapsedRealtime() - started < TUNE_MAX_MS
         }
 
+    /**
+     * Set while Dispatcharr live updates are active. The sweep then also waits
+     * while something is being watched (Kodi's "prevent updates while
+     * playing"): its bulk chunk writes underran a playing stream's audio on a
+     * Shield, and live updates already keep the on-screen window current.
+     * False (stock) when the setting is off.
+     */
+    @Volatile
+    var holdWhileWatching: Boolean = false
+
     /** The one question the sweep asks between chunks. */
     val sweepAllowed: Boolean
-        get() = appInForeground && !tuneInProgress
+        get() = appInForeground && !tuneInProgress &&
+            !(holdWhileWatching && com.aeriotv.android.core.playback.PlaybackActivityTracker.watching.value)
 
     private const val TUNE_MAX_MS = 30_000L
 }

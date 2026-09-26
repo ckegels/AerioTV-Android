@@ -69,6 +69,7 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
     @Inject lateinit var playlistDao: PlaylistDao
     @Inject lateinit var aerioDatabase: AerioDatabase
     @Inject lateinit var timeshiftStore: com.aeriotv.android.core.timeshift.TimeshiftBufferStore
+    @Inject lateinit var dispatcharrLiveUpdates: com.aeriotv.android.core.data.sync.DispatcharrLiveUpdates
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -149,6 +150,10 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
             com.aeriotv.android.core.debug.CrashReporter
                 .publishToDebugLog(this@AerioTVApplication, debugLogger.logFile())
         }
+        // Dispatcharr live change notifications (Settings > General > Live
+        // updates). Idle unless the setting is on, the active playlist logs in
+        // with username + password, and the app is in the foreground.
+        dispatcharrLiveUpdates.start(appScope)
         // Time Format: seed the process-wide clock mode and follow the pref.
         com.aeriotv.android.core.ui.ClockFormat.init(this)
         appScope.launch {

@@ -1274,6 +1274,13 @@ class AerioExoPlayerHolder @Inject constructor(
     }
 
     /** Arms the watchdog on first steady playback + recovers on a hard error. */
+    /** Feeds PlaybackActivityTracker.watching: the instance lives all session, isPlaying does not. */
+    private val watchingListener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            PlaybackActivityTracker.mainPlayingChanged(isPlaying)
+        }
+    }
+
     private val watchdogListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             // Reaching READY means the failure (if any) is behind us, so a later
@@ -1793,6 +1800,7 @@ class AerioExoPlayerHolder @Inject constructor(
             .apply {
                 PlaybackActivityTracker.playerCreated()
                 addListener(LoggingPlayerListener)
+                addListener(watchingListener)
                 addListener(watchdogListener)
                 // Always-on: network LOAD errors into the shareable log (GH #32).
                 addAnalyticsListener(LoadErrorDiagnosticsListener())
@@ -2746,6 +2754,8 @@ class AerioExoPlayerHolder @Inject constructor(
             p.removeAnalyticsListener(tracer.analyticsListener)
             p.removeListener(LoggingPlayerListener)
             p.removeListener(watchdogListener)
+            p.removeListener(watchingListener)
+            PlaybackActivityTracker.mainPlayingChanged(false)
             p.release()
         } catch (t: Throwable) {
             Log.w(TAG, "ExoPlayer release failed", t)
