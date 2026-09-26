@@ -349,13 +349,13 @@ private fun InfoBarHeader(
 }
 
 /** Card row on OK: TV guide, History, then the next channels. Focus lands on
- *  the first channel card, the likely next pick. */
+ *  TV guide, the first card (as in TiviMate). */
 @Composable
 private fun InfoBarCardRow(model: TvInfoBarModel, onInteraction: () -> Unit) {
-    val firstChannelFocus = remember { FocusRequester() }
+    val guideFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         delay(100)
-        runCatching { firstChannelFocus.requestFocus() }
+        runCatching { guideFocus.requestFocus() }
     }
     LazyRow(
         contentPadding = PaddingValues(horizontal = EDGE),
@@ -363,7 +363,7 @@ private fun InfoBarCardRow(model: TvInfoBarModel, onInteraction: () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         item(key = "guide") {
-            InfoBarCard(onClick = model.onOpenGuide, onInteraction = onInteraction) {
+            InfoBarCard(onClick = model.onOpenGuide, onInteraction = onInteraction, modifier = Modifier.focusRequester(guideFocus)) {
                 ActionCardContent(Icons.Filled.ViewList, "TV guide")
             }
         }
@@ -372,11 +372,10 @@ private fun InfoBarCardRow(model: TvInfoBarModel, onInteraction: () -> Unit) {
                 ActionCardContent(Icons.Filled.History, "History")
             }
         }
-        itemsIndexed(model.upcoming, key = { _, c -> c.id }) { index, c ->
+        itemsIndexed(model.upcoming, key = { _, c -> c.id }) { _, c ->
             InfoBarCard(
                 onClick = { model.onTuneChannel(c) },
                 onInteraction = onInteraction,
-                modifier = if (index == 0) Modifier.focusRequester(firstChannelFocus) else Modifier,
             ) {
                 ChannelCardContent(c, model.nowFor(c))
             }
