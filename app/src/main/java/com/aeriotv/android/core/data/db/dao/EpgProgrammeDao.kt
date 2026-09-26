@@ -52,6 +52,30 @@ interface EpgProgrammeDao {
      * ([rawKeys] are GuideMatchMaps-normalized: trimmed, lower-case; SQLite
      * lower() folds ASCII only). Served by the (playlistId, endMillis) index.
      */
+    /**
+     * One page of [forChannelKeysInWindow], in id order after [afterId]. A
+     * result bigger than one 2 MB cursor window is refilled by re-running the
+     * query; a write in between (the sweep, the window's own save) then makes
+     * the refill disagree and the read fails with "Couldn't read row N from
+     * CursorWindow" (seen on a Shield: the live guide window was lost). A
+     * page always fits one window.
+     */
+    @Query(
+        "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
+            "AND endMillis > :fromMillis AND startMillis < :toMillis " +
+            "AND (channelId IN (:canonicalIds) OR lower(trim(channelId)) IN (:rawKeys)) " +
+            "AND id > :afterId ORDER BY id LIMIT :limit"
+    )
+    suspend fun forChannelKeysInWindowPage(
+        playlistId: String,
+        canonicalIds: List<String>,
+        rawKeys: List<String>,
+        fromMillis: Long,
+        toMillis: Long,
+        afterId: Long,
+        limit: Int,
+    ): List<EpgProgrammeEntity>
+
     @Query(
         "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
             "AND endMillis > :fromMillis AND startMillis < :toMillis " +

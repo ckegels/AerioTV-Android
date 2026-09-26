@@ -2233,7 +2233,20 @@ class PlaylistRepository @Inject constructor(
             val raw = batch.flatMap {
                 com.aeriotv.android.core.guide.GuideMatchMaps.rawKeysOf(it, withNumber = true)
             }.distinct()
-            epgProgrammeDao.forChannelKeysInWindow(playlistId, canonical, raw, fromMillis, toMillis)
+            // Paged (forChannelKeysInWindowPage): one read for hundreds of
+            // channels spans several cursor windows and fails when a write
+            // lands between their refills.
+            val rows = ArrayList<com.aeriotv.android.core.data.db.entity.EpgProgrammeEntity>()
+            var afterId = 0L
+            while (true) {
+                val page = epgProgrammeDao.forChannelKeysInWindowPage(
+                    playlistId, canonical, raw, fromMillis, toMillis, afterId, CHANNEL_WINDOW_PAGE_ROWS,
+                )
+                rows.addAll(page)
+                if (page.size < CHANNEL_WINDOW_PAGE_ROWS) break
+                afterId = page.last().id
+            }
+            rows
         }.distinctBy { it.id }.map { it.toProgramme() }
     }
 
@@ -3694,3 +3707,6 @@ private fun Double.formatChannelNumber(): String {
  *  server per playlist. */
 
 private const val TAG_CAPS = "AerioCaps"
+
+/** Rows per page for the live guide window's per-channel read (fits one 2 MB cursor window). */
+private const val CHANNEL_WINDOW_PAGE_ROWS = 1000
