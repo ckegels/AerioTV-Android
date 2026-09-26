@@ -241,10 +241,12 @@ fun GuideScreen(
     // with the app Text Size (not the system font size, unchanged from before).
     val appTextScale = com.aeriotv.android.ui.scale.LocalAppTextScale.current
     val hourWidth = if (isTv) 300.dp * guideScale * tvComfortScale else 320.dp * guideScale
-    // Compact modern: number, logo and name side by side need a wider rail.
-    // 405 dp leaves the name ~3x the room 230 dp did (~225 dp vs ~75 dp at
-    // display scale 0.85 and text size 1.15), so long names read in full.
-    val railWidth = if (modernRows) 405.dp * tvComfortScale else if (isTv) 120.dp * tvComfortScale else 78.dp
+    // Compact modern (TiviMate): the channel column is a fixed share of the
+    // screen. It used to be 405 dp x the Live TV display scale, which took a
+    // third of a 960 dp TV at 0.85 and half of it at about 1.15; names that
+    // do not fit are ellipsized instead.
+    val screenWidthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val railWidth = if (modernRows) (screenWidthDp * MODERN_RAIL_FRACTION).dp else if (isTv) 120.dp * tvComfortScale else 78.dp
     // Phone cells carry the subtitle and two description lines (Logan
     // 2026-09-05, EPGGuideView.swift:3415: 98pt on the phone idiom, 72 on
     // the iPad), so they are taller. Phone = smallest width under 600dp,
@@ -282,7 +284,7 @@ fun GuideScreen(
     val rowHeight = if (modernRows) {
         // Compact modern (TiviMate): one title line per row, so the row only
         // grows with the text size, not with the subtext or display scale.
-        34.dp * fontScale
+        MODERN_ROW_HEIGHT * fontScale + MODERN_ROW_GAP
     } else (if (isTv) (if (previewMode) 48.dp else 66.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth +
         (if (isTv) 0.dp else com.aeriotv.android.feature.livetv.grid.GUIDE_PHONE_ROW_BAND_GROWTH)
     val headerHeight = if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
@@ -433,6 +435,13 @@ fun GuideScreen(
         }
     }
     val grid = remember { GuideGridState(initialViewportStartMs = System.currentTimeMillis() - 15 * 60_000L) }
+    // Compact modern (TiviMate): the live timeline starts on the half hour.
+    LaunchedEffect(modernRows) {
+        if (grid.alignToHalfHour != modernRows) {
+            grid.alignToHalfHour = modernRows
+            grid.anchorToNow(System.currentTimeMillis())
+        }
+    }
     val rows = remember(displayChannels, state.epgByChannel, windowStartMs, windowEndMs) {
         com.aeriotv.android.feature.livetv.GuideMemo.get(
             "rows",
@@ -1341,6 +1350,13 @@ private fun GroupPills(
 }
 
 private const val QUANTUM_MS = 15 * 60_000L
+
+/** Compact modern layout (TiviMate): channel column share of the screen width. */
+private const val MODERN_RAIL_FRACTION = 0.25f
+
+/** Compact modern layout: row height before the text size, and the gap under each row. */
+private val MODERN_ROW_HEIGHT = 38.dp
+internal val MODERN_ROW_GAP = 4.dp
 
 /**
  * The guide cell a TV catch-up replay was launched from, plus the timeline

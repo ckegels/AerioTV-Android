@@ -759,7 +759,9 @@ private fun GridRow(
             // No rail fill and no hairline: the page background runs through.
             val padX = 6.dp.toPx()
             val gap = 8.dp.toPx()
-            val midY = size.height / 2f
+            // The row keeps an empty gap under it (MODERN_ROW_GAP).
+            val rowH = size.height - MODERN_ROW_GAP.toPx()
+            val midY = rowH / 2f
             var x = padX
             if (rail.numbers) {
                 // Fixed column, right-aligned, so logos line up down the guide.
@@ -778,7 +780,7 @@ private fun GridRow(
                 // Logo box: nearly the row's height, 1.8:1, the logo fitted
                 // inside and centered. Kept even when a channel has no logo so
                 // the names line up.
-                val boxH = size.height - 6.dp.toPx()
+                val boxH = rowH - 8.dp.toPx()
                 val boxW = boxH * 1.8f
                 val image = if (channel.tvgLogo.isNotBlank()) logos.bitmap(channel.tvgLogo) else null
                 if (image != null) {
@@ -1067,7 +1069,9 @@ private fun GridRow(
                 if (cell.endMillis <= vs) continue
                 val x0 = ((cell.startMillis - vs) * pxPerMs).coerceAtLeast(0f)
                 val x1 = ((cell.endMillis - vs) * pxPerMs).coerceAtMost(stripW)
-                val w = (x1 - x0 - seam).coerceAtLeast(MIN_CELL_PX)
+                // Compact modern (TiviMate): a real gap between cells.
+                val w = (x1 - x0 - (if (modern) MODERN_CELL_GAP.toPx() else seam)).coerceAtLeast(MIN_CELL_PX)
+                val cellH = if (modern) size.height - MODERN_ROW_GAP.toPx() else size.height - 1f
                 val focused = focusedHere && cell.startMillis == focusStart
                 val airing = nowMs in cell.startMillis until cell.endMillis
                 val fill = when {
@@ -1078,7 +1082,7 @@ private fun GridRow(
                 }
                 // Logan 2026-09-02: the ring follows the cell's own square shape.
                 val radius = CornerRadius.Zero
-                drawRoundRect(fill, topLeft = Offset(x0, 0f), size = Size(w, size.height - 1f), cornerRadius = radius)
+                drawRoundRect(fill, topLeft = Offset(x0, 0f), size = Size(w, cellH), cornerRadius = radius)
                 if (focused) {
                     // Apple TV draws a 4pt ring at 1080p (about 4px); Android TV
                     // density is 2x, so 2dp is the same visual weight (Logan 2026-09-01).
@@ -1086,7 +1090,7 @@ private fun GridRow(
                     drawRoundRect(
                         Color.White,
                         topLeft = Offset(x0 + bw / 2, bw / 2),
-                        size = Size(w - bw, size.height - 1f - bw),
+                        size = Size(w - bw, cellH - bw),
                         cornerRadius = radius,
                         style = Stroke(width = bw),
                     )
@@ -1146,7 +1150,7 @@ private fun GridRow(
                     }
                     clipRect(x0, 0f, x0 + w, size.height) {
                         val x = x0 + padH
-                        var y = if (modern) (size.height - text.title.size.height) / 2f else 3.dp.toPx()
+                        var y = if (modern) (cellH - text.title.size.height) / 2f else 3.dp.toPx()
                         // Per-program catch-up badge (iPhone EPGGuideView cell,
                         // ChannelListView.canReplay): aired, and still inside the
                         // channel's archive window (capped at 30 days). Drawn
@@ -1204,7 +1208,8 @@ private fun GridRow(
                     }
                 }
             }
-            if (nowMs in (vs + 1) until ve) {
+            // Compact modern (TiviMate): no now-line.
+            if (!modern && nowMs in (vs + 1) until ve) {
                 val x = (nowMs - vs) * pxPerMs
                 drawLine(NOW_RED, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
             }
@@ -1287,6 +1292,9 @@ internal fun guideTraceCell(state: GuideGridState): String {
 
 private fun GuideRemoteAction.orDefault(default: GuideRemoteAction) = if (this == GuideRemoteAction.NONE) default else this
 private const val MIN_CELL_PX = 6f
+
+/** Compact modern layout (TiviMate): gap between programme cells. */
+private val MODERN_CELL_GAP = 3.dp
 private const val RAIL_NAME_KEY = Long.MIN_VALUE + 2
 private const val RAIL_UNDER_NUMBER_KEY = Long.MIN_VALUE + 3
 private const val RAIL_MODERN_NAME_KEY = Long.MIN_VALUE + 4
