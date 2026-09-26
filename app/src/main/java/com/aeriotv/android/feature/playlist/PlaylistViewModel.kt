@@ -374,6 +374,20 @@ class PlaylistViewModel @Inject constructor(
     private fun observeCacheUpdates() {
         viewModelScope.launch {
             repository.cacheUpdates.collect { update ->
+                // A new lineup was saved: move the cache's identity stamp with
+                // it NOW, applied or kept for later. The stamp only moved when
+                // the lineup reached the screen; kept while the guide was open,
+                // the next launch found "saved lineup != stamp", purged the
+                // whole guide cache and refetched it (seen on a Shield: whole
+                // groups on "No info"). The cached rows are stored under each
+                // channel's canonical id, so they stay valid for every channel
+                // that remains.
+                if (update is PlaylistRepository.CacheUpdate.Channels) {
+                    appPreferences.setEpgIdentityHash(
+                        update.playlistId,
+                        com.aeriotv.android.core.guide.GuideIdentityHash.of(update.channels),
+                    )
+                }
                 // Guide updates are applied while the user watches, not while
                 // they browse the guide: the rows are already in the cache, so
                 // only the swap into the visible guide waits (setGuideOnScreen).
@@ -462,17 +476,8 @@ class PlaylistViewModel @Inject constructor(
                 }
                 Log.i(TAG, "cache update: channels $diff -> ${update.channels.size} channels")
                 _state.update { it.copy(channels = update.channels) }
-                if (appPreferences.dispatcharrLiveUpdates.first()) {
-                    // Live updates change the lineup mid-session. Keep the
-                    // cache's identity stamp in step, or the next launch
-                    // purges the whole guide cache (the identity rule in
-                    // doLoadEpg) although its rows, stored under disp:<uuid>,
-                    // are still valid for every channel that stayed.
-                    appPreferences.setEpgIdentityHash(
-                        active.id,
-                        com.aeriotv.android.core.guide.GuideIdentityHash.of(update.channels),
-                    )
-                }
+                // The cache's identity stamp moved when the update arrived
+                // (observeCacheUpdates), applied now or kept for later.
                 runCatching { rebuildGuideCatalog(active, "channels-update") }
                     .onFailure { Log.w(TAG, "guide rebuild after channel update failed", it) }
             }
