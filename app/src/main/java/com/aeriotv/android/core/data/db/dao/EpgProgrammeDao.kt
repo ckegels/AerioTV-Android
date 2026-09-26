@@ -35,6 +35,29 @@ interface EpgProgrammeDao {
      * return a two-day window out of a 267K-row table. Do not remove the
      * composite index without re-measuring this read.
      */
+    /**
+     * One page of [forPlaylistInWindow], in id order after [afterId]. Big
+     * reads must go through pages: Android copies query results into 2 MB
+     * cursor windows and, when one fills, re-runs the query from the start
+     * and steps past every row already delivered, so a single 40K-row read
+     * (tens of MB with descriptions) costs quadratic work. Profiled on a
+     * Chromecast HD: 22 s for the launch guide read, 66 % of all CPU. Each
+     * page here fits one window, and the next page seeks straight to its
+     * first id.
+     */
+    @Query(
+        "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
+            "AND endMillis > :fromMillis AND startMillis < :toMillis " +
+            "AND id > :afterId ORDER BY id LIMIT :limit"
+    )
+    suspend fun forPlaylistInWindowPage(
+        playlistId: String,
+        fromMillis: Long,
+        toMillis: Long,
+        afterId: Long,
+        limit: Int,
+    ): List<EpgProgrammeEntity>
+
     @Query(
         "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
             "AND endMillis > :fromMillis AND startMillis < :toMillis"

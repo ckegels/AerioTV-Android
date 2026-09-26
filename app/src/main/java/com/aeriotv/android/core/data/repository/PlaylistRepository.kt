@@ -2126,9 +2126,7 @@ class PlaylistRepository @Inject constructor(
      * programmes that have already ended.
      */
     suspend fun loadCachedEpg(playlistId: String): List<EPGProgramme> =
-        withContext(layeringDispatcher) {
-            epgProgrammeDao.forPlaylist(playlistId).map { it.toProgramme() }
-        }
+        loadCachedEpg(playlistId, Long.MIN_VALUE, Long.MAX_VALUE)
 
     /**
      * Time-windowed cached-EPG read (iOS GuideStore parity --
@@ -2147,9 +2145,20 @@ class PlaylistRepository @Inject constructor(
         toMillis: Long,
     ): List<EPGProgramme> =
         withContext(layeringDispatcher) {
-            epgProgrammeDao
-                .forPlaylistInWindow(playlistId, fromMillis, toMillis)
-                .map { it.toProgramme() }
+            // Paged (EpgProgrammeDao.forPlaylistInWindowPage): one query
+            // for tens of thousands of rows re-runs itself for every 2 MB
+            // cursor window it fills.
+            val out = ArrayList<EPGProgramme>()
+            var afterId = 0L
+            while (true) {
+                val page = epgProgrammeDao.forPlaylistInWindowPage(
+                    playlistId, fromMillis, toMillis, afterId, EPG_READ_PAGE_ROWS,
+                )
+                page.mapTo(out) { it.toProgramme() }
+                if (page.size < EPG_READ_PAGE_ROWS) break
+                afterId = page.last().id
+            }
+            out
         }
 
     /**
@@ -3591,3 +3600,7 @@ private fun Double.formatChannelNumber(): String {
  *  server per playlist. */
 
 private const val TAG_CAPS = "AerioCaps"
+
+/** Rows per page for big EPG cache reads: small enough that a page (with
+ *  descriptions) fits one 2 MB cursor window. */
+private const val EPG_READ_PAGE_ROWS = 1000
