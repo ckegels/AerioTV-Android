@@ -2315,7 +2315,11 @@ class PlaylistRepository @Inject constructor(
     }
 
     suspend fun purgeEpgCache(playlistId: String) {
-        epgProgrammeDao.deleteForPlaylist(playlistId)
+        // In batches (EpgProgrammeDao.deleteBatchForPlaylist): one statement
+        // for a whole source blocked every other write for minutes.
+        while (epgProgrammeDao.deleteBatchForPlaylist(playlistId, EPG_DELETE_BATCH_ROWS) >= EPG_DELETE_BATCH_ROWS) {
+            kotlinx.coroutines.yield()
+        }
         // The grid coverage map dies WITH the rows it vouches for (the
         // cache-identity rule): a surviving coverage row would tell the next
         // incremental walk a chunk is already cached while the programmes it
@@ -2334,6 +2338,12 @@ class PlaylistRepository @Inject constructor(
          *  deletes a region this list cannot vouch for. */
         authoritative: Boolean = true,
     ) {
+        // A fetch that was already running when its playlist was deleted must
+        // not write the guide back for a playlist that no longer exists.
+        if (dao.byId(playlistId) == null) {
+            Log.i("PlaylistRepo", "saveEpgToCache: playlist ${playlistId.take(8)} is gone; not saving")
+            return
+        }
         val now = System.currentTimeMillis()
         // Dispatcharr live updates on: every writer (launch fetch, sweep,
         // background refresh, live window) writes in store order, so the
@@ -2772,22 +2782,34 @@ class PlaylistRepository @Inject constructor(
         // The VOD snapshot file is keyed by the playlist's IDENTITY, which is
         // derived from the row, so compute it BEFORE the row is gone.
         val row = dao.byId(playlistId)
-        // Guide + coverage, channel snapshot, VOD catalog (all identities),
-        // VOD snapshot metadata file. Each is best-effort: a failure to clean
-        // one store must not abort the delete itself.
-        runCatching { purgeEpgCache(playlistId) }
-            .onFailure { Log.w("PlaylistRepo", "delete: EPG purge failed", it) }
-        runCatching { channelSnapshotDao.deleteForPlaylist(playlistId) }
-            .onFailure { Log.w("PlaylistRepo", "delete: channel snapshot purge failed", it) }
-        runCatching { vodCatalogStore.deleteForPlaylistId(playlistId) }
-            .onFailure { Log.w("PlaylistRepo", "delete: VOD catalog purge failed", it) }
-        if (row != null) {
-            runCatching { vodSnapshotStore.delete(vodSnapshotStore.identity(row)) }
-                .onFailure { Log.w("PlaylistRepo", "delete: VOD snapshot purge failed", it) }
-        }
-        // Reminders, watch progress and local recordings are ON DELETE
-        // CASCADE against this row, so the DAO delete takes them with it.
+        // The row goes FIRST, so the playlist leaves the list (and the next
+        // one takes over) at once. It used to go last, after the cache purges;
+        // on a Chromecast HD the guide purge alone ran for minutes, so the
+        // Delete button looked like it did nothing. Reminders, watch progress
+        // and local recordings are ON DELETE CASCADE against this row, so the
+        // DAO delete takes them with it.
         dao.deleteById(playlistId)
+        // Guide + coverage, channel snapshot, VOD catalog (all identities),
+        // VOD snapshot metadata file: nothing reads them once the row is
+        // gone, so they are cleaned in the background, each best-effort.
+        layeringScope.launch {
+            val started = android.os.SystemClock.elapsedRealtime()
+            runCatching { purgeEpgCache(playlistId) }
+                .onFailure { Log.w("PlaylistRepo", "delete: EPG purge failed", it) }
+            runCatching { channelSnapshotDao.deleteForPlaylist(playlistId) }
+                .onFailure { Log.w("PlaylistRepo", "delete: channel snapshot purge failed", it) }
+            runCatching { vodCatalogStore.deleteForPlaylistId(playlistId) }
+                .onFailure { Log.w("PlaylistRepo", "delete: VOD catalog purge failed", it) }
+            if (row != null) {
+                runCatching { vodSnapshotStore.delete(vodSnapshotStore.identity(row)) }
+                    .onFailure { Log.w("PlaylistRepo", "delete: VOD snapshot purge failed", it) }
+            }
+            Log.i(
+                "PlaylistRepo",
+                "delete: caches of ${playlistId.take(8)} purged in " +
+                    "${android.os.SystemClock.elapsedRealtime() - started}ms",
+            )
+        }
     }
 
     /** Persist a user-chosen ordering of playlists. Sequence of ids is taken
@@ -3716,3 +3738,6 @@ private const val TAG_CAPS = "AerioCaps"
 /** Rows per page for big EPG cache reads: small enough that a page (with
  *  descriptions) fits one 2 MB cursor window. */
 private const val EPG_READ_PAGE_ROWS = 1000
+
+/** Rows per statement when purging a source's guide cache. */
+private const val EPG_DELETE_BATCH_ROWS = 2000
