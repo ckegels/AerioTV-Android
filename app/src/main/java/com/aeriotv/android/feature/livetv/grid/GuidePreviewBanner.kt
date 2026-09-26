@@ -313,7 +313,9 @@ fun GuidePreviewBanner(
  */
 object TiviGuideBanner {
     val videoHeight = 180.dp
-    val height = videoHeight + 20.dp
+    /** The video plus the gap under it; the page's own 16 dp top margin
+     *  sits above (the video starts 16 dp from the top, TiviMate ~12). */
+    val height = videoHeight + 8.dp
 }
 
 @Composable
@@ -342,7 +344,7 @@ fun TiviGuideBanner(
         modifier = modifier
             .fillMaxWidth()
             .height(TiviGuideBanner.height)
-            .padding(start = 12.dp, top = 12.dp, end = 20.dp, bottom = 8.dp),
+            .padding(start = 12.dp, end = 20.dp, bottom = 8.dp),
     ) {
         // The video slot: 16:9, rounded. The mini window (mounted at the
         // activity root) is placed over it. Without playback the programme

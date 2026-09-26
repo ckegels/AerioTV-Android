@@ -283,13 +283,21 @@ fun GuideScreen(
     // more of it), so the row count, not the row height, is what has to match.
     // The phone / tablet column still takes its small net growth: there the
     // band replaces a number line that used to sit under the logo.
+    val headerHeight = if (modernRows) 32.dp * fontScale else if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
+    // Measured height of the grid area (header + rows), for the modern row fit.
+    var gridAreaPx by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val rowHeight = if (modernRows) {
-        // Compact modern (TiviMate): one title line per row, so the row only
-        // grows with the text size, not with the subtext or display scale.
-        MODERN_ROW_HEIGHT * fontScale + MODERN_ROW_GAP
+        // Compact modern (TiviMate): exactly MODERN_VISIBLE_ROWS rows fill
+        // the measured grid area under the banner and header (a fixed pitch
+        // cut the 8th row off), never below what one title line needs; a
+        // very large text size then shows fewer rows instead of squashing.
+        val minRow = MODERN_ROW_HEIGHT * fontScale * 0.8f + MODERN_ROW_GAP
+        val fitted = if (gridAreaPx > 0) {
+            with(androidx.compose.ui.platform.LocalDensity.current) { gridAreaPx.toDp() - headerHeight } / MODERN_VISIBLE_ROWS
+        } else MODERN_ROW_HEIGHT * fontScale + MODERN_ROW_GAP
+        maxOf(fitted, minRow)
     } else (if (isTv) (if (previewMode) 48.dp else 66.dp) * tvComfortScale * fontScale else if (isPhoneIdiom) 98.dp * appTextScale else 72.dp * appTextScale) * subtextGrowth +
         (if (isTv) 0.dp else com.aeriotv.android.feature.livetv.grid.GUIDE_PHONE_ROW_BAND_GROWTH)
-    val headerHeight = if (modernRows) 32.dp * fontScale else if (isTv) 25.dp * tvComfortScale * fontScale else 32.dp * appTextScale
 
     // Clock: 30 s tick for the now-line and the airing tint.
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -1029,7 +1037,7 @@ fun GuideScreen(
                 hiddenGroupCount = hiddenGroups.size,
             )
         }
-        Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+        Box(modifier = Modifier.weight(1f).fillMaxSize().onSizeChanged { gridAreaPx = it.height }) {
         if (rows.isEmpty && favoritesOnly && favoritesOrNull == null) {
             // Favorites not loaded yet: draw nothing rather than flash the
             // empty-group notice for a frame (Streamer 2026-09-03).
@@ -1431,6 +1439,9 @@ private const val MODERN_RAIL_FRACTION = 0.25f
 /** Compact modern layout: row height before the text size, and the gap under each row. */
 private val MODERN_ROW_HEIGHT = 30.dp
 internal val MODERN_ROW_GAP = 4.dp
+
+/** Compact modern layout: rows the grid area is divided into (TiviMate shows 8). */
+private const val MODERN_VISIBLE_ROWS = 8
 
 /**
  * The guide cell a TV catch-up replay was launched from, plus the timeline
