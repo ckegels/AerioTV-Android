@@ -187,6 +187,9 @@ internal fun GroupSidebarPanel(
     // row N-1 (lpukatch, 0.4.10). Track which row holds focus and let the
     // ordinary focus search handle row-to-row travel.
     var focusedRowIndex by remember { mutableStateOf(-1) }
+    // Compact modern layout: Left from the open drawer opens the navigation
+    // rail (groups, then menu, as in TiviMate). Null otherwise: Left is held.
+    val openNavRail = com.aeriotv.android.feature.main.LocalTvOpenNavRail.current
     Column(
         modifier = modifier
             .then(if (hostConstrainsWidth) Modifier.fillMaxWidth() else Modifier.width(panelWidth))
@@ -201,7 +204,10 @@ internal fun GroupSidebarPanel(
                     // Left always, Up on the circle (or the top row when
                     // there is no circle), Down on the last row. Right
                     // commits in the pane, Back closes.
-                    isTv && trapFocus && down && key == androidx.compose.ui.input.key.Key.DirectionLeft -> true
+                    isTv && trapFocus && down && key == androidx.compose.ui.input.key.Key.DirectionLeft -> {
+                        openNavRail?.invoke()
+                        true
+                    }
                     isTv && trapFocus && key == androidx.compose.ui.input.key.Key.DirectionUp &&
                         (manageFocused || (onManageGroups == null && focusedRowIndex == 0)) -> true
                     isTv && trapFocus && key == androidx.compose.ui.input.key.Key.DirectionDown &&
