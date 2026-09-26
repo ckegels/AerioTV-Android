@@ -170,9 +170,12 @@ class PlaylistViewModel @Inject constructor(
     data class ActiveRoute(val isLan: Boolean, val url: String)
 
     companion object {
-        /** rebuildGuideCatalog reasons that come from background refreshes. */
+        /** rebuildGuideCatalog reasons that come from background refreshes.
+         *  Not "fetch": the playlist's main guide download (launch, stale
+         *  refresh) always applies, or channels the cached guide missed kept
+         *  showing "No info" for as long as the guide stayed on screen. */
         private val BACKGROUND_GUIDE_REBUILDS = setOf(
-            "fetch", "enrich", "history", "guide-update", "channels-update", "guide-window",
+            "enrich", "history", "guide-update", "channels-update", "guide-window",
         )
 
         const val ALL_GROUPS = "All"
