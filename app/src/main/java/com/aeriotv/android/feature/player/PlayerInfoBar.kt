@@ -79,6 +79,10 @@ class TvInfoBarModel(
     /** The channels after the current one in guide order (wrapping), for the
      *  card row on OK. */
     val upcoming: List<M3UChannel>,
+    /** 1-based position of the current channel in the list it was tuned
+     *  from, shown as its number (the guide's TiviMate numbering); null =
+     *  the provider's channel number. */
+    val position: Int? = null,
     val nextProgramme: EPGProgramme?,
     /** Current programme of any channel, for the channel cards. */
     val nowFor: (M3UChannel) -> EPGProgramme?,
@@ -117,6 +121,9 @@ internal fun PlayerInfoBarOverlay(
         exit = fadeOut(),
     ) {
         val ch = channel ?: return@AnimatedVisibility
+        // A synthesized placeholder (a channel without guide data) is not a
+        // programme: show the channel alone rather than its made-up times.
+        val programme = programme?.takeUnless { it.isPlaceholder }
         Box(modifier = Modifier.fillMaxSize()) {
             // Scrims: a light one behind the top labels, a deeper one rising
             // from the bottom behind the bar (taller when the cards show).
@@ -158,6 +165,7 @@ internal fun PlayerInfoBarOverlay(
             ) {
                 InfoBarHeader(
                     channel = ch,
+                    number = model.position?.toString() ?: ch.channelNumber,
                     programme = programme,
                     nextProgramme = model.nextProgramme,
                     formatBadge = formatBadge,
@@ -188,6 +196,7 @@ internal fun PlayerInfoBarOverlay(
 @Composable
 private fun InfoBarHeader(
     channel: M3UChannel,
+    number: String?,
     programme: EPGProgramme?,
     nextProgramme: EPGProgramme?,
     formatBadge: String?,
@@ -262,7 +271,7 @@ private fun InfoBarHeader(
                     )
                     Spacer(Modifier.width(22.dp))
                 }
-                channel.channelNumber?.takeIf { it.isNotBlank() }?.let { num ->
+                number?.takeIf { it.isNotBlank() }?.let { num ->
                     Text(
                         text = num,
                         style = MaterialTheme.typography.bodyLarge,

@@ -2612,6 +2612,7 @@ private fun LiveRewindChromeSection(
         }
         TvInfoBarModel(
             upcoming = upcoming,
+            position = idx.takeIf { it >= 0 }?.plus(1),
             nextProgramme = nextProgramme,
             nowFor = { ch -> epgByChannel[ch.guideMatchKey]?.nowPlaying() },
             onTuneChannel = { ch ->
