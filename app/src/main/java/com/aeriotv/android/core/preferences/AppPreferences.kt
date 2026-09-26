@@ -524,6 +524,22 @@ class AppPreferences @Inject constructor(
      * never set are removed again. A setting changed by hand while the layout
      * was on is overwritten by the saved value when it is turned off.
      */
+    /**
+     * ArrTV look, one press (the button above Settings): Slate theme, dark
+     * appearance, text and subtext size 1.15, the compact modern layout (its
+     * own switch, so the previous values are saved and turning the layout off
+     * later restores them) and the player's info bar overlay. The info bar key
+     * is written by name: its setting lives on another branch.
+     */
+    suspend fun applyArrTvLook() {
+        setSelectedTheme(AppTheme.Slate)
+        setAppearanceMode(AppearanceMode.Dark)
+        setTextScale(1.15f)
+        setSubtextScale(1.15f)
+        if (!compactModernLayout.first()) setCompactModernLayout(true)
+        store.edit { it[booleanPreferencesKey("player_info_bar_style")] = true }
+    }
+
     suspend fun setCompactModernLayout(enabled: Boolean) {
         store.edit { prefs ->
             val on = prefs[KEY_COMPACT_MODERN_LAYOUT] ?: false

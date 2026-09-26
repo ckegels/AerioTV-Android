@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -77,6 +79,8 @@ internal fun TvNavRail(
     onReturn: () -> Unit,
     onFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    /** "ArrTV look" action above Settings (not a tab); null hides it. */
+    onApplyLook: (() -> Unit)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     val offset by animateDpAsState(
@@ -110,6 +114,14 @@ internal fun TvNavRail(
         items.forEachIndexed { index, tab ->
             // Settings sits at the bottom, as on the tab bar's right edge.
             if (tab == AppTab.Settings && index > 0) Spacer(Modifier.weight(1f))
+            if (tab == AppTab.Settings && onApplyLook != null) {
+                TvNavRailRow(
+                    icon = Icons.Filled.AutoAwesome,
+                    label = "ArrTV look",
+                    selected = false,
+                    onClick = onApplyLook,
+                )
+            }
             TvNavRailItem(
                 tab = tab,
                 selected = tab == selected,
@@ -123,6 +135,21 @@ internal fun TvNavRail(
 @Composable
 private fun TvNavRailItem(
     tab: AppTab,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) = TvNavRailRow(
+    icon = if (selected) tab.iconSelected else tab.iconUnselected,
+    label = tab.label,
+    selected = selected,
+    onClick = onClick,
+    modifier = modifier,
+)
+
+@Composable
+private fun TvNavRailRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -166,13 +193,13 @@ private fun TvNavRailItem(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(
-            imageVector = if (selected) tab.iconSelected else tab.iconUnselected,
+            imageVector = icon,
             contentDescription = null,
             tint = foreground,
             modifier = Modifier.size(18.dp),
         )
         Text(
-            text = tab.label,
+            text = label,
             color = foreground,
             fontSize = 14.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,

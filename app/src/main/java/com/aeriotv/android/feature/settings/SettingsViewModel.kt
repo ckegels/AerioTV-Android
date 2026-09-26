@@ -577,6 +577,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setCompactModernLayout(value) }
     }
 
+    /** The ArrTV look in one press (AppPreferences.applyArrTvLook). */
+    fun applyArrTvLook() {
+        viewModelScope.launch { prefs.applyArrTvLook() }
+    }
+
     // Multiview (Phase 11c)
     val multiviewAudioFocusStyle: Flow<String> = prefs.multiviewAudioFocusStyle
     fun setMultiviewAudioFocusStyle(value: String) {

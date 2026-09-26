@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.FiberSmartRecord
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Cast
@@ -523,6 +524,13 @@ fun MainScaffold(
     }
 
     val settingsVm: SettingsViewModel = hiltViewModel()
+    // "ArrTV look" (rail item above Settings / top bar circle): everything in
+    // one press, with a short confirmation.
+    val lookContext = androidx.compose.ui.platform.LocalContext.current
+    val applyArrTvLook: () -> Unit = {
+        settingsVm.applyArrTvLook()
+        android.widget.Toast.makeText(lookContext, "ArrTV look applied", android.widget.Toast.LENGTH_SHORT).show()
+    }
     val defaultTabPref by settingsVm.defaultTab.collectAsStateWithLifecycle(initialValue = "")
 
     var selectedTab by rememberSaveable { mutableStateOf(AppTab.LiveTV) }
@@ -996,6 +1004,7 @@ fun MainScaffold(
                         .onFocusChanged { barHasFocus = it.hasFocus; topNavHasFocusState.value = it.hasFocus },
                 ) {
                     TvTopTabBar(
+                        onApplyLook = applyArrTvLook,
                         retainedCount = retainedList.size,
                         onRetainedClick = { showRetainedDialog = true },
                         onRefresh = { viewModel.refreshPlaylist() },
@@ -1086,6 +1095,7 @@ fun MainScaffold(
                             }
                         },
                         onFocusChanged = { topNavHasFocusState.value = it },
+                        onApplyLook = applyArrTvLook,
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .zIndex(2f)
@@ -1953,6 +1963,9 @@ private fun TvTopTabBar(
      *  up without a trip through Settings > playlist. */
     onRefresh: () -> Unit = {},
     refreshing: Boolean = false,
+    /** "ArrTV look": applies the fork's theme, text sizes and layouts in one
+     *  press (a round button beside Refresh / Search, also on Settings). */
+    onApplyLook: (() -> Unit)? = null,
     /** Reports the leftmost pixel the bar actually occupies (the action
      *  circles when shown, otherwise the centered capsule) so the top-left
      *  gesture hints can size themselves to the real gutter instead of a
@@ -2039,7 +2052,8 @@ private fun TvTopTabBar(
     // The action circles hide on Settings (Logan 2026-08-06: they belong to
     // the content tabs - Live TV / DVR / On Demand). They stay while the
     // Search screen itself is up so its circle can show the selected fill.
-    val showActionCircles = selected != AppTab.Settings
+    // The ArrTV look button is wanted on every tab, Settings included.
+    val showActionCircles = selected != AppTab.Settings || onApplyLook != null
     // Cold start: TV initial focus falls on the LEFTMOST focusable, which is
     // now the Refresh circle - pull it onto the selected pill (the
     // pre-circle behavior, and an accidental OK there refreshed instead of
@@ -2143,10 +2157,17 @@ private fun TvTopTabBar(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (onApplyLook != null) {
+                        TvBarCircleButton(
+                            icon = Icons.Filled.AutoAwesome,
+                            contentDescription = "Apply the ArrTV look",
+                            onClick = onApplyLook,
+                        )
+                    }
                     // Refresh (TV's pull-to-refresh stand-in), then Search -
                     // the most-used action sits closest to the pills, one
-                    // Left press away.
-                    TvBarCircleButton(
+                    // Left press away. Not on Settings.
+                    if (selected != AppTab.Settings) TvBarCircleButton(
                         icon = Icons.Filled.Refresh,
                         contentDescription = "Refresh channels and guide",
                         onClick = onRefresh,
@@ -2159,7 +2180,7 @@ private fun TvTopTabBar(
                             onClick = onRetainedClick,
                         )
                     }
-                    TvBarCircleButton(
+                    if (selected != AppTab.Settings) TvBarCircleButton(
                         icon = AppTab.Search.iconSelected,
                         contentDescription = AppTab.Search.label,
                         selected = selected == AppTab.Search,
