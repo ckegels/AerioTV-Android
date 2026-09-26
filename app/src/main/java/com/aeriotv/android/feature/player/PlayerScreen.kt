@@ -1465,7 +1465,9 @@ fun PlayerScreen(
                 // Info bar style: hold OK opens the options menu, also while
                 // the card row is up (a short press still reaches the focused
                 // card: DOWN passes through, only the hold and its release
-                // are consumed).
+                // are consumed). The menu opens on RELEASE: opened mid-hold,
+                // it took focus and the release clicked its first row
+                // (Subtitles).
                 if (isTvForm && infoBarStyle && chromeVisible && !chromeMenuOpen && !isCatchupMode &&
                     !recentsOverlayVisible && !channelListVisible &&
                     (native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
@@ -1476,17 +1478,15 @@ fun PlayerScreen(
                             if (native.repeatCount == 0) {
                                 okLongFired = false
                             } else {
-                                if (!okLongFired && (native.isLongPress || native.repeatCount >= 4)) {
-                                    okLongFired = true
-                                    exoWindowState.onPlayerRemoteAction?.invoke(
-                                        com.aeriotv.android.core.remote.PlayerRemoteAction.OPTIONS_MENU,
-                                    )
-                                }
+                                if (native.isLongPress || native.repeatCount >= 4) okLongFired = true
                                 return@onPreviewKeyEvent true
                             }
                         }
                         android.view.KeyEvent.ACTION_UP -> if (okLongFired) {
                             okLongFired = false
+                            exoWindowState.onPlayerRemoteAction?.invoke(
+                                com.aeriotv.android.core.remote.PlayerRemoteAction.OPTIONS_MENU,
+                            )
                             return@onPreviewKeyEvent true
                         }
                     }
@@ -1523,12 +1523,22 @@ fun PlayerScreen(
                                     (native.isLongPress || native.repeatCount >= 4)
                                 ) {
                                     okLongFired = true
-                                    exoWindowState.onPlayerRemoteAction?.invoke(okLongAction)
+                                    // The Options menu takes focus when it
+                                    // opens; opened mid-hold, the release
+                                    // clicked its first row. It opens on
+                                    // release instead (below).
+                                    if (okLongAction != com.aeriotv.android.core.remote.PlayerRemoteAction.OPTIONS_MENU) {
+                                        exoWindowState.onPlayerRemoteAction?.invoke(okLongAction)
+                                    }
                                 }
                                 return@onPreviewKeyEvent true
                             }
                             android.view.KeyEvent.ACTION_UP -> {
-                                if (!okLongFired) {
+                                if (okLongFired &&
+                                    okLongAction == com.aeriotv.android.core.remote.PlayerRemoteAction.OPTIONS_MENU
+                                ) {
+                                    exoWindowState.onPlayerRemoteAction?.invoke(okLongAction)
+                                } else if (!okLongFired) {
                                     exoWindowState.onPlayerRemoteAction?.invoke(
                                         remoteMap.playerAction(com.aeriotv.android.core.remote.RemoteSlot.OK_SHORT),
                                     )
