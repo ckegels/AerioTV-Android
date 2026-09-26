@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -344,7 +345,10 @@ fun TiviGuideBanner(
             .padding(start = 12.dp, top = 12.dp, end = 20.dp, bottom = 8.dp),
     ) {
         // The video slot: 16:9, rounded. The mini window (mounted at the
-        // activity root) is placed over it; without playback the art shows.
+        // activity root) is placed over it. Without playback the programme
+        // art (or the channel logo) shows at its own shape inside the slot:
+        // the slot keeps its place and size, so nothing else moves, but the
+        // picture is not boxed in black bars.
         androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 .height(TiviGuideBanner.videoHeight)
@@ -352,17 +356,37 @@ fun TiviGuideBanner(
                 .onGloballyPositioned {
                     com.aeriotv.android.feature.player.MiniPlayerChrome.videoSlotPx.value = it.boundsInRoot()
                 }
-                .clip(RoundedCornerShape(TIVI_VIDEO_CORNER))
-                .background(Color.Black.copy(alpha = 0.35f)),
-            contentAlignment = Alignment.Center,
+                .then(
+                    if (miniActive) Modifier.clip(RoundedCornerShape(TIVI_VIDEO_CORNER)).background(Color.Black)
+                    else Modifier,
+                ),
+            contentAlignment = Alignment.TopStart,
         ) {
             if (!miniActive) {
                 val model = art ?: channel?.tvgLogo?.takeIf { artKnown && it.isNotBlank() }
                 if (model != null) {
+                    var aspect by remember(model) { androidx.compose.runtime.mutableFloatStateOf(0f) }
+                    val slotW = TiviGuideBanner.videoHeight * 16f / 9f
+                    val slotH = TiviGuideBanner.videoHeight
+                    // Fit the picture's own shape into the slot.
+                    val (w, h) = when {
+                        aspect <= 0f -> slotW to slotH
+                        aspect >= 16f / 9f -> slotW to slotW / aspect
+                        else -> slotH * aspect to slotH
+                    }
                     AsyncImage(
                         model = model, contentDescription = null,
-                        contentScale = if (art != null) ContentScale.Crop else ContentScale.Fit,
-                        modifier = if (art != null) Modifier.matchParentSize() else Modifier.fillMaxWidth(0.5f),
+                        contentScale = ContentScale.Fit,
+                        onSuccess = { st ->
+                            val iw = st.result.image.width.toFloat()
+                            val ih = st.result.image.height.toFloat()
+                            if (iw > 0f && ih > 0f) aspect = iw / ih
+                        },
+                        modifier = Modifier
+                            .size(width = w, height = h)
+                            .clip(RoundedCornerShape(TIVI_VIDEO_CORNER))
+                            // Hidden until its shape is known (no jump).
+                            .then(if (aspect <= 0f) Modifier.alpha(0f) else Modifier),
                     )
                 }
             }

@@ -729,8 +729,10 @@ private fun GridRow(
     // page, the focused channel's row much lighter, the focused programme
     // nearly white with grey text, the row's number and name in the accent.
     val pageBg = colors.background
-    val modernCell = androidx.compose.ui.graphics.lerp(pageBg, Color.White, 0.14f)
-    val modernRowCell = androidx.compose.ui.graphics.lerp(pageBg, Color.White, 0.42f)
+    // Cell steps measured against TiviMate photographed on the same TV:
+    // plain cells clearly lighter than the page, the focused row lighter still.
+    val modernCell = androidx.compose.ui.graphics.lerp(pageBg, Color.White, 0.24f)
+    val modernRowCell = androidx.compose.ui.graphics.lerp(pageBg, Color.White, 0.5f)
     val modernFocusCell = androidx.compose.ui.graphics.lerp(pageBg, Color.White, 0.9f)
     val modernFocusText = androidx.compose.ui.graphics.lerp(pageBg, Color.White, 0.32f)
     val rowIsFocused by remember(state, row) { derivedStateOf { state.focusRow == row } }

@@ -101,8 +101,10 @@ enum class AppTheme(
         displayName = "Slate",
         accentPrimary = Color(0xFF4FC3F7),
         accentSecondary = Color(0xFF29B6F6),
-        appBackground = Color(0xFF263238),
-        cardBackground = Color(0xFF37474F),
+        // Greyer than Material blue-grey (#263238 read too blue next to
+        // TiviMate on the same TV): ~40 % less saturation.
+        appBackground = Color(0xFF2A3136),
+        cardBackground = Color(0xFF394147),
         lightAppBackground = Color(0xFFECEFF1),
         lightCardBackground = Color(0xFFFFFFFF),
         // Light blue is too pale as ink on white -> a deep blue.
