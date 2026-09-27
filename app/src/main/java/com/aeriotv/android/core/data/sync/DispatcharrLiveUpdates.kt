@@ -143,7 +143,8 @@ class DispatcharrLiveUpdates @Inject constructor(
         // the user watches) instead of waiting for the next 15-minute tick. The sweep is gated server-side by the sources
         // fingerprint, so an owed sweep with nothing new costs one request.
         var sweepOwed = false
-        var lastSweepAt = 0L
+        // As if one had just run: the launch has its own sweep.
+        var lastSweepAt = System.currentTimeMillis()
         var sweepTimer: Job? = null
         // Runs the owed sweep when allowed: the guide not on screen, and at
         // most once per SWEEP_MIN_INTERVAL_MS (sources refresh every few
@@ -185,7 +186,9 @@ class DispatcharrLiveUpdates @Inject constructor(
                 DispatcharrLiveEvent.Connected -> {
                     scheduleChannelCheck("connected", CONNECT_SETTLE_MS)
                     scheduleGuideWindow("connected")
-                    owe("connected")
+                    // No sweep owed here: the app's launch check already runs
+                    // one when the sources changed, and a connect is a launch
+                    // or a return (both sweeps ran together at every start).
                 }
                 is DispatcharrLiveEvent.PlaylistRefreshed ->
                     if (event.channelsChanged) scheduleChannelCheck("playlist ${event.accountId} refreshed", CHANNEL_DEBOUNCE_MS)
@@ -296,10 +299,14 @@ class DispatcharrLiveUpdates @Inject constructor(
         const val CONNECT_SETTLE_MS = 10_000L
         const val CHANNEL_CHECK_INTERVAL_MS = 10L * 60_000L
         const val EPG_DEBOUNCE_MS = 60_000L
-        /** The window check is one request plus a per-channel compare; cheap enough to follow closely. */
-        const val EPG_COOLDOWN_MS = 2L * 60_000L
+        /** The window check is one request of ~35K programmes plus a per-channel
+         *  compare: seconds of work and garbage on a Chromecast HD, with dozens of
+         *  sources refreshing through the day. At most every 10 minutes. */
+        const val EPG_COOLDOWN_MS = 10L * 60_000L
         const val MULTIVIEW_POLL_MS = 60_000L
-        /** Owed full sweeps (13 days) run at most this often. */
-        const val SWEEP_MIN_INTERVAL_MS = 10L * 60_000L
+        /** Owed full sweeps (every Guide Days day, back and ahead) run at most
+         *  this often: the live window keeps the next 24 h current, and a sweep
+         *  every 10 minutes kept a Chromecast HD busy all day. */
+        const val SWEEP_MIN_INTERVAL_MS = 6L * 60L * 60_000L
     }
 }
