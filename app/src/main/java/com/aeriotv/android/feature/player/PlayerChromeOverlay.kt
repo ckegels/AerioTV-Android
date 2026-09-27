@@ -217,6 +217,12 @@ fun PlayerChromeOverlay(
     onScrubCommit: () -> Unit = {},
     /** App Behaviors > Player Info Card element toggles (live, no restart). */
     infoCardPrefs: PlayerInfoCardPrefs = PlayerInfoCardPrefs(),
+    /** Settings > Player > Overlay Style = Info bar (TV): replaces the info
+     *  card and the control circles. Null = the standard chrome. */
+    infoBar: TvInfoBarModel? = null,
+    /** Incremented by the "Options menu" remote action (hold OK in the info
+     *  bar style): opens the Options menu. */
+    optionsMenuRequest: Int = 0,
 ) {
     var moreOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
@@ -241,6 +247,10 @@ fun PlayerChromeOverlay(
     // its auto-hide timer pauses while the user is interacting. tvOS keeps the
     // panel up as long as it is open.
     LaunchedEffect(moreOpen, sleepOpen) { onInteractingChange(moreOpen || sleepOpen) }
+    LaunchedEffect(optionsMenuRequest) { if (optionsMenuRequest > 0) moreOpen = true }
+    // Info bar style: TV live playback only (a catch-up replay keeps the
+    // standard transport controls).
+    val useInfoBar = isTv && infoBar != null && !catchupMode
 
     // Initial focus target when chrome appears -- the leftmost "Options"
     // pill on the bottom row. Without this, focus stays on PlayerScreen's
@@ -312,7 +322,7 @@ fun PlayerChromeOverlay(
     // chrome's top button row).
     Box(modifier = Modifier.fillMaxSize()) {
     AnimatedVisibility(
-        visible = chromeVisible && !inPip,
+        visible = chromeVisible && !inPip && !useInfoBar,
         enter = fadeIn(),
         exit = fadeOut(),
     ) {
@@ -780,7 +790,7 @@ fun PlayerChromeOverlay(
     // card lives inline in the top bar above, so this standalone copy only
     // covers the brief launch hint while the full chrome is hidden.
     AnimatedVisibility(
-        visible = if (isTv) (pillVisible && !inPip) else (pillVisible && !chromeVisible && !inPip),
+        visible = if (isTv) (pillVisible && !inPip && !useInfoBar) else (pillVisible && !chromeVisible && !inPip),
         enter = fadeIn(),
         exit = fadeOut(),
         modifier = Modifier
@@ -801,6 +811,92 @@ fun PlayerChromeOverlay(
                 // bottom of the control block (Logan 2026-09-11), so the top
                 // left corner carries the channel card alone.
             }
+        }
+    }
+
+    if (useInfoBar && infoBar != null) {
+        PlayerInfoBarOverlay(
+            visible = pillVisible && !inPip,
+            expanded = chromeVisible,
+            channel = channel,
+            programme = nowProgramme,
+            model = infoBar,
+            formatBadge = formatBadge,
+            sleepRemainingMillis = sleepRemainingMillis,
+            timeline = timeshiftState?.takeIf { it.buffering }?.let { ts ->
+                {
+                    TvRewindTimeline(
+                        state = ts,
+                        positionWallMs = timeshiftPositionWallMs,
+                        programme = nowProgramme,
+                        previewWallMs = scrubPreviewWallMs,
+                        focusable = true,
+                        onScrubStep = onScrubStep,
+                        onScrubCommit = onScrubCommit,
+                    )
+                }
+            },
+            onInteraction = onInteraction,
+            paused = isPlayerPaused,
+            onTogglePause = onRewindTogglePause,
+        )
+        // Options menu (hold OK), centered on the screen: a zero-height
+        // anchor as wide as the menu sits at the center; the menu is taller
+        // than half the screen, so it neither fits below nor above the anchor
+        // and the Material position rules center it on the anchor instead.
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(width = INFO_BAR_MENU_WIDTH, height = 0.dp),
+        ) {
+            PlayerMoreMenu(
+                modifier = Modifier.width(INFO_BAR_MENU_WIDTH),
+                expanded = moreOpen,
+                onDismiss = { moreOpen = false },
+                isTv = true,
+                canRecord = canRecord,
+                audioOnly = audioOnly,
+                sleepActive = sleepRemainingMillis != null,
+                scaleLabel = videoScaleLabel,
+                onCycleScale = onCycleVideoScale,
+                onSubtitles = {
+                    moreOpen = false
+                    onShowSubtitles()
+                },
+                onAudioTracks = {
+                    moreOpen = false
+                    onShowAudioTracks()
+                },
+                onPlaybackSpeed = {
+                    moreOpen = false
+                    onShowPlaybackSpeed()
+                },
+                onRecord = {
+                    moreOpen = false
+                    recordCurrent()
+                },
+                onSleepTimer = {
+                    moreOpen = false
+                    sleepOpen = true
+                },
+                onStreamInfo = {
+                    moreOpen = false
+                    onShowStreamInfo()
+                },
+                canSwitchStream = canSwitchStream,
+                onSwitchStream = {
+                    moreOpen = false
+                    onShowSwitchStream()
+                },
+                onAudioOnly = {
+                    moreOpen = false
+                    onToggleAudioOnly()
+                },
+                onMultiview = {
+                    moreOpen = false
+                    onAddToMultiview()
+                },
+            )
         }
     }
 
@@ -965,6 +1061,9 @@ private fun CenterAnchoredPillRow(
  *  edge up with it. */
 private val TV_TIMELINE_INSET = 56.dp
 
+/** Info bar style: width of the centered Options menu. */
+private val INFO_BAR_MENU_WIDTH = 300.dp
+
 /** Frosted capsule carrying the video format readout ("1080p · 59.94 fps"). */
 @Composable
 private fun PlayerFormatBadge(text: String, modifier: Modifier = Modifier) {
@@ -1075,6 +1174,7 @@ internal object ProblemReportMenu {
 @Composable
 private fun PlayerMoreMenu(
     expanded: Boolean,
+    modifier: Modifier = Modifier,
     onDismiss: () -> Unit,
     isTv: Boolean = false,
     canRecord: Boolean,
@@ -1091,6 +1191,9 @@ private fun PlayerMoreMenu(
     canSwitchStream: Boolean,
     onSwitchStream: () -> Unit,
     onAudioOnly: () -> Unit,
+    /** Info bar style: the Multiview control is not on screen, so the menu
+     *  offers it. Null = no row. */
+    onMultiview: (() -> Unit)? = null,
 ) {
     // Each row uses a leading icon for scannability, mirroring iOS's
     // SwiftUI `Label(text, systemImage:)` pattern in PlayerView.swift
@@ -1114,6 +1217,7 @@ private fun PlayerMoreMenu(
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
+        modifier = modifier,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         if (isTv) {
@@ -1249,6 +1353,19 @@ private fun PlayerMoreMenu(
                 },
                 text = { Text("Switch Stream") },
                 onClick = onSwitchStream,
+            )
+        }
+        if (onMultiview != null) {
+            DropdownMenuItem(
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Outlined.GridView,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                },
+                text = { Text("Add to Multiview") },
+                onClick = onMultiview,
             )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
