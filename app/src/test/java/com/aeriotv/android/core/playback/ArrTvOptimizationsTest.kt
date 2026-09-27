@@ -9,7 +9,6 @@ class ArrTvOptimizationsTest {
     fun reset() {
         ArrTvOptimizations.adaptiveWait = true
         ArrTvOptimizations.waitManySecs = 3
-        ArrTvOptimizations.waitTwoSecs = 4
         ArrTvOptimizations.waitOneSecs = 5
         ArrTvOptimizations.waitMaxSecs = 10
     }
@@ -18,7 +17,7 @@ class ArrTvOptimizationsTest {
     fun moreStreamsToGoToMeansAShorterWait() {
         // A channel that usually starts in 2 s
         assertEquals(3_000L, ArrTvOptimizations.pictureWaitMs(2_000L, 4))
-        assertEquals(4_000L, ArrTvOptimizations.pictureWaitMs(2_000L, 2))
+        assertEquals(3_000L, ArrTvOptimizations.pictureWaitMs(2_000L, 2))
         assertEquals(5_000L, ArrTvOptimizations.pictureWaitMs(2_000L, 1))
         // Not known: counted as one
         assertEquals(5_000L, ArrTvOptimizations.pictureWaitMs(2_000L, null))
@@ -26,8 +25,8 @@ class ArrTvOptimizationsTest {
 
     @Test
     fun aSlowChannelWaitsLongerButNeverPastTheMaximum() {
-        assertEquals(9_000L, ArrTvOptimizations.pictureWaitMs(6_000L, 3)) // 1.5x
-        assertEquals(10_000L, ArrTvOptimizations.pictureWaitMs(6_000L, 1)) // 2.5x = 15 s, capped
+        assertEquals(9_000L, ArrTvOptimizations.pictureWaitMs(6_000L, 2)) // 1.5x
+        assertEquals(10_000L, ArrTvOptimizations.pictureWaitMs(6_000L, 1)) // 2x = 12 s, capped
     }
 
     @Test

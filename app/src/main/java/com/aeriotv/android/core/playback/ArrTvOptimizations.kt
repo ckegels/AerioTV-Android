@@ -39,9 +39,9 @@ object ArrTvOptimizations {
     @Volatile var adaptiveWait = true
 
     /** The waits, in seconds (Settings, editable): at least this long with
-     *  three or more / two / one other streams, and never longer than max. */
+     *  two or more / one other stream, and never longer than max. Two tiers:
+     *  a channel here has at most three streams, so at most two others. */
     @Volatile var waitManySecs = 3
-    @Volatile var waitTwoSecs = 4
     @Volatile var waitOneSecs = 5
     @Volatile var waitMaxSecs = 10
 
@@ -54,9 +54,8 @@ object ArrTvOptimizations {
     fun pictureWaitMs(learnedFirstFrameMs: Long?, alternatives: Int?): Long {
         val left = if (adaptiveWait) (alternatives ?: 1) else 1
         val (factor, minSecs) = when {
-            left >= 3 -> 1.5 to waitManySecs
-            left == 2 -> 2.0 to waitTwoSecs
-            else -> 2.5 to waitOneSecs
+            left >= 2 -> 1.5 to waitManySecs
+            else -> 2.0 to waitOneSecs
         }
         val fromLearned = ((learnedFirstFrameMs ?: 0L) * factor).toLong()
         return maxOf(minSecs * 1000L, fromLearned).coerceAtMost(maxOf(waitMaxSecs, minSecs) * 1000L)
@@ -143,8 +142,7 @@ enum class ArrTvWait(
     val range: IntRange,
     val apply: (Int) -> Unit,
 ) {
-    MANY("arrtv_wait_many", "Wait with 3 or more other streams", 3, 1..20, { ArrTvOptimizations.waitManySecs = it }),
-    TWO("arrtv_wait_two", "Wait with 2 other streams", 4, 1..20, { ArrTvOptimizations.waitTwoSecs = it }),
+    MANY("arrtv_wait_many", "Wait with 2 or more other streams", 3, 1..20, { ArrTvOptimizations.waitManySecs = it }),
     ONE("arrtv_wait_one", "Wait with 1 other stream", 5, 1..20, { ArrTvOptimizations.waitOneSecs = it }),
     MAX("arrtv_wait_max", "Longest wait for a slow channel", 10, 2..30, { ArrTvOptimizations.waitMaxSecs = it }),
 }
