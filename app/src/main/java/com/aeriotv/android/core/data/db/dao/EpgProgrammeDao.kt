@@ -199,6 +199,28 @@ interface EpgProgrammeDao {
     )
 
     /**
+     * [deleteCoveredSpanForChannels] for ONE channel. With a single channel the
+     * query can only be answered from the unique (playlistId, channelId,
+     * startMillis) index, which visits that channel's rows alone. With several
+     * channels in the IN list SQLite picks (playlistId, endMillis) instead and
+     * walks every future row of the whole guide per statement: a live guide
+     * window that touched 1323 channels (hundreds of distinct spans) spent six
+     * minutes in these deletes on a Chromecast HD, 33 s for 484 channels on a
+     * SHIELD. Measured on a copy of the table (460K rows, 1323 channels): 9.2 s
+     * grouped, 0.18 s one channel at a time.
+     */
+    @Query(
+        "DELETE FROM epg_programme WHERE playlistId = :playlistId " +
+            "AND channelId = :channelId AND startMillis < :toMillis AND endMillis > :fromMillis"
+    )
+    suspend fun deleteCoveredSpanForChannel(
+        playlistId: String,
+        channelId: String,
+        fromMillis: Long,
+        toMillis: Long,
+    )
+
+    /**
      * Merge a fresh feed into one source's cached guide in a single
      * transaction so a reader never sees a half-written batch. The feed owns
      * the PRESENT AND FUTURE for THE CHANNELS IT CARRIES (that region is
@@ -256,9 +278,9 @@ interface EpgProgrammeDao {
             // parse returns a PARTIAL list that still went through this delete,
             // wiping rows it never carried.
             //
-            // Channels are grouped by identical span so a feed with one common
-            // schedule window still issues one DELETE per chunk, not one per
-            // channel. Chunked because SQLite caps host parameters at 999.
+            // One DELETE per channel (see deleteCoveredSpanForChannel): grouping
+            // channels by span into IN lists made SQLite scan the whole
+            // guide's future once per group.
             val spanByChannel = HashMap<String, LongArray>()
             for (r in drawable) {
                 val cur = spanByChannel[r.channelId]
@@ -269,18 +291,12 @@ interface EpgProgrammeDao {
                     if (r.endMillis > cur[1]) cur[1] = r.endMillis
                 }
             }
-            val channelsBySpan = HashMap<Pair<Long, Long>, MutableList<String>>()
             for ((channelId, span) in spanByChannel) {
                 // Never reach back before `now`: already-aired rows are the
                 // catch-up archive and stay put (task #135/#137).
                 val from = maxOf(nowMillis, span[0])
                 if (span[1] <= from) continue
-                channelsBySpan.getOrPut(from to span[1]) { mutableListOf() }.add(channelId)
-            }
-            for ((span, channelIds) in channelsBySpan) {
-                channelIds.chunked(900).forEach {
-                    deleteCoveredSpanForChannels(playlistId, span.first, span.second, it)
-                }
+                deleteCoveredSpanForChannel(playlistId, channelId, from, span[1])
             }
         }
         insertAll(drawable)
