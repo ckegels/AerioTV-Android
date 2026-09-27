@@ -76,6 +76,47 @@ interface EpgProgrammeDao {
         limit: Int,
     ): List<EpgProgrammeEntity>
 
+    /**
+     * One channel's rows under its canonical id, from the unique (playlistId,
+     * channelId, startMillis) index: that channel's rows alone are visited.
+     * [forChannelKeysInWindowPage] pages by id, which makes SQLite walk the
+     * whole table in id order; on a Chromecast HD (a 105 MB cache, memory and
+     * swap full, so nothing stays cached) reading one channel's 43 rows took
+     * 9.5 s that way.
+     */
+    @Query(
+        "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
+            "AND channelId = :channelId AND startMillis < :toMillis AND endMillis > :fromMillis"
+    )
+    suspend fun forChannelInWindow(
+        playlistId: String,
+        channelId: String,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<EpgProgrammeEntity>
+
+    /**
+     * Rows stored under raw grid keys (the stock day-chunk sweep), one page in
+     * id order. A raw key is matched normalized, which no index can answer, so
+     * the time-window index is named: only the window's rows are visited, not
+     * the whole table the id order would walk.
+     */
+    @Query(
+        "SELECT * FROM epg_programme INDEXED BY index_epg_programme_playlistId_endMillis " +
+            "WHERE playlistId = :playlistId AND endMillis > :fromMillis AND startMillis < :toMillis " +
+            "AND channelId NOT LIKE 'disp:%' AND channelId NOT LIKE 'm3u:%' " +
+            "AND lower(trim(channelId)) IN (:rawKeys) " +
+            "AND id > :afterId ORDER BY id LIMIT :limit"
+    )
+    suspend fun rawKeyedInWindowPage(
+        playlistId: String,
+        rawKeys: List<String>,
+        fromMillis: Long,
+        toMillis: Long,
+        afterId: Long,
+        limit: Int,
+    ): List<EpgProgrammeEntity>
+
     @Query(
         "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
             "AND endMillis > :fromMillis AND startMillis < :toMillis " +

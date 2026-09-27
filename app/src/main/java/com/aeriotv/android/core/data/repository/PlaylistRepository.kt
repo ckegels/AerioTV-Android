@@ -2263,27 +2263,32 @@ class PlaylistRepository @Inject constructor(
         fromMillis: Long,
         toMillis: Long,
     ): List<EPGProgramme> = withContext(layeringDispatcher) {
+        // Canonical rows one channel at a time (the unique index answers each
+        // from that channel's rows); rows under raw grid keys from the time-
+        // window index, paged: one read for hundreds of channels spans several
+        // cursor windows and fails when a write lands between their refills.
+        // Neither walks the whole table (see forChannelInWindow).
+        val rows = ArrayList<com.aeriotv.android.core.data.db.entity.EpgProgrammeEntity>()
+        for (ch in channels) {
+            rows.addAll(epgProgrammeDao.forChannelInWindow(playlistId, ch.guideChannelId().value, fromMillis, toMillis))
+        }
         // Up to 5 keys per channel; 150 channels keeps a batch under SQLite's 999 parameters.
-        channels.chunked(150).flatMap { batch ->
-            val canonical = batch.map { it.guideChannelId().value }
+        for (batch in channels.chunked(150)) {
             val raw = batch.flatMap {
                 com.aeriotv.android.core.guide.GuideMatchMaps.rawKeysOf(it, withNumber = true)
             }.distinct()
-            // Paged (forChannelKeysInWindowPage): one read for hundreds of
-            // channels spans several cursor windows and fails when a write
-            // lands between their refills.
-            val rows = ArrayList<com.aeriotv.android.core.data.db.entity.EpgProgrammeEntity>()
+            if (raw.isEmpty()) continue
             var afterId = 0L
             while (true) {
-                val page = epgProgrammeDao.forChannelKeysInWindowPage(
-                    playlistId, canonical, raw, fromMillis, toMillis, afterId, CHANNEL_WINDOW_PAGE_ROWS,
+                val page = epgProgrammeDao.rawKeyedInWindowPage(
+                    playlistId, raw, fromMillis, toMillis, afterId, CHANNEL_WINDOW_PAGE_ROWS,
                 )
                 rows.addAll(page)
                 if (page.size < CHANNEL_WINDOW_PAGE_ROWS) break
                 afterId = page.last().id
             }
-            rows
-        }.distinctBy { it.id }.map { it.toProgramme() }
+        }
+        rows.distinctBy { it.id }.map { it.toProgramme() }
     }
 
     /**
