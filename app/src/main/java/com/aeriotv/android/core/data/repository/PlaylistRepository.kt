@@ -2154,15 +2154,33 @@ class PlaylistRepository @Inject constructor(
             // of thousands of rows re-runs itself for every window it fills.
             // Returned in id order: the guide's dedup keeps the first of two
             // rows in a slot, which has always been the lower id.
+            val startedAt = android.os.SystemClock.elapsedRealtime()
             val ids = epgProgrammeDao.idsInWindow(playlistId, fromMillis, toMillis).sorted()
+            val idsMs = android.os.SystemClock.elapsedRealtime() - startedAt
             val out = ArrayList<EPGProgramme>(ids.size)
             // One copy per distinct string for this load: every row read from
             // Room brings its own copies, so a channel's key, a category or a
             // rerun's title and description were stored once per programme.
             val pool = StringPool()
+            // Where the time goes, per chunk: the query (Room's own threads,
+            // queueing included) and turning rows into programmes (here).
+            var queryMs = 0L
+            var mapMs = 0L
+            var slowest = 0L
             for (chunk in ids.chunked(EPG_READ_ID_CHUNK)) {
-                epgProgrammeDao.byIdsStartingBefore(chunk, toMillis).mapTo(out) { it.toProgramme(pool) }
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                val rows = epgProgrammeDao.byIdsStartingBefore(chunk, toMillis)
+                val t1 = android.os.SystemClock.elapsedRealtime()
+                rows.mapTo(out) { it.toProgramme(pool) }
+                queryMs += t1 - t0
+                slowest = maxOf(slowest, t1 - t0)
+                mapMs += android.os.SystemClock.elapsedRealtime() - t1
             }
+            Log.i(
+                "PlaylistRepo",
+                "[EPG] cache read: ${ids.size} ids in ${idsMs}ms, ${out.size} rows in ${queryMs}ms " +
+                    "(slowest chunk ${slowest}ms), mapped in ${mapMs}ms",
+            )
             out
         }
 
