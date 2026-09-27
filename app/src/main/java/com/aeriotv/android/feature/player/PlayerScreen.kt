@@ -1476,9 +1476,10 @@ fun PlayerScreen(
                 // Info bar style: hold OK opens the options menu, also while
                 // the card row is up (a short press still reaches the focused
                 // card: DOWN passes through, only the hold and its release
-                // are consumed). The menu opens on RELEASE: opened mid-hold,
-                // it took focus and the release clicked its first row
-                // (Subtitles).
+                // are consumed). It opens the moment the hold is recognised,
+                // as a long press does everywhere; the menu then swallows OK
+                // until the release (OptionsMenuHoldGate), which would
+                // otherwise pick its first row.
                 if (isTvForm && infoBarStyle && chromeVisible && !chromeMenuOpen && !isCatchupMode &&
                     !recentsOverlayVisible && !channelListVisible &&
                     (native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
@@ -1489,15 +1490,20 @@ fun PlayerScreen(
                             if (native.repeatCount == 0) {
                                 okLongFired = false
                             } else {
-                                if (native.isLongPress || native.repeatCount >= 4) okLongFired = true
+                                if (!okLongFired && (native.isLongPress || native.repeatCount >= 4)) {
+                                    okLongFired = true
+                                    OptionsMenuHoldGate.holding = true
+                                    exoWindowState.onPlayerRemoteAction?.invoke(
+                                        com.aeriotv.android.core.remote.PlayerRemoteAction.OPTIONS_MENU,
+                                    )
+                                }
                                 return@onPreviewKeyEvent true
                             }
                         }
                         android.view.KeyEvent.ACTION_UP -> if (okLongFired) {
+                            // The release came here, not to the menu: the hold is over.
                             okLongFired = false
-                            exoWindowState.onPlayerRemoteAction?.invoke(
-                                com.aeriotv.android.core.remote.PlayerRemoteAction.OPTIONS_MENU,
-                            )
+                            OptionsMenuHoldGate.holding = false
                             return@onPreviewKeyEvent true
                         }
                     }
@@ -1534,22 +1540,23 @@ fun PlayerScreen(
                                     (native.isLongPress || native.repeatCount >= 4)
                                 ) {
                                     okLongFired = true
+                                    // Fires at the hold, as a long press does.
                                     // The Options menu takes focus when it
-                                    // opens; opened mid-hold, the release
-                                    // clicked its first row. It opens on
-                                    // release instead (below).
-                                    if (okLongAction != com.aeriotv.android.core.remote.PlayerRemoteAction.OPTIONS_MENU) {
-                                        exoWindowState.onPlayerRemoteAction?.invoke(okLongAction)
+                                    // opens; it swallows OK until the release
+                                    // (OptionsMenuHoldGate), which would
+                                    // otherwise pick its first row.
+                                    if (okLongAction == com.aeriotv.android.core.remote.PlayerRemoteAction.OPTIONS_MENU) {
+                                        OptionsMenuHoldGate.holding = true
                                     }
+                                    exoWindowState.onPlayerRemoteAction?.invoke(okLongAction)
                                 }
                                 return@onPreviewKeyEvent true
                             }
                             android.view.KeyEvent.ACTION_UP -> {
-                                if (okLongFired &&
-                                    okLongAction == com.aeriotv.android.core.remote.PlayerRemoteAction.OPTIONS_MENU
-                                ) {
-                                    exoWindowState.onPlayerRemoteAction?.invoke(okLongAction)
-                                } else if (!okLongFired) {
+                                if (okLongFired) {
+                                    // The release came here, not to the menu: the hold is over.
+                                    OptionsMenuHoldGate.holding = false
+                                } else {
                                     exoWindowState.onPlayerRemoteAction?.invoke(
                                         remoteMap.playerAction(com.aeriotv.android.core.remote.RemoteSlot.OK_SHORT),
                                     )

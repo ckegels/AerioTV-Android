@@ -1157,6 +1157,29 @@ private fun PlayerControlCircle(
 }
 
 
+/**
+ * Hold OK opens the Options menu the moment the hold is recognised, while the
+ * button is still down. The menu's first row then has focus, and the
+ * button's repeats and its release would reach it and pick it. While
+ * [holding], the menu swallows OK -- the repeats and the release -- so only a
+ * press made after letting go picks a row. Set by PlayerScreen when it opens
+ * the menu from a hold; cleared by the release, wherever it lands, and when
+ * the menu closes.
+ */
+internal object OptionsMenuHoldGate {
+    @Volatile var holding = false
+
+    /** For the menu's onPreviewKeyEvent: true = swallowed. */
+    fun swallow(event: android.view.KeyEvent): Boolean {
+        if (!holding) return false
+        val ok = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+            event.keyCode == android.view.KeyEvent.KEYCODE_ENTER
+        if (!ok) return false
+        if (event.action == android.view.KeyEvent.ACTION_UP) holding = false
+        return true
+    }
+}
+
 @Composable
 private fun PlayerMoreMenu(
     expanded: Boolean,
@@ -1200,10 +1223,13 @@ private fun PlayerMoreMenu(
             surfaceVariant = moreMenuTheme.cardBackground,
         ),
     ) {
+    androidx.compose.runtime.LaunchedEffect(expanded) {
+        if (!expanded) OptionsMenuHoldGate.holding = false
+    }
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        modifier = modifier,
+        modifier = modifier.onPreviewKeyEvent { OptionsMenuHoldGate.swallow(it.nativeKeyEvent) },
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         if (isTv) {
