@@ -170,6 +170,10 @@ class PlaylistViewModel @Inject constructor(
     data class ActiveRoute(val isLan: Boolean, val url: String)
 
     companion object {
+        /** More than 1/this of the channels changed in a guide window: saved in
+         *  bulk and rebuilt instead of patched channel by channel. */
+        private const val LARGE_WINDOW_CHANGE_DIVISOR = 4
+
         const val ALL_GROUPS = "All"
         /** Pinned Favorites group inside Live TV (Apple parity: Favorites is a
          *  channel group, not a tab). Never a provider group name. */
@@ -535,6 +539,25 @@ class PlaylistViewModel @Inject constructor(
         val compareMs = android.os.SystemClock.elapsedRealtime() - startedAt
         if (changed.isEmpty()) {
             Log.i(TAG, "guide window: ${fresh.size} programmes, no channel changed (compare ${compareMs}ms)")
+            return
+        }
+        // A large share changed (the TV was off, a big server refresh): one bulk
+        // save and one rebuild, not hundreds of per-channel reads. On a
+        // Chromecast HD 680 changed channels took 95 s to patch -- 57 s of it
+        // reading their rows back one channel at a time from a swapping device.
+        if (changed.size * LARGE_WINDOW_CHANGE_DIVISOR > channels.size) {
+            val gridKeysAll = changed.flatMapTo(HashSet()) { id ->
+                channels.firstOrNull { it.guideChannelId().value == id }
+                    ?.let { com.aeriotv.android.core.guide.GuideMatchMaps.rawKeysOf(it, withNumber = false) }.orEmpty()
+            }
+            repository.deleteRawKeyedEpg(playlist.id, gridKeysAll, System.currentTimeMillis(), update.toMs)
+            repository.saveEpgToCache(playlist.id, com.aeriotv.android.core.guide.GuideCatalog.inStoreOrder(fresh))
+            Log.i(
+                TAG,
+                "guide window: ${changed.size} of ${channels.size} channels changed, saved in one go " +
+                    "(${fresh.size} rows, ${android.os.SystemClock.elapsedRealtime() - startedAt}ms); rebuilding",
+            )
+            rebuildGuideCatalog(playlist, "guide-window")
             return
         }
         // Authoritative per channel: replaces only the span these rows cover,

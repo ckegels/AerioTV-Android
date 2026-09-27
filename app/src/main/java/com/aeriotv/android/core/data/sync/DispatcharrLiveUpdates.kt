@@ -185,7 +185,14 @@ class DispatcharrLiveUpdates @Inject constructor(
                 // disconnected. Both checks are cheap when nothing changed.
                 DispatcharrLiveEvent.Connected -> {
                     scheduleChannelCheck("connected", CONNECT_SETTLE_MS)
-                    scheduleGuideWindow("connected")
+                    // Not on the first connect of this app run: the launch loads
+                    // the guide itself, and both at once wrote the same day twice
+                    // (a Chromecast HD after a restart: 95 s of guide window next
+                    // to the launch download and the sweep, everything lagging).
+                    // A reconnect later catches up on what was missed.
+                    if (firstConnectDone) scheduleGuideWindow("connected")
+                    else Log.i(TAG, "guide window (connected): skipped on the first connect, the launch loads the guide")
+                    firstConnectDone = true
                     // No sweep owed here: the app's launch check already runs
                     // one when the sources changed, and a connect is a launch
                     // or a return (both sweeps ran together at every start).
@@ -248,6 +255,9 @@ class DispatcharrLiveUpdates @Inject constructor(
         if (programmes.isEmpty()) return
         repository.announceCacheUpdate(PlaylistRepository.CacheUpdate.GuideWindow(playlistId, programmes, from, to))
     }
+
+    /** The first socket connect of this app run has happened (see Connected). */
+    @Volatile private var firstConnectDone = false
 
     private fun runOwedSweep(playlistId: String, reason: String) {
         Log.i(TAG, "full EPG sweep ($reason)")
