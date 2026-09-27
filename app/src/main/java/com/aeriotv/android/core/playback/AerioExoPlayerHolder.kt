@@ -249,6 +249,10 @@ class AerioExoPlayerHolder @Inject constructor(
                 !p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO) &&
                 (p.currentTracks.isEmpty || p.currentTracks.containsType(C.TRACK_TYPE_VIDEO))
         }
+        liveFailover.picturePlaying = {
+            val p = player
+            p != null && p.isPlaying && videoFrameRendered
+        }
         liveFailover.alternatives = {
             com.aeriotv.android.core.network.DispatchMore.alternativesFor(lastPlayUrl)
         }

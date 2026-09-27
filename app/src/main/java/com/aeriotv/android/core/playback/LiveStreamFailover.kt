@@ -115,6 +115,18 @@ class LiveStreamFailover(
     /** How many other streams the server counted for this channel's stream
      *  (X-Dispatch-Alternatives), null when it said nothing. Set by the holder. */
     @Volatile var alternatives: () -> Int? = { null }
+
+    /**
+     * The picture is playing now: the player plays and has rendered frames.
+     * The picture deadline is met by this as well as by a first frame: after
+     * a stream swapped inside the open connection the player reports no new
+     * first frame, and a deadline that waited for one walked on from streams
+     * that played (Chromecast HD, AL JAZEERA: seven switches in a row). And a
+     * step checks it once more right before asking for the next stream: a
+     * picture that came while the step got ready is never switched away.
+     * Set by the holder; main thread.
+     */
+    @Volatile var picturePlaying: () -> Boolean = { false }
     private var stepJob: Job? = null
     private var channelId: String? = null
     private var channelName: String = "?"
@@ -396,10 +408,16 @@ class LiveStreamFailover(
             while (true) {
                 delay(PICTURE_POLL_MS)
                 if (firstFrameSeen || channelId != id) return@launch
+                if (runCatching { picturePlaying() }.getOrDefault(false)) return@launch
                 // What the server counted for the tune, less the streams this walk left
                 val counted = runCatching { alternatives() }.getOrNull()
                 val left = counted?.let { (it - steps).coerceAtLeast(0) }
-                val budget = ArrTvOptimizations.pictureWaitMs(learnedFirstFrame[id], left)
+                // The channel's start time this session, else an estimate from its
+                // learned first byte (kept across launches): right after a launch
+                // the bare minimum alone left channels that start in 3-4 s.
+                val usual = learnedFirstFrame[id]
+                    ?: runCatching { learnedFirstByteMs?.invoke(id) }.getOrNull()?.let { it + FIRST_BYTE_TO_FRAME_MS }
+                val budget = ArrTvOptimizations.pictureWaitMs(usual, left)
                 pictureBudgetMs = budget
                 val waited = SystemClock.elapsedRealtime() - armedAt
                 if (waited < budget) continue
@@ -517,6 +535,13 @@ class LiveStreamFailover(
             onExhausted?.invoke()
             return
         }
+        // The last moment to find the picture came after all: never switch a
+        // playing stream away (the walk would then run through every stream).
+        if (unplayableWalk && runCatching { picturePlaying() }.getOrDefault(false)) {
+            Log.i(TAG, "[FAILOVER] channel=$channelName the picture came; not switching")
+            _statusText.value = null
+            return
+        }
         steps += 1
         tried.add(target)
         val step = steps
@@ -582,6 +607,10 @@ class LiveStreamFailover(
 
         /** How often the picture deadline re-reads its wait. */
         private const val PICTURE_POLL_MS = 250L
+
+        /** From first byte to first picture, where the channel's own first
+         *  picture is not known yet: the start gate plus a keyframe. */
+        private const val FIRST_BYTE_TO_FRAME_MS = 1_500L
 
         /** With the server's own faster failover on, the app's first moves wait
          *  at least this long (the server leaves a silent stream after 5 s and a
