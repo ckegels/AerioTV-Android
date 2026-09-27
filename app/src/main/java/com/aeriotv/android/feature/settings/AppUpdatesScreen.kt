@@ -59,7 +59,7 @@ fun AppUpdatesScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val checking by viewModel.checking.collectAsStateWithLifecycle()
-    val autoCheck by viewModel.autoCheck.collectAsStateWithLifecycle(initialValue = false)
+    val autoCheck by viewModel.autoCheck.collectAsStateWithLifecycle(initialValue = true)
 
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "App Updates", onBack = onBack)

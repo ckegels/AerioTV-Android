@@ -1542,8 +1542,9 @@ class AppPreferences @Inject constructor(
     suspend fun updateLastCheckAtOnce(): Long = store.data.first()[KEY_UPDATE_LAST_CHECK_AT] ?: 0L
 
     /** Updater (github flavor): check GitHub for a new release when the app
-     *  is opened. Off by default; "Check for updates" in Settings always works. */
-    val updateAutoCheck: Flow<Boolean> = store.data.map { it[KEY_UPDATE_AUTO_CHECK] ?: false }
+     *  is opened. On by default (never switched on, it read as off after
+     *  every update); "Check for updates" in Settings always works. */
+    val updateAutoCheck: Flow<Boolean> = store.data.map { it[KEY_UPDATE_AUTO_CHECK] ?: true }
     suspend fun updateAutoCheckOnce(): Boolean = updateAutoCheck.first()
     suspend fun setUpdateAutoCheck(value: Boolean) {
         store.edit { it[KEY_UPDATE_AUTO_CHECK] = value }

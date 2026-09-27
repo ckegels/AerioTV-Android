@@ -54,7 +54,7 @@ class UpdateViewModel @Inject constructor(
     fun dismissError() = manager.dismissError()
     fun refreshInstallPermission() = manager.refreshInstallPermission()
 
-    /** Automatic update checks (App Updates screen), off by default. */
+    /** Automatic update checks (App Updates screen), on by default. */
     val autoCheck: Flow<Boolean> = preferences.updateAutoCheck
     fun setAutoCheck(value: Boolean) = viewModelScope.launch { preferences.setUpdateAutoCheck(value) }
 }
