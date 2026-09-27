@@ -21,7 +21,12 @@ import kotlinx.serialization.json.intOrNull
  *      "action": "parsing_programs", "status": "success", "updated_at": "..."}}
  *
  * Channel edits made by hand in Dispatcharr send NO message at all (verified
- * by creating, renaming and deleting a channel with a socket open).
+ * by creating, renaming and deleting a channel with a socket open). A plugin
+ * can say it changed channels itself -- Show Groups (0.3.3) does after every
+ * pass that moved a copy in or out of its group:
+ *
+ *     {"type": "update", "data": {"type": "channels_changed",
+ *      "source": "show_groups", "channels": ["<uuid>", ...], "changes": 2}}
  */
 sealed interface DispatcharrLiveEvent {
     data object Connected : DispatcharrLiveEvent
@@ -35,6 +40,10 @@ sealed interface DispatcharrLiveEvent {
 
     /** An EPG source finished importing its programmes. */
     data class EpgRefreshed(val sourceId: Int?) : DispatcharrLiveEvent
+
+    /** Something on the server changed channels and said so (a plugin such as
+     *  Show Groups switching its copies in and out of a profile). */
+    data class ChannelsChanged(val source: String?, val channelUuids: List<String>) : DispatcharrLiveEvent
 
     /** A recording was scheduled, started, stopped, changed or removed. */
     data object RecordingsChanged : DispatcharrLiveEvent
@@ -54,6 +63,7 @@ sealed interface DispatcharrLiveEvent {
          */
         fun parse(text: String): DispatcharrLiveEvent? {
             if (!text.contains("m3u_refresh") && !text.contains("epg_refresh") &&
+                !text.contains("channels_changed") &&
                 !text.contains("recording") && !text.contains("connection_established")
             ) return null
             val root = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return null
@@ -72,6 +82,11 @@ sealed interface DispatcharrLiveEvent {
                     if (data.string("status") != "success" || data.string("action") != "parsing_programs") return null
                     EpgRefreshed(data.int("source"))
                 }
+                "channels_changed" -> ChannelsChanged(
+                    data.string("source"),
+                    (data["channels"] as? kotlinx.serialization.json.JsonArray)
+                        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty(),
+                )
                 in RECORDING_TYPES -> RecordingsChanged
                 else -> null
             }

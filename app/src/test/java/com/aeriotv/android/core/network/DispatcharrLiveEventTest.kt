@@ -88,6 +88,20 @@ class DispatcharrLiveEventTest {
     }
 
     @Test
+    fun aPluginSayingItChangedChannelsIsHeard() {
+        val frame = """{"type": "update", "data": {"type": "channels_changed", "source": "show_groups", "profile": "Show Groups", "channels": ["a1b2", "c3d4"], "changes": 2}}"""
+        assertEquals(
+            DispatcharrLiveEvent.ChannelsChanged("show_groups", listOf("a1b2", "c3d4")),
+            DispatcharrLiveEvent.parse(frame),
+        )
+        // Without a list it is still a change
+        assertEquals(
+            DispatcharrLiveEvent.ChannelsChanged(null, emptyList()),
+            DispatcharrLiveEvent.parse("""{"type": "update", "data": {"type": "channels_changed"}}"""),
+        )
+    }
+
+    @Test
     fun malformedFramesNeverThrow() {
         listOf("", "not json", "{", "[]", "null", """{"type": "update"}""", """{"type": "update", "data": "m3u_refresh"}""",
             """{"type": "update", "data": {"type": "m3u_refresh", "status": "success", "action": "parsing", "channels_created": "many"}}""",

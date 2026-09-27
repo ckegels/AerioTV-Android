@@ -204,6 +204,14 @@ class DispatcharrLiveUpdates @Inject constructor(
                     scheduleGuideWindow("EPG source ${event.sourceId} refreshed")
                     owe("EPG source ${event.sourceId} refreshed")
                 }
+                // A plugin changed channels (Show Groups moving copies in and out of
+                // its group): the lineup is compared at once -- a copy that joins
+                // for a show must not wait for the 10-minute check.
+                is DispatcharrLiveEvent.ChannelsChanged ->
+                    scheduleChannelCheck(
+                        "${event.source ?: "server"} changed ${event.channelUuids.size} channels",
+                        CHANNELS_CHANGED_DEBOUNCE_MS,
+                    )
                 DispatcharrLiveEvent.RecordingsChanged -> Unit
             }
         }
@@ -306,6 +314,9 @@ class DispatcharrLiveUpdates @Inject constructor(
         const val BACKGROUND_GRACE_MS = 30_000L
         /** Let the server finish writing channels before re-reading them. */
         const val CHANNEL_DEBOUNCE_MS = 5_000L
+        /** A plugin's pass sends one message; a second pass a minute later is
+         *  its own check. */
+        const val CHANNELS_CHANGED_DEBOUNCE_MS = 2_000L
         const val CONNECT_SETTLE_MS = 10_000L
         const val CHANNEL_CHECK_INTERVAL_MS = 10L * 60_000L
         const val EPG_DEBOUNCE_MS = 60_000L
