@@ -95,6 +95,10 @@ class LiveStreamFailover(
     private var channelName: String = "?"
     private var firstByteSeen = false
 
+    /** The walk was started by [onUnplayable]: bytes are arriving, so a first
+     *  byte having been seen does not end it. */
+    @Volatile private var unplayableWalk = false
+
     /**
      * Last moment ANY byte was seen on this pipeline (0 = none since arm).
      * Written from loader threads, so volatile and free of any coroutine work.
@@ -105,7 +109,7 @@ class LiveStreamFailover(
     @Volatile private var lastByteAtMs = 0L
 
     /** When the CURRENT deadline was armed. */
-    private var armedAtMs = 0L
+    @Volatile private var armedAtMs = 0L
 
     /** When this tune first armed a deadline, so the learned value measures the
      *  whole tap-to-first-byte, not just the last step. */
@@ -214,6 +218,42 @@ class LiveStreamFailover(
         }
     }
 
+    /**
+     * Bytes have been arriving on this ingest for a while and nothing has
+     * become playable: a stream this device cannot decode (a 4K stream on a
+     * 1080p Chromecast HD). The server sees a healthy stream and never fails
+     * it over, and a reconnect gets the same stream again, so walk to the next
+     * one (the same walk the silent-start deadline uses). Called by the
+     * holder's watchdog; see [bytesFlowingForMs].
+     */
+    fun onUnplayable(detail: String) {
+        scope.launch {
+            val id = channelId ?: return@launch
+            val h = hooks
+            if (h == null || !h.canSwitch(id)) {
+                Log.i(TAG, "[FAILOVER] channel=$channelName $detail; no switchable streams")
+                return@launch
+            }
+            if (stepJob?.isActive == true) return@launch
+            unplayableWalk = true
+            serverReason = null
+            Log.i(TAG, "[FAILOVER] channel=$channelName $detail; walking to the next stream")
+            if (walkStartedAtMs == 0L) walkStartedAtMs = SystemClock.elapsedRealtime()
+            stepJob = scope.launch { step(h, id) }
+        }
+    }
+
+    /** How long bytes have been arriving on the current ingest (since it was
+     *  armed, when a byte came after that); 0 when none has. */
+    fun bytesFlowingForMs(): Long {
+        val armed = armedAtMs
+        if (armed == 0L || lastByteAtMs <= armed) return 0L
+        return SystemClock.elapsedRealtime() - armed
+    }
+
+    /** A step is in flight (the holder does not stack another). */
+    val stepping: Boolean get() = stepJob?.isActive == true
+
     /** Publish a status line the holder owns (for example the "Reconnecting..."
      *  shown while a "Channel is stopping" 503 is waited out). */
     fun publishServerStatus(text: String?) {
@@ -237,6 +277,7 @@ class LiveStreamFailover(
         steps = 0
         walkStartedAtMs = 0L
         serverReason = null
+        unplayableWalk = false
         _statusText.value = null
     }
 
@@ -318,7 +359,10 @@ class LiveStreamFailover(
      */
     private suspend fun step(h: Hooks, id: String) {
         val uuid = id.substringAfterLast(':')
-        val cached = streamCache[id]
+        // Read fresh at the start of every walk: a stream added on the server
+        // (for this device, a 1080p one next to a 4K one) is tried at once,
+        // not after the app restarts. Later steps of the same walk reuse it.
+        val cached = if (steps == 0) null else streamCache[id]
         val ids = cached ?: runCatching { h.listStreamIds(id) }.getOrNull()
             ?.also { if (it.isNotEmpty()) streamCache[id] = it }
         if (ids.isNullOrEmpty()) {
@@ -326,7 +370,7 @@ class LiveStreamFailover(
             Log.i(TAG, "[FAILOVER] channel=$channelName stream list unavailable; staying on the retry path")
             return
         }
-        if (firstByteSeen || channelId != id) return
+        if ((firstByteSeen && !unplayableWalk) || channelId != id) return
         if (ids.size < 2) {
             _statusText.value = "Reconnecting..."
             Log.i(TAG, "[FAILOVER] channel=$channelName single stream; staying on the retry path")
@@ -362,7 +406,7 @@ class LiveStreamFailover(
             _statusText.value = "Reconnecting..."
             return
         }
-        if (firstByteSeen || channelId != id) return
+        if ((firstByteSeen && !unplayableWalk) || channelId != id) return
         activeStreamId = target
         // Quote the server when it told us why we are moving; otherwise this was
         // our own first-byte deadline and there is no server text to show.
@@ -372,7 +416,7 @@ class LiveStreamFailover(
         Log.i(
             TAG,
             "[FAILOVER] channel=$channelName stream $step/${ids.size} id=$target " +
-                "reason=${serverReason ?: "no bytes within the ${budgetMs}ms silent-start budget"}",
+                "reason=${serverReason ?: if (unplayableWalk) "bytes but nothing playable on this device" else "no bytes within the ${budgetMs}ms silent-start budget"}",
         )
         armDeadline(firstAttempt = false)
     }
@@ -410,8 +454,8 @@ class LiveStreamFailover(
         private const val SILENCE_POLL_MS = 500L
         private const val STATUS_READ_CAP_MS = 3_000L
 
-        /** Process-lifetime cache of a channel's member-stream pks (priority
-         *  order). An empty answer is never cached. */
+        /** A channel's member-stream pks (priority order) for the steps of one
+         *  walk; refreshed when a walk starts. An empty answer is never cached. */
         private val streamCache = ConcurrentHashMap<String, List<Int>>()
     }
 }

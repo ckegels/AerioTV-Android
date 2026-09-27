@@ -1029,6 +1029,10 @@ class AerioExoPlayerHolder @Inject constructor(
     // fresh GET would only abandon the connection the proxy is still advancing
     // on) -- if nothing arrived by then the whole channel is dead.
     private val liveNoDataStartupThresholdMs = 50_000L
+    /** Bytes arriving this long with nothing buffered: a stream this device
+     *  cannot play. A playable live start buffers within a few seconds of its
+     *  first byte (learned first-byte times here are 1-3 s). */
+    private val UNPLAYABLE_AFTER_MS = 15_000L
     private val liveReadTimeoutMs = 55_000
     private var noDataHealAttempts = 0
     /** Same-url retries already spent on a "Channel is stopping" 503 this tune.
@@ -2989,6 +2993,28 @@ class AerioExoPlayerHolder @Inject constructor(
                 // holds, playWhenReady is false and the stale-position check
                 // deliberately skips the stream.
                 tickResumeGate(p, now)
+
+                // Bytes but nothing playable: a live Dispatcharr stream this
+                // device cannot play (a 4K stream on a 1080p Chromecast HD)
+                // arrives at full rate and never buffers a millisecond. The
+                // server sees a healthy stream and never fails it over, and the
+                // net below used to wait 50 s, call the channel unavailable and
+                // reconnect to the same stream, forever. Ask for the channel's
+                // next stream instead, on the connection that is open; the
+                // stream that follows gets the full budget again.
+                val lastUrl = lastPlayUrl
+                if (lastUrl != null && isRawTsUrl(lastUrl) && p.playWhenReady &&
+                    !hasReachedPlaybackRestart && !videoFrameRendered &&
+                    p.playbackState == Player.STATE_BUFFERING &&
+                    p.currentPosition <= 0L && p.bufferedPosition <= 0L &&
+                    !liveFailover.stepping &&
+                    liveFailover.bytesFlowingForMs() >= UNPLAYABLE_AFTER_MS
+                ) {
+                    val flowingMs = liveFailover.bytesFlowingForMs()
+                    Log.w(TAG, "[UNPLAYABLE] live bytes for ${flowingMs}ms, nothing buffered ch=$currentChannelId")
+                    streamPrimedAtMs = now
+                    liveFailover.onUnplayable("bytes for ${flowingMs}ms but nothing playable")
+                }
 
                 // Cold-start NO-DATA net (never-started stream). Runs INDEPENDENT
                 // of hasReachedPlaybackRestart: a dead Dispatcharr proxy stream
