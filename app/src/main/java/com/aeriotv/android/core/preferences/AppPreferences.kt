@@ -1342,6 +1342,13 @@ class AppPreferences @Inject constructor(
         store.edit { it[booleanPreferencesKey(o.prefKey)] = on }
     }
 
+    /** One of the editable arrTV waits, in seconds, within its range. */
+    fun arrTvWait(w: com.aeriotv.android.core.playback.ArrTvWait): Flow<Int> =
+        store.data.map { (it[intPreferencesKey(w.prefKey)] ?: w.default).coerceIn(w.range) }
+    suspend fun setArrTvWait(w: com.aeriotv.android.core.playback.ArrTvWait, secs: Int) {
+        store.edit { it[intPreferencesKey(w.prefKey)] = secs.coerceIn(w.range) }
+    }
+
     /** The Dispatch More servers known from the last probes (DispatchMore.snapshot). */
     suspend fun dispatchMoreServers(): String? = store.data.first()[KEY_DISPATCH_MORE_SERVERS]
     suspend fun setDispatchMoreServers(value: String) {

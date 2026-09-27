@@ -111,6 +111,10 @@ class LiveStreamFailover(
      *  for a stream found to carry no video (radio), which never render a
      *  frame and must not be walked for it. Set by the holder; main thread. */
     @Volatile var pictureExpected: () -> Boolean = { true }
+
+    /** How many other streams the server counted for this channel's stream
+     *  (X-Dispatch-Alternatives), null when it said nothing. Set by the holder. */
+    @Volatile var alternatives: () -> Int? = { null }
     private var stepJob: Job? = null
     private var channelId: String? = null
     private var channelName: String = "?"
@@ -138,7 +142,7 @@ class LiveStreamFailover(
 
     /** The budget the current deadline is running with, for the log line. */
     private var budgetMs = FIRST_TUNE_FIRST_BYTE_MS
-    private var pictureBudgetMs = SLOW_START_MIN_MS
+    private var pictureBudgetMs = 0L
     /** Streams already walked this tune; the walk never revisits one. */
     private val tried = mutableSetOf<Int>()
     private var activeStreamId: Int? = null
@@ -370,12 +374,14 @@ class LiveStreamFailover(
     }
 
     /**
-     * No first picture within [pictureBudgetMs] of this ingest: the stream is
-     * too slow to start (dead, slow to connect, or trickling in), whatever its
-     * bytes are doing. A good stream here starts in 1-4 s. The budget is twice
-     * the channel's own start time this session (at least
-     * [SLOW_START_MIN_MS], at most [SLOW_START_MAX_MS]), so a channel that is
-     * always a little slow is not left every time.
+     * No first picture in time: the stream is too slow to start (dead, slow to
+     * connect, or trickling in), whatever its bytes are doing, and the channel
+     * walks to its next stream. How long is "in time" follows how many other
+     * streams the server says the channel could switch to now
+     * (ArrTvOptimizations.pictureWaitMs, editable in Settings): less where
+     * there are several, more where one is left, and no walk at all where
+     * there is none. Scaled by the channel's usual start time this session,
+     * so a channel that is always a little slow is not left every time.
      */
     private fun armPictureDeadline(serverLeads: Boolean) {
         firstFrameSeen = false
@@ -383,26 +389,47 @@ class LiveStreamFailover(
         pictureJob = null
         if (!ArrTvOptimizations.slowStart) return
         val id = channelId ?: return
-        val learned = learnedFirstFrame[id]
-        var budget = maxOf(SLOW_START_MIN_MS, (learned ?: 0L) * 2).coerceAtMost(SLOW_START_MAX_MS)
-        if (serverLeads) budget = maxOf(budget, SERVER_LEADS_MS)
-        pictureBudgetMs = budget
+        val armedAt = SystemClock.elapsedRealtime()
         pictureJob = scope.launch {
-            delay(budget)
-            if (firstFrameSeen || channelId != id) return@launch
-            if (!runCatching { pictureExpected() }.getOrDefault(true)) return@launch
-            val h = hooks
-            if (h == null || !h.canSwitch(id)) {
-                Log.i(TAG, "[FAILOVER] channel=$channelName no picture after ${budget}ms; no switchable streams")
+            // Re-read every poll: the server's count arrives with the stream's
+            // response, a moment after the tune.
+            while (true) {
+                delay(PICTURE_POLL_MS)
+                if (firstFrameSeen || channelId != id) return@launch
+                // What the server counted for the tune, less the streams this walk left
+                val counted = runCatching { alternatives() }.getOrNull()
+                val left = counted?.let { (it - steps).coerceAtLeast(0) }
+                val budget = ArrTvOptimizations.pictureWaitMs(learnedFirstFrame[id], left)
+                pictureBudgetMs = budget
+                val waited = SystemClock.elapsedRealtime() - armedAt
+                if (waited < budget) continue
+                // Nothing to go to: keep trying this stream (the other nets stay)
+                if (left == 0) return@launch
+                if (!runCatching { pictureExpected() }.getOrDefault(true)) return@launch
+                // A silent stream is the server's to leave when its own faster
+                // failover is on; this deadline takes streams whose data arrives
+                // but gives no picture, so the two never move at once.
+                if (serverLeads && lastByteAtMs <= armedAt) {
+                    if (waited < SERVER_LEADS_MS) continue
+                }
+                val h = hooks
+                if (h == null || !h.canSwitch(id)) {
+                    Log.i(TAG, "[FAILOVER] channel=$channelName no picture after ${waited}ms; no switchable streams")
+                    return@launch
+                }
+                if (stepJob?.isActive == true) return@launch
+                // Bytes may well be arriving: this walk is not ended by them.
+                unplayableWalk = true
+                serverReason = null
+                Log.i(
+                    TAG,
+                    "[FAILOVER] channel=$channelName no picture after ${waited}ms " +
+                        "(wait ${budget}ms, ${left ?: "unknown"} other streams); walking to the next stream",
+                )
+                if (walkStartedAtMs == 0L) walkStartedAtMs = SystemClock.elapsedRealtime()
+                stepJob = scope.launch { step(h, id) }
                 return@launch
             }
-            if (stepJob?.isActive == true) return@launch
-            // Bytes may well be arriving: this walk is not ended by them.
-            unplayableWalk = true
-            serverReason = null
-            Log.i(TAG, "[FAILOVER] channel=$channelName no picture after ${budget}ms; walking to the next stream")
-            if (walkStartedAtMs == 0L) walkStartedAtMs = SystemClock.elapsedRealtime()
-            stepJob = scope.launch { step(h, id) }
         }
     }
 
@@ -553,9 +580,8 @@ class LiveStreamFailover(
         const val FAST_FIRST_BYTE_BUDGET_MAX_MS = 12_000L
         const val FAST_STEP_FIRST_BYTE_MS = 5_000L
 
-        /** The picture deadline: at least this long, at most [SLOW_START_MAX_MS]. */
-        const val SLOW_START_MIN_MS = 8_000L
-        const val SLOW_START_MAX_MS = 20_000L
+        /** How often the picture deadline re-reads its wait. */
+        private const val PICTURE_POLL_MS = 250L
 
         /** With the server's own faster failover on, the app's first moves wait
          *  at least this long (the server leaves a silent stream after 5 s and a

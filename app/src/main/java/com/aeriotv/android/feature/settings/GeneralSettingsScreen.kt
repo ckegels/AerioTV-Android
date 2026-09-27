@@ -62,6 +62,8 @@ fun GeneralSettingsScreen(
         .collectAsStateWithLifecycle(initialValue = false)
     val arrTvOptimizations by viewModel.arrTvOptimizations
         .collectAsStateWithLifecycle(initialValue = emptyMap())
+    val arrTvWaits by viewModel.arrTvWaits
+        .collectAsStateWithLifecycle(initialValue = emptyMap())
     // Null until the active playlist has been read. That read can queue behind
     // heavy guide work at launch for tens of seconds, and a row rendered as
     // disabled meanwhile is skipped by D-pad focus, so it reads as broken.
@@ -221,6 +223,24 @@ fun GeneralSettingsScreen(
                     }
                 }
 
+                // The waits "Leave a stream that is slow to start" uses, in seconds.
+                SettingsSection(
+                    header = "Wait for a picture",
+                    footer = "How long a stream may take to show a picture before the channel's next stream is tried: " +
+                        "the channel's usual start time scaled up, at least these, never past the longest. " +
+                        "With no other stream to go to, the stream is never left.",
+                ) {
+                    com.aeriotv.android.core.playback.ArrTvWait.entries.forEach { w ->
+                        val secs = arrTvWaits[w] ?: w.default
+                        SecondsStepperRow(
+                            title = w.title,
+                            seconds = secs,
+                            range = w.range,
+                            onChange = { viewModel.setArrTvWait(w, it) },
+                        )
+                    }
+                }
+
                 // MARK: Network
                 //
                 // tvOS Network (s_10) presents Request Timeout as a selection list
@@ -299,3 +319,43 @@ private val BG_REFRESH_INTERVAL_OPTIONS: List<BgRefreshIntervalOption> = listOf(
     BgRefreshIntervalOption(1440, "Every 24 hours"),
     BgRefreshIntervalOption(2880, "Every 48 hours"),
 )
+
+/** A wait in whole seconds, stepped with - and + (easy with a remote), like Max Retries. */
+@Composable
+private fun SecondsStepperRow(title: String, seconds: Int, range: IntRange, onChange: (Int) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .settingsRowCard(focused = false)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(
+            onClick = { if (seconds > range.first) onChange(seconds - 1) },
+            enabled = seconds > range.first,
+            modifier = Modifier.dpadFocusRing(CircleShape),
+        ) {
+            Icon(Icons.Filled.Remove, contentDescription = "Shorter")
+        }
+        Text(
+            text = "$seconds s",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.textAccent,
+            fontWeight = FontWeight.Bold,
+        )
+        IconButton(
+            onClick = { if (seconds < range.last) onChange(seconds + 1) },
+            enabled = seconds < range.last,
+            modifier = Modifier.dpadFocusRing(CircleShape),
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "Longer")
+        }
+    }
+}

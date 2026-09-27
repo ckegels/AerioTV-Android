@@ -207,6 +207,29 @@ object DispatchMore {
         return ref.takeIf { CHANNEL_REF.matches(it) }
     }
 
+    const val HEADER_ALTERNATIVES = "X-Dispatch-Alternatives"
+
+    /** How many other streams the server said each channel could switch to,
+     *  by channel ref (from the last stream response for it). */
+    private val alternatives = ConcurrentHashMap<String, Int>()
+
+    /** The server's count for the channel [url] opens, or null when it said
+     *  nothing (switched off, an older or stock server). */
+    fun alternativesFor(url: String?): Int? = channelRef(url)?.let { alternatives[it] }
+
+    /** On the player's live client: remembers X-Dispatch-Alternatives from
+     *  each stream response of a Dispatch More server. */
+    val responseInterceptor = Interceptor { chain ->
+        val response = chain.proceed(chain.request())
+        val url = chain.request().url.toString()
+        val ref = channelRef(url)
+        if (ref != null && serverFor(url) != null) {
+            val said = response.header(HEADER_ALTERNATIVES)?.trim()?.toIntOrNull()
+            if (said != null && said >= 0) alternatives[ref] = said else alternatives.remove(ref)
+        }
+        response
+    }
+
     /** Adds the device headers to every request an OkHttp client sends to a
      *  Dispatch More server (API calls, the live-updates socket). */
     val interceptor = Interceptor { chain ->

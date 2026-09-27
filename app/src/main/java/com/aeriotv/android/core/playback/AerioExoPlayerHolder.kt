@@ -249,6 +249,9 @@ class AerioExoPlayerHolder @Inject constructor(
                 !p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO) &&
                 (p.currentTracks.isEmpty || p.currentTracks.containsType(C.TRACK_TYPE_VIDEO))
         }
+        liveFailover.alternatives = {
+            com.aeriotv.android.core.network.DispatchMore.alternativesFor(lastPlayUrl)
+        }
         liveFailover.serverFastFailover = {
             ArrTvOptimizations.identifyDevice &&
                 com.aeriotv.android.core.network.DispatchMore.serverFor(lastPlayUrl)?.fastFailover == true
@@ -2714,6 +2717,8 @@ class AerioExoPlayerHolder @Inject constructor(
             .readTimeout(liveReadTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
+            // Dispatch More: how many other streams the channel could switch to
+            .addInterceptor(com.aeriotv.android.core.network.DispatchMore.responseInterceptor)
             .build()
     }
 

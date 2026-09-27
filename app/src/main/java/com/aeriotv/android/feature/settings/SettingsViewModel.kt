@@ -589,6 +589,15 @@ class SettingsViewModel @Inject constructor(
     fun setArrTvOptimization(o: com.aeriotv.android.core.playback.ArrTvOptimization, on: Boolean) {
         viewModelScope.launch { prefs.setArrTvOptimization(o, on) }
     }
+    val arrTvWaits: Flow<Map<com.aeriotv.android.core.playback.ArrTvWait, Int>> =
+        kotlinx.coroutines.flow.combine(
+            com.aeriotv.android.core.playback.ArrTvWait.entries.map { w ->
+                prefs.arrTvWait(w).map { w to it }
+            },
+        ) { it.toMap() }
+    fun setArrTvWait(w: com.aeriotv.android.core.playback.ArrTvWait, secs: Int) {
+        viewModelScope.launch { prefs.setArrTvWait(w, secs) }
+    }
     val dispatcharrLiveEligibility: Flow<com.aeriotv.android.core.network.DispatcharrLiveEligibility> =
         playlistRepository.observeActivePlaylist()
             .map { com.aeriotv.android.core.network.DispatcharrLiveEligibility.of(it) }

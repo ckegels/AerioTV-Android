@@ -190,6 +190,9 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
         com.aeriotv.android.core.playback.ArrTvOptimization.entries.forEach { o ->
             appScope.launch { appPreferences.arrTvOptimization(o).collect { o.apply(it) } }
         }
+        com.aeriotv.android.core.playback.ArrTvWait.entries.forEach { w ->
+            appScope.launch { appPreferences.arrTvWait(w).collect { w.apply(it) } }
+        }
         // Dispatcharr live change notifications (Settings > General > Live
         // updates). Idle unless the setting is on, the active playlist logs in
         // with username + password, and the app is in the foreground.

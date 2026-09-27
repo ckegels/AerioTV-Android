@@ -27,10 +27,40 @@ object ArrTvOptimizations {
      *  about a second); off: the long waits sized for antenna tuners. */
     @Volatile var fastFailover = true
 
-    /** Walk to the next stream when no first picture came within twice the
-     *  channel's usual start time (at least 8 s): a dead, slow-to-connect or
-     *  trickling stream, whatever its bytes are doing. */
+    /** Walk to the next stream when no first picture came within the wait
+     *  (pictureWaitMs): a dead, slow-to-connect or trickling stream, whatever
+     *  its bytes are doing. */
     @Volatile var slowStart = true
+
+    /** Scale that wait by how many other streams the channel could switch to
+     *  (the server's X-Dispatch-Alternatives): less where there are several,
+     *  more where one is left, none where there is nothing to go to. Off: one
+     *  wait for every channel, the "one other stream" one. */
+    @Volatile var adaptiveWait = true
+
+    /** The waits, in seconds (Settings, editable): at least this long with
+     *  three or more / two / one other streams, and never longer than max. */
+    @Volatile var waitManySecs = 3
+    @Volatile var waitTwoSecs = 4
+    @Volatile var waitOneSecs = 5
+    @Volatile var waitMaxSecs = 10
+
+    /**
+     * How long to wait for a first picture before walking on: the channel's
+     * usual start time times a factor, at least the tier's own minimum, never
+     * past the maximum. [alternatives] null = not known (counted as one);
+     * 0 = nothing to go to, which the caller does not walk for.
+     */
+    fun pictureWaitMs(learnedFirstFrameMs: Long?, alternatives: Int?): Long {
+        val left = if (adaptiveWait) (alternatives ?: 1) else 1
+        val (factor, minSecs) = when {
+            left >= 3 -> 1.5 to waitManySecs
+            left == 2 -> 2.0 to waitTwoSecs
+            else -> 2.5 to waitOneSecs
+        }
+        val fromLearned = ((learnedFirstFrameMs ?: 0L) * factor).toLong()
+        return maxOf(minSecs * 1000L, fromLearned).coerceAtMost(maxOf(waitMaxSecs, minSecs) * 1000L)
+    }
 
     /** Walk to the next stream when data arrives and nothing becomes
      *  playable (a stream this device cannot decode). */
@@ -74,9 +104,16 @@ enum class ArrTvOptimization(
     SLOW_START(
         "arrtv_opt_slow_start",
         "Leave a stream that is slow to start",
-        "No picture within twice the channel's usual start time (at least 8 s): the channel's next stream is tried. " +
-            "With the server's own faster failover on, the server moves first.",
+        "No picture within the wait below: the channel's next stream is tried. A stream that sends nothing at all " +
+            "is left to the server when its own faster failover is on.",
         { ArrTvOptimizations.slowStart = it },
+    ),
+    ADAPTIVE_WAIT(
+        "arrtv_opt_adaptive_wait",
+        "Wait less when a channel has more streams",
+        "The wait for a picture follows how many other streams the server can switch to right now " +
+            "(its \"Tell arrTV how many other streams a channel has\" switch). Off: the \"one other stream\" wait everywhere.",
+        { ArrTvOptimizations.adaptiveWait = it },
     ),
     SKIP_UNPLAYABLE(
         "arrtv_opt_skip_unplayable",
@@ -96,4 +133,18 @@ enum class ArrTvOptimization(
         "So Dispatch More can move the channel to another stream at once (its own switch has to be on too).",
         { ArrTvOptimizations.reportStalls = it },
     ),
+}
+
+/** The editable waits of Settings > General > arrTV optimizations, in seconds. */
+enum class ArrTvWait(
+    val prefKey: String,
+    val title: String,
+    val default: Int,
+    val range: IntRange,
+    val apply: (Int) -> Unit,
+) {
+    MANY("arrtv_wait_many", "Wait with 3 or more other streams", 3, 1..20, { ArrTvOptimizations.waitManySecs = it }),
+    TWO("arrtv_wait_two", "Wait with 2 other streams", 4, 1..20, { ArrTvOptimizations.waitTwoSecs = it }),
+    ONE("arrtv_wait_one", "Wait with 1 other stream", 5, 1..20, { ArrTvOptimizations.waitOneSecs = it }),
+    MAX("arrtv_wait_max", "Longest wait for a slow channel", 10, 2..30, { ArrTvOptimizations.waitMaxSecs = it }),
 }
