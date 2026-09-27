@@ -306,7 +306,16 @@ fun GuideGrid(
                     true
                 }
                 Key.DirectionDown -> {
-                    if (down) traceBy = if (state.moveRows(+1)) "grid-moveRows" else "grid-moveRows-refused"
+                    if (down) {
+                        traceBy = when {
+                            state.moveRows(+1) -> "grid-moveRows"
+                            // Past the last channel, back to the first: on a
+                            // fresh press only, so a held Down stops at the end
+                            // instead of cycling through the list.
+                            repeat == 0 && state.wrapToFirstRow() -> "grid-bottom-row->first"
+                            else -> "grid-moveRows-refused"
+                        }
+                    }
                     true
                 }
                 // Left/Right pan on RELEASE, not on press (Logan 2026-09-02): a

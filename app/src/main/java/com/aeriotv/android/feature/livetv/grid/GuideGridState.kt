@@ -126,6 +126,14 @@ class GuideGridState(
         return true
     }
 
+    /** DOWN on the last row: to the first row. False when already there
+     *  (or nothing is listed). */
+    fun wrapToFirstRow(): Boolean {
+        if (rows.isEmpty || focusRow <= 0) return false
+        land(0)
+        return true
+    }
+
     /** LEFT/RIGHT: pan by one step, then retarget on the same row. Returns false when the window edge stops the pan. */
     fun pan(direction: Int): Boolean {
         if (rows.isEmpty) return false
