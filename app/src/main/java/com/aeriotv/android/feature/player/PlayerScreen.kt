@@ -1746,27 +1746,38 @@ fun PlayerScreen(
             onLoadCurrentStreamId = onLoadCurrentStreamId,
             reportInteraction = reportInteraction,
             onClose = onClose,
-            // Dispatch More: offered when the stream's server takes reports.
-            // The player is read at the press, so the report is about the
-            // moment something went wrong, not the moment it was sent.
-            onSendReport = exoHolder.reportableStreamUrl
-                ?.takeIf { problemReports.canReport(it) && !isCatchupMode }
-                ?.let { url ->
-                    {
-                        problemReport = ProblemReportRequest(
-                            atMs = System.currentTimeMillis(),
-                            streamUrl = url,
-                            channelName = currentChannel?.name.orEmpty(),
-                            player = exoHolder.problemReportPlayer(),
-                            extra = mapOf(
-                                "channel" to currentChannel?.name,
-                                "programme" to nowProgramme?.title,
-                                "cast" to isCasting,
-                            ),
-                        )
-                    }
-                },
         )
+        // Dispatch More: "Send a report to the server" in the Options menu,
+        // offered when the stream's server takes reports. Both are asked when
+        // the menu opens; the player is read at the press, so the report is
+        // about the moment something went wrong, not the moment it was sent.
+        val reportChannel = rememberUpdatedState(currentChannel)
+        val reportProgramme = rememberUpdatedState(nowProgramme)
+        val reportCatchup = rememberUpdatedState(isCatchupMode)
+        val reportCasting = rememberUpdatedState(isCasting)
+        DisposableEffect(Unit) {
+            ProblemReportMenu.action = ProblemReportAction(
+                available = {
+                    !reportCatchup.value &&
+                        exoHolder.reportableStreamUrl?.let(problemReports::canReport) == true
+                },
+                open = open@{
+                    val url = exoHolder.reportableStreamUrl ?: return@open
+                    problemReport = ProblemReportRequest(
+                        atMs = System.currentTimeMillis(),
+                        streamUrl = url,
+                        channelName = reportChannel.value?.name.orEmpty(),
+                        player = exoHolder.problemReportPlayer(),
+                        extra = mapOf(
+                            "channel" to reportChannel.value?.name,
+                            "programme" to reportProgramme.value?.title,
+                            "cast" to reportCasting.value,
+                        ),
+                    )
+                },
+            )
+            onDispose { ProblemReportMenu.action = null }
+        }
         problemReport?.let { request ->
             ProblemReportDialog(
                 request = request,
@@ -2444,7 +2455,6 @@ private fun LiveRewindChromeSection(
     audioOnlyState: MutableState<Boolean>,
     sleepEndsAtState: MutableState<Long?>,
     sleepRemainingMillisState: MutableState<Long?>,
-    onSendReport: (() -> Unit)? = null,
     commitScrubCatchup: (Long) -> Unit,
     commitScrubWall: (Long) -> Unit,
     scrubStep: (Int, Boolean) -> Unit,
@@ -2687,7 +2697,6 @@ private fun LiveRewindChromeSection(
         },
         onAddToMultiview = { multiviewPickerOpen = true },
         onShowRecord = { target -> recordTarget = target },
-        onSendReport = onSendReport,
         onShowStreamInfo = {
             streamInfo = exoHolder.player?.captureStreamInfo() ?: StreamInfoSnapshot(
                 videoLines = listOf("(player not ready)"),

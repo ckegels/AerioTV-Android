@@ -168,9 +168,6 @@ fun PlayerChromeOverlay(
     onAddToMultiview: () -> Unit,
     onShowRecord: (ProgramInfoTarget) -> Unit,
     onShowStreamInfo: () -> Unit,
-    /** Dispatch More: "Send a report to the server", the first row of the
-     *  Options menu. Null when the stream's server does not take reports. */
-    onSendReport: (() -> Unit)? = null,
     onShowSwitchStream: () -> Unit,
     onShowSubtitles: () -> Unit,
     onShowAudioTracks: () -> Unit,
@@ -505,12 +502,6 @@ fun PlayerChromeOverlay(
                         canRecord = canRecord,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
-                        onSendReport = onSendReport?.let { send ->
-                            {
-                                moreOpen = false
-                                send()
-                            }
-                        },
                         scaleLabel = videoScaleLabel,
                         onCycleScale = onCycleVideoScale,
                         onSubtitles = {
@@ -655,12 +646,6 @@ fun PlayerChromeOverlay(
                         canRecord = canRecord,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
-                        onSendReport = onSendReport?.let { send ->
-                            {
-                                moreOpen = false
-                                send()
-                            }
-                        },
                         scaleLabel = videoScaleLabel,
                         onCycleScale = onCycleVideoScale,
                         onSubtitles = {
@@ -1074,6 +1059,19 @@ private fun PlayerControlCircle(
 }
 
 
+/**
+ * Dispatch More: "Send a report to the server" for the Options menu, set by
+ * PlayerScreen while it is shown. Read by the menu itself rather than passed
+ * through each place that opens it, so every menu offers it -- the info bar
+ * style opens its own.
+ */
+internal class ProblemReportAction(val available: () -> Boolean, val open: () -> Unit)
+
+internal object ProblemReportMenu {
+    @Volatile
+    var action: ProblemReportAction? = null
+}
+
 @Composable
 private fun PlayerMoreMenu(
     expanded: Boolean,
@@ -1082,7 +1080,6 @@ private fun PlayerMoreMenu(
     canRecord: Boolean,
     audioOnly: Boolean,
     sleepActive: Boolean,
-    onSendReport: (() -> Unit)? = null,
     scaleLabel: String,
     onCycleScale: () -> Unit,
     onSubtitles: () -> Unit,
@@ -1130,7 +1127,12 @@ private fun PlayerMoreMenu(
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
             )
         }
-        if (onSendReport != null) {
+        // Asked each time the menu opens, from whichever place opened it (the
+        // standard chrome, or the info bar's hold OK): the server's switch and
+        // the stream can both have changed since the screen was drawn.
+        val report = ProblemReportMenu.action
+        val offerReport = remember(expanded) { expanded && report?.available?.invoke() == true }
+        if (offerReport && report != null) {
             // First, so it is one press away when something just went wrong.
             DropdownMenuItem(
                 leadingIcon = {
@@ -1141,7 +1143,10 @@ private fun PlayerMoreMenu(
                     )
                 },
                 text = { Text("Send a report to the server") },
-                onClick = onSendReport,
+                onClick = {
+                    onDismiss()
+                    report.open()
+                },
             )
         }
         DropdownMenuItem(
