@@ -2148,31 +2148,22 @@ class PlaylistRepository @Inject constructor(
         toMillis: Long,
     ): List<EPGProgramme> =
         withContext(layeringDispatcher) {
-            // Paged (EpgProgrammeDao.forPlaylistInWindowPage): one query
-            // for tens of thousands of rows re-runs itself for every 2 MB
-            // cursor window it fills.
-            // Row id with each programme: the pages come in time order, and the
-            // guide's dedup keeps the first of two rows in a slot, which has
-            // always been the lower id. Sorted back before returning.
-            val out = ArrayList<Pair<Long, EPGProgramme>>()
+            // Ids from the index, then the rows in id order: the order they
+            // lie in the file (EpgProgrammeDao.idsInWindow). In chunks, each
+            // small enough for one 2 MB cursor window: a single query for tens
+            // of thousands of rows re-runs itself for every window it fills.
+            // Returned in id order: the guide's dedup keeps the first of two
+            // rows in a slot, which has always been the lower id.
+            val ids = epgProgrammeDao.idsInWindow(playlistId, fromMillis, toMillis).sorted()
+            val out = ArrayList<EPGProgramme>(ids.size)
             // One copy per distinct string for this load: every row read from
             // Room brings its own copies, so a channel's key, a category or a
             // rerun's title and description were stored once per programme.
             val pool = StringPool()
-            // (endMillis, id) > (fromMillis, MAX) is endMillis > fromMillis.
-            var afterEnd = fromMillis
-            var afterId = Long.MAX_VALUE
-            while (true) {
-                val page = epgProgrammeDao.forPlaylistInWindowPage(
-                    playlistId, toMillis, afterEnd, afterId, EPG_READ_PAGE_ROWS,
-                )
-                page.mapTo(out) { it.id to it.toProgramme(pool) }
-                if (page.size < EPG_READ_PAGE_ROWS) break
-                afterEnd = page.last().endMillis
-                afterId = page.last().id
+            for (chunk in ids.chunked(EPG_READ_ID_CHUNK)) {
+                epgProgrammeDao.byIdsStartingBefore(chunk, toMillis).mapTo(out) { it.toProgramme(pool) }
             }
-            out.sortBy { it.first }
-            out.map { it.second }
+            out
         }
 
     /**
@@ -3624,4 +3615,6 @@ private const val TAG_CAPS = "AerioCaps"
 
 /** Rows per page for big EPG cache reads: small enough that a page (with
  *  descriptions) fits one 2 MB cursor window. */
-private const val EPG_READ_PAGE_ROWS = 1000
+/** Row ids per query of the launch guide read: under SQLite's 999 bound
+ *  parameters, and a page of rows that fits one cursor window. */
+private const val EPG_READ_ID_CHUNK = 900

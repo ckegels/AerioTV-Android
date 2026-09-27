@@ -36,6 +36,34 @@ interface EpgProgrammeDao {
      * composite index without re-measuring this read.
      */
     /**
+     * The row ids of [forPlaylistInWindowPage]'s window, from the
+     * (playlistId, endMillis) index alone: the index holds the row id, so no
+     * row is read. [byIdsStartingBefore] then reads the rows in id order.
+     *
+     * Read in time order the rows are scattered over the whole table: they
+     * are stored as they were saved, a day's guide at a time, channel after
+     * channel, so the next programme in time is a different page every time.
+     * On a Chromecast HD with memory full nothing stays cached and each is a
+     * read from flash (29K rows in 28-38 s at launch, the reading threads
+     * waiting on the disk). In id order the same rows are a few stretches of
+     * the file read front to back.
+     *
+     * No startMillis bound here (not in the index): rows starting after the
+     * window are dropped by [byIdsStartingBefore].
+     */
+    @Query(
+        "SELECT id FROM epg_programme INDEXED BY index_epg_programme_playlistId_endMillis " +
+            "WHERE playlistId = :playlistId AND endMillis > :fromMillis " +
+            "AND endMillis < :toMillis + 93600000"
+    )
+    suspend fun idsInWindow(playlistId: String, fromMillis: Long, toMillis: Long): List<Long>
+
+    /** Rows by id (at most 900 ids: SQLite's bound-parameter limit), those
+     *  starting before [toMillis], in id order. */
+    @Query("SELECT * FROM epg_programme WHERE id IN (:ids) AND startMillis < :toMillis ORDER BY id")
+    suspend fun byIdsStartingBefore(ids: List<Long>, toMillis: Long): List<EpgProgrammeEntity>
+
+    /**
      * One page of [forPlaylistInWindow], in (endMillis, id) order after
      * ([afterEnd], [afterId]); the first page passes ([fromMillis],
      * Long.MAX_VALUE). Big reads must go through pages: Android copies query
