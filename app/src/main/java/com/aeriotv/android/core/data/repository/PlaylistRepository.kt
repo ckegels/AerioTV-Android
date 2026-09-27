@@ -3613,8 +3613,6 @@ private fun Double.formatChannelNumber(): String {
 
 private const val TAG_CAPS = "AerioCaps"
 
-/** Rows per page for big EPG cache reads: small enough that a page (with
- *  descriptions) fits one 2 MB cursor window. */
 /** Row ids per query of the launch guide read: under SQLite's 999 bound
  *  parameters, and a page of rows that fits one cursor window. */
 private const val EPG_READ_ID_CHUNK = 900
