@@ -1309,6 +1309,38 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_BG_REFRESH_INTERVAL_MINS] = clamped }
     }
 
+    /**
+     * Follow Dispatcharr's live change notifications (its /ws/ socket) while
+     * the app is open: reload the lineup when a playlist refresh changed
+     * channels and the guide when an EPG source was refreshed. Only takes
+     * effect for a Dispatcharr playlist logged in with username + password
+     * (the socket accepts a JWT only; see DispatcharrLiveEligibility). Off by
+     * default so nothing changes for anyone who does not opt in.
+     */
+    val dispatcharrLiveUpdates: Flow<Boolean> =
+        store.data.map { it[KEY_DISPATCHARR_LIVE_UPDATES] ?: false }
+    suspend fun setDispatcharrLiveUpdates(value: Boolean) {
+        store.edit { it[KEY_DISPATCHARR_LIVE_UPDATES] = value }
+    }
+
+    /**
+     * This install's id for Dispatch More servers (X-Dispatch-Device): made
+     * once, never synced (not in [snapshotSyncablePreferences]) and never
+     * backed up (the whole prefs file is excluded in backup_rules.xml and
+     * data_extraction_rules.xml). Two TVs restored from one copy would
+     * otherwise be one device to the server again.
+     */
+    suspend fun dispatchMoreDeviceId(): String? = store.data.first()[KEY_DISPATCH_MORE_DEVICE_ID]
+    suspend fun setDispatchMoreDeviceId(value: String) {
+        store.edit { it[KEY_DISPATCH_MORE_DEVICE_ID] = value }
+    }
+
+    /** The Dispatch More servers known from the last probes (DispatchMore.snapshot). */
+    suspend fun dispatchMoreServers(): String? = store.data.first()[KEY_DISPATCH_MORE_SERVERS]
+    suspend fun setDispatchMoreServers(value: String) {
+        store.edit { it[KEY_DISPATCH_MORE_SERVERS] = value }
+    }
+
     fun syncCategoryEnabled(category: SyncCategory): Flow<Boolean> = store.data.map { prefs ->
         prefs[booleanPreferencesKey(category.enabledStorageKey())] ?: true
     }
@@ -2068,6 +2100,9 @@ class AppPreferences @Inject constructor(
         val KEY_CREDENTIALS_SYNC_DISCLOSED = booleanPreferencesKey("credentials_sync_disclosed")
         val KEY_BG_REFRESH_ENABLED = booleanPreferencesKey("background_refresh_enabled")
         val KEY_BG_REFRESH_INTERVAL_MINS = intPreferencesKey("background_refresh_interval_mins")
+        val KEY_DISPATCHARR_LIVE_UPDATES = booleanPreferencesKey("dispatcharr_live_updates")
+        val KEY_DISPATCH_MORE_DEVICE_ID = stringPreferencesKey("dispatch_more_device_id")
+        val KEY_DISPATCH_MORE_SERVERS = stringPreferencesKey("dispatch_more_servers")
     }
 }
 

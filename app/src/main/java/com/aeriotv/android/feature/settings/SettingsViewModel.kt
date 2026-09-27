@@ -14,6 +14,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.flatMapLatest
@@ -570,6 +571,18 @@ class SettingsViewModel @Inject constructor(
     fun setBackgroundRefreshIntervalMins(value: Int) {
         viewModelScope.launch { prefs.setBackgroundRefreshIntervalMins(value) }
     }
+
+    // Dispatcharr live change notifications. Eligibility follows the active
+    // playlist so the row greys out (with the reason) for API key logins and
+    // non-Dispatcharr sources.
+    val dispatcharrLiveUpdates: Flow<Boolean> = prefs.dispatcharrLiveUpdates
+    fun setDispatcharrLiveUpdates(value: Boolean) {
+        viewModelScope.launch { prefs.setDispatcharrLiveUpdates(value) }
+    }
+    val dispatcharrLiveEligibility: Flow<com.aeriotv.android.core.network.DispatcharrLiveEligibility> =
+        playlistRepository.observeActivePlaylist()
+            .map { com.aeriotv.android.core.network.DispatcharrLiveEligibility.of(it) }
+            .distinctUntilChanged()
 
     // Multiview (Phase 11c)
     val multiviewAudioFocusStyle: Flow<String> = prefs.multiviewAudioFocusStyle
