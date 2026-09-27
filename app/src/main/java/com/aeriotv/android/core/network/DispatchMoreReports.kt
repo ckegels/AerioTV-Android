@@ -158,6 +158,10 @@ class DispatchMoreReports @Inject constructor(
      * a 403 until the next capabilities call.
      */
     fun reportStall(streamUrl: String, facts: Map<String, Any?>) {
+        // Needs the device header too: the server matches the stall to the stream by it.
+        if (!com.aeriotv.android.core.playback.ArrTvOptimizations.reportStalls ||
+            !com.aeriotv.android.core.playback.ArrTvOptimizations.identifyDevice
+        ) return
         val server = DispatchMore.serverFor(streamUrl)?.takeIf { it.stallSwitch } ?: return
         val base = DispatchMore.originOf(streamUrl) ?: return
         val ref = DispatchMore.channelRef(streamUrl) ?: return

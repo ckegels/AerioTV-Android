@@ -26,6 +26,27 @@ class DispatchMoreTest {
     fun tearDown() {
         DispatchMore.unregister(listOf(wan, lan, "http://stock:9191"))
         DispatchMore.endMultiview()
+        DispatchMore.setMaxVideo(0)
+        com.aeriotv.android.core.playback.ArrTvOptimizations.identifyDevice = true
+        com.aeriotv.android.core.playback.ArrTvOptimizations.sendMaxVideo = true
+    }
+
+    @Test
+    fun theDecodeLimitGoesWithTheDeviceAndFollowsItsSwitch() {
+        DispatchMore.setMaxVideo(1080)
+        assertEquals("1080", DispatchMore.streamHeaders(direct(lan, a))[DispatchMore.HEADER_MAX_VIDEO])
+        com.aeriotv.android.core.playback.ArrTvOptimizations.sendMaxVideo = false
+        assertNull(DispatchMore.streamHeaders(direct(lan, a))[DispatchMore.HEADER_MAX_VIDEO])
+        // The device itself is still said
+        assertTrue(DispatchMore.streamHeaders(direct(lan, a)).containsKey(DispatchMore.HEADER_DEVICE))
+    }
+
+    @Test
+    fun identifyOffSendsNothingAtAll() {
+        DispatchMore.setMaxVideo(1080)
+        com.aeriotv.android.core.playback.ArrTvOptimizations.identifyDevice = false
+        assertTrue(DispatchMore.streamHeaders(direct(lan, b), previousUrl = direct(lan, a)).isEmpty())
+        assertTrue(DispatchMore.deviceHeaders(direct(lan, a)).isEmpty())
     }
 
     @Test

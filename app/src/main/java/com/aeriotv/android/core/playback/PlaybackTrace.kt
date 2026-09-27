@@ -157,6 +157,9 @@ class PlaybackTracer {
         "bitrate_estimate_kbps" to bitrateEstimateBps.takeIf { it > 0L }?.let { it / 1000 },
     )
 
+    /** A byte arrived since the last [markTuneStart]. */
+    fun hasFirstByte(): Boolean = firstByteAtMs != 0L
+
     fun markTuneStart(name: String?, kind: String) {
         val n = now()
         // A press older than this was not what caused this prime (a watchdog

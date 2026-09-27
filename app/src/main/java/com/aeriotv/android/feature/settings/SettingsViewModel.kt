@@ -579,6 +579,16 @@ class SettingsViewModel @Inject constructor(
     fun setDispatcharrLiveUpdates(value: Boolean) {
         viewModelScope.launch { prefs.setDispatcharrLiveUpdates(value) }
     }
+    // arrTV optimizations (Settings > General): every switch, in the enum's order.
+    val arrTvOptimizations: Flow<Map<com.aeriotv.android.core.playback.ArrTvOptimization, Boolean>> =
+        kotlinx.coroutines.flow.combine(
+            com.aeriotv.android.core.playback.ArrTvOptimization.entries.map { o ->
+                prefs.arrTvOptimization(o).map { o to it }
+            },
+        ) { it.toMap() }
+    fun setArrTvOptimization(o: com.aeriotv.android.core.playback.ArrTvOptimization, on: Boolean) {
+        viewModelScope.launch { prefs.setArrTvOptimization(o, on) }
+    }
     val dispatcharrLiveEligibility: Flow<com.aeriotv.android.core.network.DispatcharrLiveEligibility> =
         playlistRepository.observeActivePlaylist()
             .map { com.aeriotv.android.core.network.DispatcharrLiveEligibility.of(it) }

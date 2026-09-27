@@ -1335,6 +1335,13 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_DISPATCH_MORE_DEVICE_ID] = value }
     }
 
+    /** One arrTV optimization's switch (Settings > General), on by default. */
+    fun arrTvOptimization(o: com.aeriotv.android.core.playback.ArrTvOptimization): Flow<Boolean> =
+        store.data.map { it[booleanPreferencesKey(o.prefKey)] ?: true }
+    suspend fun setArrTvOptimization(o: com.aeriotv.android.core.playback.ArrTvOptimization, on: Boolean) {
+        store.edit { it[booleanPreferencesKey(o.prefKey)] = on }
+    }
+
     /** The Dispatch More servers known from the last probes (DispatchMore.snapshot). */
     suspend fun dispatchMoreServers(): String? = store.data.first()[KEY_DISPATCH_MORE_SERVERS]
     suspend fun setDispatchMoreServers(value: String) {

@@ -31,6 +31,7 @@ object DispatchMore {
     const val HEADER_DEVICE_NAME = "X-Dispatch-Device-Name"
     const val HEADER_MULTIVIEW = "X-Dispatch-Multiview"
     const val HEADER_PREVIOUS = "X-Dispatch-Previous-Channel"
+    const val HEADER_MAX_VIDEO = "X-Dispatch-Max-Video"
     const val DEFAULT_REPORT_PATH = "/api/core/app-reports/"
     const val DEFAULT_STALL_PATH = "/api/core/app-stall/"
 
@@ -69,6 +70,17 @@ object DispatchMore {
     @Volatile
     var deviceName: String = ""
         private set
+
+    /** The tallest picture this device decodes (2160 / 1080 / 720 / 576),
+     *  0 until measured. See [setMaxVideo]. */
+    @Volatile
+    var maxVideo: Int = 0
+        private set
+
+    /** Set once at app start from the device's decoders. */
+    fun setMaxVideo(height: Int) {
+        maxVideo = height
+    }
 
     /** Set while Multiview is on screen; every tile's request carries it. */
     @Volatile
@@ -124,11 +136,17 @@ object DispatchMore {
 
     /** The device headers for any request to [url]; empty for any other server. */
     fun deviceHeaders(url: String?): Map<String, String> {
+        if (!com.aeriotv.android.core.playback.ArrTvOptimizations.identifyDevice) return emptyMap()
         val id = deviceId ?: return emptyMap()
         if (serverFor(url) == null) return emptyMap()
         return buildMap {
             put(HEADER_DEVICE, id)
             if (deviceName.isNotBlank()) put(HEADER_DEVICE_NAME, deviceName)
+            // Contract 8.2: the server starts (and fails over) this device only
+            // on streams it can decode -- a 4K stream never reaches a 1080p TV.
+            if (com.aeriotv.android.core.playback.ArrTvOptimizations.sendMaxVideo && maxVideo > 0) {
+                put(HEADER_MAX_VIDEO, maxVideo.toString())
+            }
         }
     }
 

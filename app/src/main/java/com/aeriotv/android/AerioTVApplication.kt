@@ -178,10 +178,17 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
         appScope.launch {
             val stored = runCatching { appPreferences.dispatchMoreDeviceId() }.getOrNull()
             val id = com.aeriotv.android.core.network.DispatchMore.setDevice(stored, deviceName())
+            com.aeriotv.android.core.network.DispatchMore.setMaxVideo(
+                com.aeriotv.android.core.playback.DecodeCapability.maxVideoHeight(),
+            )
             if (id != stored) runCatching { appPreferences.setDispatchMoreDeviceId(id) }
             com.aeriotv.android.core.network.DispatchMore.restore(
                 runCatching { appPreferences.dispatchMoreServers() }.getOrNull(),
             )
+        }
+        // arrTV optimizations: each switch sets its flag, now and on every change.
+        com.aeriotv.android.core.playback.ArrTvOptimization.entries.forEach { o ->
+            appScope.launch { appPreferences.arrTvOptimization(o).collect { o.apply(it) } }
         }
         // Dispatcharr live change notifications (Settings > General > Live
         // updates). Idle unless the setting is on, the active playlist logs in

@@ -60,6 +60,8 @@ fun GeneralSettingsScreen(
         .collectAsStateWithLifecycle(initialValue = 360)
     val dispatcharrLiveUpdates by viewModel.dispatcharrLiveUpdates
         .collectAsStateWithLifecycle(initialValue = false)
+    val arrTvOptimizations by viewModel.arrTvOptimizations
+        .collectAsStateWithLifecycle(initialValue = emptyMap())
     // Null until the active playlist has been read. That read can queue behind
     // heavy guide work at launch for tens of seconds, and a row rendered as
     // disabled meanwhile is skipped by D-pad focus, so it reads as broken.
@@ -198,6 +200,25 @@ fun GeneralSettingsScreen(
                                 "Add a Dispatcharr playlist to use this."
                         },
                     )
+                }
+
+                // MARK: arrTV optimizations
+                // One switch per optimization, all on by default: switched off,
+                // that part does nothing and the app behaves as before it, so
+                // any of them can be ruled out when something goes wrong.
+                SettingsSection(
+                    header = "arrTV optimizations",
+                    footer = "Faster, smarter playback with a Dispatch More server. Turn one off if you suspect it; " +
+                        "the others keep working.",
+                ) {
+                    com.aeriotv.android.core.playback.ArrTvOptimization.entries.forEach { o ->
+                        SettingsToggleRow(
+                            title = o.title,
+                            checked = arrTvOptimizations[o] ?: true,
+                            onCheckedChange = { viewModel.setArrTvOptimization(o, it) },
+                            subtitle = o.subtitle,
+                        )
+                    }
                 }
 
                 // MARK: Network

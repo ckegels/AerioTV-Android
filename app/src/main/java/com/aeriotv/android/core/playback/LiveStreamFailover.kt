@@ -69,6 +69,10 @@ class LiveStreamFailover(
 
     @Volatile var hooks: Hooks? = null
 
+    /** A step was refused with 409 (a stream of its own): the holder reopens
+     *  the connection instead of walking. */
+    @Volatile var onOwnStream: (() -> Unit)? = null
+
     /** Called when every member stream has been walked without a byte; the
      *  holder hands over to its standing retry / unavailable ladder. */
     @Volatile var onExhausted: (() -> Unit)? = null
@@ -251,6 +255,13 @@ class LiveStreamFailover(
         return SystemClock.elapsedRealtime() - armed
     }
 
+    /** Time since the last byte on the wire (any ingest of this tune);
+     *  Long.MAX_VALUE when none has come since the deadline was armed. */
+    fun msSinceLastByte(): Long {
+        val last = lastByteAtMs
+        return if (last == 0L) Long.MAX_VALUE else SystemClock.elapsedRealtime() - last
+    }
+
     /** A step is in flight (the holder does not stack another). */
     val stepping: Boolean get() = stepJob?.isActive == true
 
@@ -300,11 +311,19 @@ class LiveStreamFailover(
         if (firstAttempt) tuneStartedAtMs = armedAtMs
         val id = channelId
         val learned = id?.let { cid -> runCatching { learnedFirstByteMs?.invoke(cid) }.getOrNull() }
+        // arrTV optimization "faster failover": IPTV answers within a second or
+        // two (learned first-byte times here are 0.1-3 s), so the budgets sized
+        // for an antenna tuner's lock cost 28 s per dead stream for nothing.
+        val fast = ArrTvOptimizations.fastFailover
         budgetMs = if (!firstAttempt) {
-            STEP_FIRST_BYTE_MS
+            if (fast) FAST_STEP_FIRST_BYTE_MS else STEP_FIRST_BYTE_MS
         } else {
             val fromLearned = learned?.let { (it * LEARNED_HEADROOM_NUM / LEARNED_HEADROOM_DEN).toLong() } ?: 0L
-            maxOf(FIRST_TUNE_FIRST_BYTE_MS, fromLearned).coerceAtMost(FIRST_BYTE_BUDGET_MAX_MS)
+            if (fast) {
+                maxOf(FAST_FIRST_TUNE_FIRST_BYTE_MS, fromLearned).coerceAtMost(FAST_FIRST_BYTE_BUDGET_MAX_MS)
+            } else {
+                maxOf(FIRST_TUNE_FIRST_BYTE_MS, fromLearned).coerceAtMost(FIRST_BYTE_BUDGET_MAX_MS)
+            }
         }
         Log.i(
             TAG,
@@ -404,6 +423,14 @@ class LiveStreamFailover(
         } catch (t: Throwable) {
             Log.w(TAG, "[FAILOVER] channel=$channelName change_stream to id=$target failed: ${t.message}")
             _statusText.value = "Reconnecting..."
+            // Contract 8.3: 409 = this device plays the channel on a stream of
+            // its own, which the server will not change under the others. Any
+            // other step is refused the same way, so stop walking; a fresh
+            // connection gets the device a stream chosen afresh.
+            if (t.message?.contains("HTTP 409") == true) {
+                Log.i(TAG, "[FAILOVER] channel=$channelName on a stream of its own (409); reopening instead")
+                onOwnStream?.invoke()
+            }
             return
         }
         if ((firstByteSeen && !unplayableWalk) || channelId != id) return
@@ -444,6 +471,12 @@ class LiveStreamFailover(
 
         /** Hard ceiling on a learned-stretched budget. */
         const val FIRST_BYTE_BUDGET_MAX_MS = 45_000L
+
+        /** With "faster failover" on: the first attempt waits 6 s (or 1.5x the
+         *  channel's learned first byte, at most 12 s), every later step 5 s. */
+        const val FAST_FIRST_TUNE_FIRST_BYTE_MS = 6_000L
+        const val FAST_FIRST_BYTE_BUDGET_MAX_MS = 12_000L
+        const val FAST_STEP_FIRST_BYTE_MS = 5_000L
 
         /** A channel learned to start slowly gets 1.5x its learned
          *  time-to-first-byte (never less than the base budget). */
