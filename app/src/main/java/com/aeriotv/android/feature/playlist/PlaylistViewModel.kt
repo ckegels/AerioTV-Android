@@ -174,6 +174,12 @@ class PlaylistViewModel @Inject constructor(
          *  bulk and rebuilt instead of patched channel by channel. */
         private const val LARGE_WINDOW_CHANGE_DIVISOR = 4
 
+        /** Launch paints the group on screen first when it has at most this
+         *  many channels, over now minus BACK to now plus AHEAD. */
+        private const val GROUP_FIRST_MAX_CHANNELS = 200
+        private const val GROUP_FIRST_BACK_MS = 2L * 3_600_000L
+        private const val GROUP_FIRST_AHEAD_MS = 8L * 3_600_000L
+
         /** Signature similarity at or above which a changed channel list is
          *  still the cached guide's list (see identityStale). */
         private const val IDENTITY_SAME_LIST_SIMILARITY = 0.5
@@ -1139,6 +1145,39 @@ class PlaylistViewModel @Inject constructor(
      * window (the cached paint), so the launch path does not re-query Room for
      * data it is holding.
      */
+    /**
+     * Launch, before the whole guide is read: the programmes of the group on
+     * screen, read channel by channel through the (playlistId, channelId)
+     * index, painted at once. The launch read covers every channel (1426
+     * here, of which a group shows 14) and took 30 s after a boot on a
+     * Chromecast HD with memory full, the guide empty and unscrollable all
+     * that time; one group's rows are a few hundred. The full read that
+     * follows replaces this guide. Only for a provider group of a size a
+     * screen shows; All, Favorites and collections wait for the full read.
+     */
+    private suspend fun paintSelectedGroupFirst(playlist: PlaylistEntity) {
+        val state = _state.value
+        if ((state.epgByChannel as? com.aeriotv.android.core.guide.GuideCatalog)?.isEmpty() == false) return
+        val group = state.selectedGroup
+        if (group == ALL_GROUPS || group == FAVORITES_GROUP) return
+        val channels = state.channels
+        val inGroup = channels.filter { it.groupTitle == group }
+        if (inGroup.isEmpty() || inGroup.size > GROUP_FIRST_MAX_CHANNELS) return
+        val now = System.currentTimeMillis()
+        val (windowFrom, windowTo) = guideWindow(playlist)
+        val fromMs = maxOf(windowFrom, now - GROUP_FIRST_BACK_MS)
+        val toMs = minOf(windowTo, now + GROUP_FIRST_AHEAD_MS)
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val raw = runCatching { repository.loadCachedEpgForChannels(playlist.id, inGroup, fromMs, toMs) }
+            .onFailure { Log.w(TAG, "group first: read failed", it) }
+            .getOrDefault(emptyList())
+        if (raw.isEmpty()) return
+        val rows = withContext(Dispatchers.Default) { bridgeChannelIds(raw, channels) }
+        val readMs = android.os.SystemClock.elapsedRealtime() - t0
+        rebuildGuideCatalog(playlist, "group-first", preloadedRows = rows)
+        Log.i(TAG, "group first: $group, ${inGroup.size} channels, ${rows.size} programmes (read ${readMs}ms)")
+    }
+
     private suspend fun rebuildGuideCatalog(
         playlist: PlaylistEntity,
         reason: String,
@@ -1251,6 +1290,7 @@ class PlaylistViewModel @Inject constructor(
         // queried again. Before this, launch did a now-1h..+24h read here and
         // then two more reads for the quick and full catalog rebuilds.
         val (cacheFromMs, cacheToMs) = guideWindow(playlist)
+        paintSelectedGroupFirst(playlist)
         val readStartedAt = android.os.SystemClock.elapsedRealtime()
         val cachedRaw = runCatching {
             repository.loadCachedEpg(playlist.id, cacheFromMs, cacheToMs)
