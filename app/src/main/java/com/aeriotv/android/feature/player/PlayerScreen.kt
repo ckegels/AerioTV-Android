@@ -82,9 +82,10 @@ const val PLAYER_CHROME_HIDE_MS = 3_000L
  *  "what am I watching" card, and shortening it with the chrome would change
  *  unrelated behavior. */
 private const val LAUNCH_HINT_MS = 4_000L
-/** Info bar style: the bar a channel change shows stays long enough to read
- *  the programme, its time and the next one (TiviMate shows it about as long). */
-private const val INFO_BAR_HINT_MS = 7_000L
+/** Info bar style: how long the bar stays up without input, the same whether
+ *  a channel change or the user opened it (7 s, and the 3 s chrome
+ *  timer when opened by hand, closed it before it could be read or used). */
+private const val INFO_BAR_HINT_MS = 10_000L
 private const val SWIPE_THRESHOLD_PX = 120f
 // Min gap between two hardware D-pad channel flips. Auto-repeat on a held UP/DOWN
 // fires rapidly; this paces it so a hold surfs one channel at a time instead of
@@ -1895,7 +1896,7 @@ fun PlayerScreen(
         // Never auto-hide while the stream is unavailable: the chrome hosts the
         // Retry control the user needs, so it must stay put during an outage.
         if (chromeVisible && !interactionLocked && !streamUnavailable) {
-            delay(PLAYER_CHROME_HIDE_MS)
+            delay(if (isTvForm && infoBarStyle) INFO_BAR_HINT_MS else PLAYER_CHROME_HIDE_MS)
             chromeVisible = false
         }
     }
