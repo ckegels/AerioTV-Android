@@ -184,6 +184,11 @@ class PlaylistViewModel @Inject constructor(
          *  still the cached guide's list (see identityStale). */
         private const val IDENTITY_SAME_LIST_SIMILARITY = 0.5
 
+        /** A guide rebuild whose cache read broke tries once more after this
+         *  long, as "<reason>-retry" (not again after that). */
+        private const val CATALOG_RETRY_MS = 15_000L
+        private const val RETRY_SUFFIX = "-retry"
+
         const val ALL_GROUPS = "All"
         /** Pinned Favorites group inside Live TV (Apple parity: Favorites is a
          *  channel group, not a tab). Never a provider group name. */
@@ -1190,8 +1195,20 @@ class PlaylistViewModel @Inject constructor(
         val t0 = android.os.SystemClock.elapsedRealtime()
         val rows = preloadedRows
             ?: runCatching { repository.loadCachedEpg(playlist.id, fromMillis, toMillis) }
-                .onFailure { Log.w(TAG, "rebuildGuideCatalog($reason): cache read failed", it) }
-                .getOrDefault(emptyList())
+                .getOrElse {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    // A read that breaks (the table rewritten under a long
+                    // cursor while a guide update saves) is not an empty
+                    // guide: keep the one on screen, and try once more later.
+                    Log.w(TAG, "rebuildGuideCatalog($reason): cache read failed, the guide on screen stays", it)
+                    if (!reason.endsWith(RETRY_SUFFIX)) {
+                        viewModelScope.launch {
+                            kotlinx.coroutines.delay(CATALOG_RETRY_MS)
+                            rebuildGuideCatalog(playlist, reason + RETRY_SUFFIX)
+                        }
+                    }
+                    return
+                }
         val previous = _state.value.epgByChannel as? com.aeriotv.android.core.guide.GuideCatalog
         val catalog = withContext(Dispatchers.Default) {
             com.aeriotv.android.core.guide.GuideCatalog.build(
