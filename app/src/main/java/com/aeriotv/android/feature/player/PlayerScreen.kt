@@ -82,6 +82,9 @@ const val PLAYER_CHROME_HIDE_MS = 3_000L
  *  "what am I watching" card, and shortening it with the chrome would change
  *  unrelated behavior. */
 private const val LAUNCH_HINT_MS = 4_000L
+/** Info bar style: the bar a channel change shows stays long enough to read
+ *  the programme, its time and the next one (TiviMate shows it about as long). */
+private const val INFO_BAR_HINT_MS = 7_000L
 private const val SWIPE_THRESHOLD_PX = 120f
 // Min gap between two hardware D-pad channel flips. Auto-repeat on a held UP/DOWN
 // fires rapidly; this paces it so a hold surfs one channel at a time instead of
@@ -693,6 +696,8 @@ fun PlayerScreen(
     // Declared HERE (above BackHandler) so the BackHandler closure
     // can read + mutate it.
     var chromeVisible by remember { mutableStateOf(!isTvForm) }
+    // The launch hint (see below), declared here so Back can put it away.
+    var launchHintActive by remember { mutableStateOf(true) }
     // (chromeFromFlip removed in task #148: flips no longer raise the
     // bottom chrome at all - only the top program card via the
     // launch-hint window - so the latch had nothing left to track.)
@@ -793,6 +798,13 @@ fun PlayerScreen(
             // LIVE affordance. The native session revoke runs in onDispose.
             PlayerDoubleBack.clear()
             closeCatchupReplay(exoHolder, exoWindowState, miniPlayerVm, context, onClose)
+        } else if (isTvForm && infoBarStyle && (chromeVisible || launchHintActive)) {
+            // Info bar style: Back first puts the overlay away -- the OK view
+            // with its cards, or the bar a channel change shows -- and leaves
+            // the stream alone on screen; the next Back goes on to the guide
+            // as below. (The standard chrome keeps Back = minimize.)
+            chromeVisible = false
+            launchHintActive = false
         } else if (isTvForm) {
             // #10 back model (Archie 2026-07-02): a SINGLE Back minimizes the
             // fullscreen player straight to the corner mini. OK/Select is now
@@ -866,7 +878,6 @@ fun PlayerScreen(
     // chrome (close button, control bar, dim scrim) with it. After the
     // first auto-hide the pill follows chromeVisible (i.e. the Back-press
     // path surfaces it alongside the full chrome).
-    var launchHintActive by remember { mutableStateOf(true) }
     // Remote Control A2: showProgramInfo action re-arms the same card
     // without a channel change (OK = info panel in the standard scheme).
     var programInfoPulse by remember { mutableStateOf(0) }
@@ -877,7 +888,7 @@ fun PlayerScreen(
         // session-scoped last-channel zap memory.
         currentChannel?.id?.let { exoWindowState.recordTune(it) }
         launchHintActive = true
-        kotlinx.coroutines.delay(LAUNCH_HINT_MS)
+        kotlinx.coroutines.delay(if (isTvForm && infoBarStyle) INFO_BAR_HINT_MS else LAUNCH_HINT_MS)
         launchHintActive = false
     }
     val pillVisible = chromeVisible || launchHintActive

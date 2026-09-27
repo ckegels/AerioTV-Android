@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -46,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -178,6 +180,11 @@ internal fun PlayerInfoBarOverlay(
                     showDescription = !expanded,
                 )
                 if (expanded) {
+                    // Up from ANY card lands on play / pause (not on whatever
+                    // is nearest above it: from History or a channel card that
+                    // was the timeline), and Up again on the timeline to seek.
+                    val playPauseFocus = remember { FocusRequester() }
+                    val timelineFocus = remember { FocusRequester() }
                     Spacer(Modifier.height(14.dp))
                     // Play / pause at the left of the timeline (Up from the cards).
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -185,9 +192,12 @@ internal fun PlayerInfoBarOverlay(
                             paused = paused,
                             onClick = { onInteraction(); onTogglePause() },
                             onInteraction = onInteraction,
-                            modifier = Modifier.padding(start = EDGE),
+                            modifier = Modifier
+                                .padding(start = EDGE)
+                                .focusRequester(playPauseFocus)
+                                .focusProperties { if (timeline != null) up = timelineFocus },
                         )
-                        Box(modifier = Modifier.weight(1f)) {
+                        Box(modifier = Modifier.weight(1f).focusRequester(timelineFocus).focusGroup()) {
                             if (timeline != null) {
                                 timeline()
                             } else {
@@ -196,7 +206,7 @@ internal fun PlayerInfoBarOverlay(
                         }
                     }
                     Spacer(Modifier.height(14.dp))
-                    InfoBarCardRow(model = model, onInteraction = onInteraction)
+                    InfoBarCardRow(model = model, onInteraction = onInteraction, up = playPauseFocus)
                     Icon(
                         imageVector = Icons.Filled.KeyboardArrowDown,
                         contentDescription = null,
@@ -351,7 +361,8 @@ private fun InfoBarHeader(
 /** Card row on OK: TV guide, History, then the next channels. Focus lands on
  *  TV guide, the first card (as in TiviMate). */
 @Composable
-private fun InfoBarCardRow(model: TvInfoBarModel, onInteraction: () -> Unit) {
+private fun InfoBarCardRow(model: TvInfoBarModel, onInteraction: () -> Unit, up: FocusRequester) {
+    val upToPlayPause = Modifier.focusProperties { this.up = up }
     val guideFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         delay(100)
@@ -363,12 +374,12 @@ private fun InfoBarCardRow(model: TvInfoBarModel, onInteraction: () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         item(key = "guide") {
-            InfoBarCard(onClick = model.onOpenGuide, onInteraction = onInteraction, modifier = Modifier.focusRequester(guideFocus)) {
+            InfoBarCard(onClick = model.onOpenGuide, onInteraction = onInteraction, modifier = Modifier.focusRequester(guideFocus).then(upToPlayPause)) {
                 ActionCardContent(Icons.Filled.ViewList, "TV guide")
             }
         }
         item(key = "history") {
-            InfoBarCard(onClick = model.onOpenHistory, onInteraction = onInteraction) {
+            InfoBarCard(onClick = model.onOpenHistory, onInteraction = onInteraction, modifier = upToPlayPause) {
                 ActionCardContent(Icons.Filled.History, "History")
             }
         }
@@ -376,6 +387,7 @@ private fun InfoBarCardRow(model: TvInfoBarModel, onInteraction: () -> Unit) {
             InfoBarCard(
                 onClick = { model.onTuneChannel(c) },
                 onInteraction = onInteraction,
+                modifier = upToPlayPause,
             ) {
                 ChannelCardContent(c, model.nowFor(c))
             }
