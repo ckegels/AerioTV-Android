@@ -787,13 +787,31 @@ private fun GridRow(
     val modernNumberStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     // TiviMate: on the focused row a name that does not fit scrolls (a
     // marquee). The clock is read in the draw phase, so only this row redraws.
+    // Every frame of it is still a whole frame, though (~28 ms on a Chromecast
+    // HD): a marquee that ran for as long as the row had focus, whether the
+    // name fitted or not, kept the TV drawing 60 frames a second in an idle
+    // guide and every key press waited behind them. So it runs only for a
+    // name the draw found too long, waits out its delay without frames, scrolls
+    // MARQUEE_LOOPS times and stops on the start of the name.
     val marqueeOn = modern && gridFocused && rowIsFocused
     var marqueeMs by remember(row) { androidx.compose.runtime.mutableLongStateOf(0L) }
+    // What the last draw found: [0] 1 when the name overflows, [1] one loop in ms.
+    val marqueeFacts = remember(row) { LongArray(2) }
     LaunchedEffect(marqueeOn) {
         marqueeMs = 0L
         if (!marqueeOn) return@LaunchedEffect
+        kotlinx.coroutines.delay(MARQUEE_DELAY_MS)
+        if (marqueeFacts[0] == 0L || marqueeFacts[1] <= 0L) return@LaunchedEffect
+        val runMs = MARQUEE_LOOPS * marqueeFacts[1]
         val start = androidx.compose.runtime.withFrameMillis { it }
-        while (true) androidx.compose.runtime.withFrameMillis { marqueeMs = it - start }
+        while (true) {
+            val done = androidx.compose.runtime.withFrameMillis {
+                marqueeMs = MARQUEE_DELAY_MS + (it - start)
+                it - start >= runMs
+            }
+            if (done) break
+        }
+        marqueeMs = 0L
     }
     // TV BAND number (Logan 2026-09-16, Apple TV parity): the number lives in
     // the rail's own top band, sized to fill it, so it reads from the couch.
@@ -927,6 +945,12 @@ private fun GridRow(
                             CellText(textMeasurer.measure(channel.name, style = modernNameStyle, maxLines = 1, softWrap = false), null)
                         }.title
                     } else null
+                    if (marqueeOn) {
+                        marqueeFacts[0] = if (full != null) 1L else 0L
+                        marqueeFacts[1] = full?.let {
+                            ((it.size.width + MARQUEE_GAP.toPx()) * 1000f / MARQUEE_SPEED.toPx()).toLong()
+                        } ?: 0L
+                    }
                     val elapsed = marqueeMs - MARQUEE_DELAY_MS
                     if (full != null && elapsed > 0) {
                         // Loop: the name, a gap, the name again, sliding left.
@@ -1449,6 +1473,7 @@ private const val RAIL_MODERN_NAME_FULL_KEY = Long.MIN_VALUE + 7
 
 /** Focused-row channel name marquee (compact modern): start delay, speed, loop gap. */
 private const val MARQUEE_DELAY_MS = 1_000L
+private const val MARQUEE_LOOPS = 2
 private val MARQUEE_SPEED = 30.dp
 private val MARQUEE_GAP = 40.dp
 
