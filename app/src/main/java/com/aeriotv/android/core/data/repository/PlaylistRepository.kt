@@ -673,6 +673,7 @@ class PlaylistRepository @Inject constructor(
             return true
         }
 
+        if (key != null) probeDispatchMore(playlist, base, key)
         // system_settings.catchup_enabled needs level >= 1; null (unreadable or
         // absent) leaves the capability Unknown rather than denying catch-up.
         val systemCatchup = key.let {
@@ -797,6 +798,39 @@ class PlaylistRepository @Inject constructor(
         runCatching { dao.byId(playlist.id)?.let { refresh(it) } }
             .onFailure { Log.w(TAG_CAPS, "post-repair channel reload failed", it) }
         return true
+    }
+
+    /**
+     * Whether this playlist's server is a Dispatch More build, asked with the
+     * capability probe (playlist add, refresh, made active, every cold launch).
+     * A Dispatch More server gets the device headers on every request
+     * ([com.aeriotv.android.core.network.DispatchMore]); a stock server (404)
+     * gets nothing new. An answer that says nothing (no connection, 5xx)
+     * keeps what was known. Stored so the first tune of the next launch
+     * already says which device it is.
+     */
+    private suspend fun probeDispatchMore(playlist: PlaylistEntity, base: String, key: String) {
+        val routes = listOf(playlist.urlString, playlist.lanUrlString, base)
+        val answer = runCatching {
+            dispatcharrAuth.withApiKeyRetry(playlist.id) { k ->
+                dispatcharrClient.fetchDispatchMoreCapabilities(base, k)
+            }
+        }.getOrNull() ?: return
+        when (answer) {
+            is DispatcharrClient.DispatchMoreAnswer.Present -> {
+                com.aeriotv.android.core.network.DispatchMore.register(routes, answer.server)
+                Log.i(
+                    TAG_CAPS,
+                    "Dispatch More ${answer.server.build.ifBlank { "(no build name)" }} " +
+                        "for ${playlist.id.take(8)}: device headers on, reports=${answer.server.reports}",
+                )
+            }
+            DispatcharrClient.DispatchMoreAnswer.Absent ->
+                com.aeriotv.android.core.network.DispatchMore.unregister(routes)
+        }
+        runCatching {
+            appPreferences.setDispatchMoreServers(com.aeriotv.android.core.network.DispatchMore.snapshot())
+        }
     }
 
     /** One in-flight probe per playlist id; concurrent callers join it. */

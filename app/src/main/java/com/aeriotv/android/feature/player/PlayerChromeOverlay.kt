@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.ClosedCaption
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Info
@@ -167,6 +168,9 @@ fun PlayerChromeOverlay(
     onAddToMultiview: () -> Unit,
     onShowRecord: (ProgramInfoTarget) -> Unit,
     onShowStreamInfo: () -> Unit,
+    /** Dispatch More: "Send a report to the server", the first row of the
+     *  Options menu. Null when the stream's server does not take reports. */
+    onSendReport: (() -> Unit)? = null,
     onShowSwitchStream: () -> Unit,
     onShowSubtitles: () -> Unit,
     onShowAudioTracks: () -> Unit,
@@ -501,6 +505,12 @@ fun PlayerChromeOverlay(
                         canRecord = canRecord,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
+                        onSendReport = onSendReport?.let { send ->
+                            {
+                                moreOpen = false
+                                send()
+                            }
+                        },
                         scaleLabel = videoScaleLabel,
                         onCycleScale = onCycleVideoScale,
                         onSubtitles = {
@@ -645,6 +655,12 @@ fun PlayerChromeOverlay(
                         canRecord = canRecord,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
+                        onSendReport = onSendReport?.let { send ->
+                            {
+                                moreOpen = false
+                                send()
+                            }
+                        },
                         scaleLabel = videoScaleLabel,
                         onCycleScale = onCycleVideoScale,
                         onSubtitles = {
@@ -1066,6 +1082,7 @@ private fun PlayerMoreMenu(
     canRecord: Boolean,
     audioOnly: Boolean,
     sleepActive: Boolean,
+    onSendReport: (() -> Unit)? = null,
     scaleLabel: String,
     onCycleScale: () -> Unit,
     onSubtitles: () -> Unit,
@@ -1111,6 +1128,20 @@ private fun PlayerMoreMenu(
                 fontSize = 12.sp.subtext(),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f).forText(),
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+            )
+        }
+        if (onSendReport != null) {
+            // First, so it is one press away when something just went wrong.
+            DropdownMenuItem(
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Flag,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                },
+                text = { Text("Send a report to the server") },
+                onClick = onSendReport,
             )
         }
         DropdownMenuItem(

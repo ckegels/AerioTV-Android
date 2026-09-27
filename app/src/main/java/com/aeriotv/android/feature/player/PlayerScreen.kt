@@ -187,6 +187,8 @@ fun PlayerScreen(
         )
     }
     val exoHolder = remember { playerEntry.exoPlayerHolder() }
+    val problemReports = remember { playerEntry.dispatchMoreReports() }
+    var problemReport by remember { mutableStateOf<ProblemReportRequest?>(null) }
     val exoWindowState = remember { playerEntry.exoWindowState() }
     val timeshiftController = remember { playerEntry.timeshiftController() }
     // Cast Connect (GH #33) sender. isCasting drives the local-vs-remote swap:
@@ -1744,7 +1746,34 @@ fun PlayerScreen(
             onLoadCurrentStreamId = onLoadCurrentStreamId,
             reportInteraction = reportInteraction,
             onClose = onClose,
+            // Dispatch More: offered when the stream's server takes reports.
+            // The player is read at the press, so the report is about the
+            // moment something went wrong, not the moment it was sent.
+            onSendReport = exoHolder.reportableStreamUrl
+                ?.takeIf { problemReports.canReport(it) && !isCatchupMode }
+                ?.let { url ->
+                    {
+                        problemReport = ProblemReportRequest(
+                            atMs = System.currentTimeMillis(),
+                            streamUrl = url,
+                            channelName = currentChannel?.name.orEmpty(),
+                            player = exoHolder.problemReportPlayer(),
+                            extra = mapOf(
+                                "channel" to currentChannel?.name,
+                                "programme" to nowProgramme?.title,
+                                "cast" to isCasting,
+                            ),
+                        )
+                    }
+                },
         )
+        problemReport?.let { request ->
+            ProblemReportDialog(
+                request = request,
+                reports = problemReports,
+                onDismiss = { problemReport = null },
+            )
+        }
 
         // Remote Control: Left-press Channels overlay (GH #54), drawn above
         // the video and all chrome.
@@ -2415,6 +2444,7 @@ private fun LiveRewindChromeSection(
     audioOnlyState: MutableState<Boolean>,
     sleepEndsAtState: MutableState<Long?>,
     sleepRemainingMillisState: MutableState<Long?>,
+    onSendReport: (() -> Unit)? = null,
     commitScrubCatchup: (Long) -> Unit,
     commitScrubWall: (Long) -> Unit,
     scrubStep: (Int, Boolean) -> Unit,
@@ -2657,6 +2687,7 @@ private fun LiveRewindChromeSection(
         },
         onAddToMultiview = { multiviewPickerOpen = true },
         onShowRecord = { target -> recordTarget = target },
+        onSendReport = onSendReport,
         onShowStreamInfo = {
             streamInfo = exoHolder.player?.captureStreamInfo() ?: StreamInfoSnapshot(
                 videoLines = listOf("(player not ready)"),
@@ -2981,6 +3012,7 @@ private data class SwitchStreamState(
 @InstallIn(SingletonComponent::class)
 interface PlayerScreenEntryPoint {
     fun exoPlayerHolder(): com.aeriotv.android.core.playback.AerioExoPlayerHolder
+    fun dispatchMoreReports(): com.aeriotv.android.core.network.DispatchMoreReports
     fun exoWindowState(): ExoWindowState
     fun timeshiftController(): com.aeriotv.android.core.timeshift.TimeshiftController
     fun castSender(): com.aeriotv.android.core.cast.AerioCastSender

@@ -189,6 +189,18 @@ class AerioExoPlayerHolder @Inject constructor(
      *  API-key auth lives here. */
     var httpHeaders: Map<String, String> = emptyMap()
 
+    /**
+     * The live stream that last really played (reached playing, not only
+     * asked for). When the user zaps A -> B -> C quickly, B may never play and
+     * A is still what the server has open, so C's request must name A. Cleared
+     * when playback is left: the next tune after that leaves nothing.
+     */
+    @Volatile private var playingStreamUrl: String? = null
+
+    /** Dispatch More headers for the live source [playUrl] is building: the
+     *  device, and on a channel change the channel being left. */
+    @Volatile private var tuneHeaders: Map<String, String> = emptyMap()
+
     // ---- live stall watchdog ----
     // Port of the iOS MPVPlayerView reload-watchdog (commits 331f0bf / a6cf4b4
     // / 0c83124 / 53752ad). A live stream can wedge mid-play (server/proxy
@@ -1278,6 +1290,9 @@ class AerioExoPlayerHolder @Inject constructor(
     private val watchingListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             PlaybackActivityTracker.mainPlayingChanged(isPlaying)
+            // The channel actually playing (not the last one asked for): what a
+            // later channel change tells a Dispatch More server it is leaving.
+            if (isPlaying && !isCatchup && !isTimeshifting) playingStreamUrl = lastPlayUrl
         }
     }
 
@@ -2383,6 +2398,19 @@ class AerioExoPlayerHolder @Inject constructor(
         // UNLESS a companion remote explicitly asked for Audio Only, which a
         // watchdog/poller re-prime must not undo.
         setVideoTrackEnabled(!remoteAudioOnly)
+        // A caller-supplied channel id is the user's tune; an internal re-prime
+        // (watchdog, failover, LAN/WAN flip) passes none and leaves nothing.
+        tuneHeaders = if (kind == "live") {
+            com.aeriotv.android.core.network.DispatchMore.streamHeaders(
+                url,
+                previousUrl = if (channelId != null) playingStreamUrl else null,
+            )
+        } else {
+            emptyMap()
+        }
+        tuneHeaders[com.aeriotv.android.core.network.DispatchMore.HEADER_PREVIOUS]?.let {
+            Log.i(TAG, "[TUNE] leaving channel $it (told the server)")
+        }
         tracer.markTuneStart(title, kind)
         primeGeneration += 1
         noteSourceOpen(url, effectiveChannelId)
@@ -2452,7 +2480,7 @@ class AerioExoPlayerHolder @Inject constructor(
         val factory = OkHttpDataSource.Factory(calls)
             .setUserAgent(okHttpSafeUserAgent(headerUa ?: DEFAULT_PLAYBACK_USER_AGENT))
         val nonUaHeaders = okHttpSafeHeaders(
-            httpHeaders.filterKeys { !it.equals("User-Agent", ignoreCase = true) },
+            tuneHeaders + httpHeaders.filterKeys { !it.equals("User-Agent", ignoreCase = true) },
         )
         if (nonUaHeaders.isNotEmpty()) factory.setDefaultRequestProperties(nonUaHeaders)
         return factory
@@ -2671,6 +2699,7 @@ class AerioExoPlayerHolder @Inject constructor(
         cleanEndJob = null
         currentChannelId = null
         currentChannelIdForRebuild = null
+        playingStreamUrl = null
         // Disarm the stall watchdog so a deliberate stop isn't seen as a wedge.
         hasReachedPlaybackRestart = false
         lastPlayUrl = null
@@ -2682,6 +2711,65 @@ class AerioExoPlayerHolder @Inject constructor(
         p.stop()
         retireLiveCalls(p, staleCalls)
         p.clearMediaItems()
+    }
+
+    /** The stream the player is on, for a problem report: the live URL, or
+     *  null during catch-up / timeshift (not a channel the server streams). */
+    val reportableStreamUrl: String?
+        get() = lastPlayUrl.takeIf { !isCatchup && !isTimeshifting }
+
+    /**
+     * The player's side of a problem report (Dispatch More, contract section 7):
+     * its state and last error, what it is playing and how, and what this tune
+     * measured. Main thread (reads the ExoPlayer). The URL has its login taken
+     * out here too, though the server removes it as well.
+     */
+    fun problemReportPlayer(): Map<String, Any?> {
+        val p = player
+        val video = p?.videoFormat
+        val audio = p?.audioFormat
+        val error = p?.playerError
+        return buildMap {
+            put(
+                "state",
+                when (p?.playbackState) {
+                    Player.STATE_IDLE -> "IDLE"
+                    Player.STATE_BUFFERING -> "BUFFERING"
+                    Player.STATE_READY -> if (p.isPlaying) "PLAYING" else "READY"
+                    Player.STATE_ENDED -> "ENDED"
+                    else -> "NO_PLAYER"
+                },
+            )
+            put("error", _lastErrorText.value ?: error?.let { "${it.errorCodeName}: ${it.message}" })
+            put("error_code", error?.errorCode)
+            put("url", lastPlayUrl?.let { com.aeriotv.android.core.debug.LogSanitizer.redactUrl(it) })
+            put("position_ms", p?.currentPosition)
+            put("buffered_ms", p?.totalBufferedDuration)
+            put(
+                "video",
+                video?.let {
+                    listOfNotNull(
+                        it.width.takeIf { w -> w > 0 }?.let { w -> "${w}x${it.height}" },
+                        it.codecs ?: it.sampleMimeType,
+                        it.frameRate.takeIf { f -> f > 0f }?.let { f -> "${"%.2f".format(f)}fps" },
+                    ).joinToString(" ")
+                },
+            )
+            put(
+                "audio",
+                audio?.let {
+                    listOfNotNull(
+                        it.codecs ?: it.sampleMimeType,
+                        it.channelCount.takeIf { c -> c > 0 }?.let { c -> "${c}ch" },
+                    ).joinToString(" ")
+                },
+            )
+            put("bitrate_kbps", video?.bitrate?.takeIf { it != Format.NO_VALUE }?.let { it / 1000 })
+            put("catchup", isCatchup)
+            put("timeshift", isTimeshifting)
+            put("audio_only", remoteAudioOnly)
+            putAll(tracer.reportFacts())
+        }
     }
 
     /** GH #22: true when there is nothing actually playing or loading --
@@ -2737,6 +2825,7 @@ class AerioExoPlayerHolder @Inject constructor(
         resumeGateActive = false
         currentChannelId = null
         currentChannelIdForRebuild = null
+        playingStreamUrl = null
         // Full teardown clears the stream-failover walk and any pending
         // "Channel is stopping" retry.
         stoppingRetryJob?.cancel()

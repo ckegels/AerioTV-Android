@@ -138,6 +138,13 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
             .build()
     }
 
+    /** What the device is called in the server's Diagnostics: the name the
+     *  user gave it in Android's settings ("Living room SHIELD"), else its model. */
+    private fun deviceName(): String =
+        runCatching {
+            android.provider.Settings.Global.getString(contentResolver, android.provider.Settings.Global.DEVICE_NAME)
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: android.os.Build.MODEL.orEmpty()
+
     override fun onCreate() {
         super.onCreate()
         // Crash capture FIRST, and independent of the Debug Logging toggle: a
@@ -165,6 +172,16 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
         appScope.launch {
             com.aeriotv.android.core.debug.CrashReporter
                 .publishToDebugLog(this@AerioTVApplication, debugLogger.logFile())
+        }
+        // Dispatch More: this install's id and name, and the servers known to
+        // take them from the last probe, before the first tune can go out.
+        appScope.launch {
+            val stored = runCatching { appPreferences.dispatchMoreDeviceId() }.getOrNull()
+            val id = com.aeriotv.android.core.network.DispatchMore.setDevice(stored, deviceName())
+            if (id != stored) runCatching { appPreferences.setDispatchMoreDeviceId(id) }
+            com.aeriotv.android.core.network.DispatchMore.restore(
+                runCatching { appPreferences.dispatchMoreServers() }.getOrNull(),
+            )
         }
         // Dispatcharr live change notifications (Settings > General > Live
         // updates). Idle unless the setting is on, the active playlist logs in
