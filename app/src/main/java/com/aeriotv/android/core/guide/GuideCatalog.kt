@@ -61,6 +61,32 @@ class GuideCatalog private constructor(
     }
 
     /**
+     * This guide for a changed lineup, without rebuilding it: channels no
+     * longer in [channels] are dropped, [rebuiltIds] (the added and changed
+     * ones) are built from [rows], and every other channel keeps its cells.
+     * A server lineup check that adds or removes a channel or two happens at
+     * most launches; a full rebuild for it took 16 s on a Chromecast HD.
+     */
+    fun forLineup(channels: List<M3UChannel>, rebuiltIds: Set<String>, rows: List<EPGProgramme>): GuideCatalog {
+        val present = channels.mapTo(HashSet(channels.size * 2)) { it.guideChannelId().value }
+        val newIndices = HashMap<String, GuideIndex>(present.size * 2)
+        val newLists = HashMap<String, List<EPGProgramme>>(present.size * 2)
+        for ((id, index) in indices) if (id in present && id !in rebuiltIds) newIndices[id] = index
+        for ((id, list) in lists) if (id in present && id !in rebuiltIds) newLists[id] = list
+        if (rebuiltIds.isNotEmpty()) {
+            val byChannel = attach(rows, GuideMatchMaps.build(channels))
+            for (ch in channels) {
+                val id = ch.guideChannelId()
+                if (id.value !in rebuiltIds) continue
+                val (index, cells) = buildChannel(ch, byChannel[id.value], windowStartMs, windowEndMs, minGapMs, stableOrder)
+                newLists[id.value] = cells
+                newIndices[id.value] = index
+            }
+        }
+        return GuideCatalog(newIndices, newLists, GuideIdentityHash.of(channels), windowStartMs, windowEndMs, minGapMs, stableOrder)
+    }
+
+    /**
      * Canonical ids of the channels whose schedule in [fromMs, toMs) differs
      * between this catalog and [freshRows] (a server window). The fresh rows
      * go through the same attach / dedup / index steps as [build] before the

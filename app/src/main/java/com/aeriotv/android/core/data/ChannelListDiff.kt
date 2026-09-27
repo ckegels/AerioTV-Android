@@ -39,6 +39,12 @@ data class ChannelListDiff(
             return ChannelListDiff(added, removed, changed, reordered)
         }
 
+        /** The channels of [new] that are not in [old], or are with a different signature. */
+        fun addedOrChanged(old: List<M3UChannel>, new: List<M3UChannel>): List<M3UChannel> {
+            val oldById = old.associateBy { it.id }
+            return new.filter { ch -> oldById[ch.id]?.let { signature(it) != signature(ch) } ?: true }
+        }
+
         private fun signature(c: M3UChannel): List<Any?> = listOf(
             c.name, c.url, c.groupTitle, c.tvgID, c.tvgLogo, c.channelNumber,
             c.catchupDays, c.dispatcharrChannelId, c.drmLicenseType, c.drmLicenseKey,

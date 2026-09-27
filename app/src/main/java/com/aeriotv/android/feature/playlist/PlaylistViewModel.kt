@@ -426,9 +426,15 @@ class PlaylistViewModel @Inject constructor(
                     return
                 }
                 Log.i(TAG, "cache update: channels $diff -> ${update.channels.size} channels")
+                val before = _state.value.channels
+                val catalog = _state.value.epgByChannel as? com.aeriotv.android.core.guide.GuideCatalog
                 _state.update { it.copy(channels = update.channels) }
                 // The cache's identity stamp moved when the update arrived
-                // (observeCacheUpdates), applied now or kept for later.
+                // (observeCacheUpdates). The guide is patched: only the added
+                // and changed channels are read and built.
+                if (catalog != null && runCatching { patchGuideForLineup(active, catalog, before, update.channels) }.getOrDefault(false)) {
+                    return
+                }
                 runCatching { rebuildGuideCatalog(active, "channels-update") }
                     .onFailure { Log.w(TAG, "guide rebuild after channel update failed", it) }
             }
@@ -444,6 +450,38 @@ class PlaylistViewModel @Inject constructor(
                         Log.w(TAG, "guide window update failed", it)
                     }
         }
+    }
+
+    /** [GuideCatalog.forLineup] for a lineup update; false when the guide
+     *  changed meanwhile and a full rebuild has to do it. */
+    private suspend fun patchGuideForLineup(
+        playlist: PlaylistEntity,
+        catalog: com.aeriotv.android.core.guide.GuideCatalog,
+        before: List<M3UChannel>,
+        after: List<M3UChannel>,
+    ): Boolean {
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        val touched = com.aeriotv.android.core.data.ChannelListDiff.addedOrChanged(before, after)
+        val rows = if (touched.isEmpty()) {
+            emptyList()
+        } else {
+            repository.loadCachedEpgForChannels(playlist.id, touched, catalog.windowStartMs, catalog.windowEndMs)
+        }
+        val ids = touched.mapTo(HashSet()) { it.guideChannelId().value }
+        val next = withContext(Dispatchers.Default) { catalog.forLineup(after, ids, rows) }
+        val applied = epgWriteMutex.withLock {
+            val ok = _state.value.epgByChannel === catalog
+            if (ok) _state.update { it.copy(epgByChannel = next) }
+            ok
+        }
+        if (applied) {
+            Log.i(
+                TAG,
+                "guide patched for the lineup: ${touched.size} channels built from ${rows.size} rows " +
+                    "in ${android.os.SystemClock.elapsedRealtime() - startedAt}ms",
+            )
+        }
+        return applied
     }
 
     /**

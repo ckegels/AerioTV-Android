@@ -37,6 +37,25 @@ class GuideCatalogTest {
     }
 
     @Test
+    fun aLineupChangeKeepsTheOthersAndBuildsOnlyTheNewOnes() {
+        val espn = ch("ESPN", "espn.us"); val fox = ch("FOX", "fox.us"); val cnn = ch("CNN", "cnn.us")
+        val cat = GuideCatalog.build(
+            listOf(espn, fox),
+            listOf(p("espn.us", "SportsCenter", 0, h), p("fox.us", "News", 0, h)),
+            windowStartMs = 0, windowEndMs = 2 * h,
+        )
+        val espnCells = cat[espn.guideChannelId().value]
+        val next = cat.forLineup(listOf(espn, cnn), setOf(cnn.guideChannelId().value), listOf(p("cnn.us", "Newsroom", 0, h)))
+        // FOX went, CNN came with its own rows, ESPN kept the very same cells
+        assertEquals(null, next[fox.guideChannelId().value])
+        assertEquals("Newsroom", next[cnn.guideChannelId().value]!!.first().title)
+        assertSame(espnCells, next[espn.guideChannelId().value])
+        // The same identity a full build of the new lineup has, so later
+        // guide windows patch it instead of rebuilding
+        assertEquals(GuideIdentityHash.of(listOf(espn, cnn)), next.identityHash)
+    }
+
+    @Test
     fun rowsAlreadyKeyedByCanonicalIdAreTakenDirectly() {
         val espn = ch("ESPN", "espn.us")
         val cat = GuideCatalog.build(listOf(espn), listOf(p(espn.guideChannelId().value, "Direct", 0, h)), 0, 2 * h)
