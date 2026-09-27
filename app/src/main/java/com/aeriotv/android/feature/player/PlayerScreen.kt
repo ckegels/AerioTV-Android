@@ -187,6 +187,8 @@ fun PlayerScreen(
         )
     }
     val exoHolder = remember { playerEntry.exoPlayerHolder() }
+    val problemReports = remember { playerEntry.dispatchMoreReports() }
+    var problemReport by remember { mutableStateOf<ProblemReportRequest?>(null) }
     val exoWindowState = remember { playerEntry.exoWindowState() }
     val timeshiftController = remember { playerEntry.timeshiftController() }
     // Cast Connect (GH #33) sender. isCasting drives the local-vs-remote swap:
@@ -1745,6 +1747,44 @@ fun PlayerScreen(
             reportInteraction = reportInteraction,
             onClose = onClose,
         )
+        // Dispatch More: "Send a report to the server" in the Options menu,
+        // offered when the stream's server takes reports. Both are asked when
+        // the menu opens; the player is read at the press, so the report is
+        // about the moment something went wrong, not the moment it was sent.
+        val reportChannel = rememberUpdatedState(currentChannel)
+        val reportProgramme = rememberUpdatedState(nowProgramme)
+        val reportCatchup = rememberUpdatedState(isCatchupMode)
+        val reportCasting = rememberUpdatedState(isCasting)
+        DisposableEffect(Unit) {
+            ProblemReportMenu.action = ProblemReportAction(
+                available = {
+                    !reportCatchup.value &&
+                        exoHolder.reportableStreamUrl?.let(problemReports::canReport) == true
+                },
+                open = open@{
+                    val url = exoHolder.reportableStreamUrl ?: return@open
+                    problemReport = ProblemReportRequest(
+                        atMs = System.currentTimeMillis(),
+                        streamUrl = url,
+                        channelName = reportChannel.value?.name.orEmpty(),
+                        player = exoHolder.problemReportPlayer(),
+                        extra = mapOf(
+                            "channel" to reportChannel.value?.name,
+                            "programme" to reportProgramme.value?.title,
+                            "cast" to reportCasting.value,
+                        ),
+                    )
+                },
+            )
+            onDispose { ProblemReportMenu.action = null }
+        }
+        problemReport?.let { request ->
+            ProblemReportDialog(
+                request = request,
+                reports = problemReports,
+                onDismiss = { problemReport = null },
+            )
+        }
 
         // Remote Control: Left-press Channels overlay (GH #54), drawn above
         // the video and all chrome.
@@ -2981,6 +3021,7 @@ private data class SwitchStreamState(
 @InstallIn(SingletonComponent::class)
 interface PlayerScreenEntryPoint {
     fun exoPlayerHolder(): com.aeriotv.android.core.playback.AerioExoPlayerHolder
+    fun dispatchMoreReports(): com.aeriotv.android.core.network.DispatchMoreReports
     fun exoWindowState(): ExoWindowState
     fun timeshiftController(): com.aeriotv.android.core.timeshift.TimeshiftController
     fun castSender(): com.aeriotv.android.core.cast.AerioCastSender
