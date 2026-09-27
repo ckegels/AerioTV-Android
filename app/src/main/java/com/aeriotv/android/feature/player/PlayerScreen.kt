@@ -253,12 +253,30 @@ fun PlayerScreen(
     // channel the playlist refresh re-keyed). NEVER coerce a miss to 0: that
     // silently played channels[0] (the user report: picking World Cup #5200
     // played channel #1). getOrNull(-1) renders the loading state instead,
-    // and the remember(channels) below re-resolves when the list lands.
+    // and the list check below re-resolves when the list lands.
     val initialIndex = remember(channels, initialChannelId) {
         channels.indexOfFirst { it.id == initialChannelId }
     }
-    val currentIndexState = remember(channels) { mutableIntStateOf(initialIndex) }
+    // ONE index state for the life of the player. It used to be
+    // remember(channels), so a new list -- a lineup update arriving while
+    // the user watches, which live updates deliver at most launches --
+    // made a fresh state: the channel flip, set up once, kept writing to the
+    // old one (Up / Down did nothing until the player was reopened, seen on a
+    // Chromecast HD), and the fresh one started at the channel the player was
+    // OPENED with, not the one being watched.
+    val currentIndexState = remember { mutableIntStateOf(initialIndex) }
     var currentIndex by currentIndexState
+    // When the list changes, the index follows the channel being watched (by
+    // id); before any channel resolved, the one the player was opened for.
+    // Adjusted during composition so no frame reads a position of the old
+    // list in the new one (which would tune whatever channel sits there).
+    val indexedList = remember { arrayOf(channels) }
+    if (indexedList[0] !== channels) {
+        val watchingId = indexedList[0].getOrNull(currentIndex)?.id ?: initialChannelId
+        indexedList[0] = channels
+        val resolved = channels.indexOfFirst { it.id == watchingId }
+        if (resolved != currentIndex) currentIndex = resolved
+    }
     val currentChannel = channels.getOrNull(currentIndex)
 
     // Task #148 milestone B: catch-up mode state. scrubTargetWallMs (below)
