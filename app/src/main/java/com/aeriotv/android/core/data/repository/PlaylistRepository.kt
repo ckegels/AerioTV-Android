@@ -2265,29 +2265,24 @@ class PlaylistRepository @Inject constructor(
         toMillis: Long,
     ): List<EPGProgramme> = withContext(layeringDispatcher) {
         // Canonical rows one channel at a time (the unique index answers each
-        // from that channel's rows); rows under raw grid keys from the time-
-        // window index, paged: one read for hundreds of channels spans several
-        // cursor windows and fails when a write lands between their refills.
-        // Neither walks the whole table (see forChannelInWindow).
+        // from that channel's rows), a result of its own each, so no read spans
+        // several cursor windows (which fails when a write lands between their
+        // refills). Neither part walks the whole table (see forChannelInWindow).
         val rows = ArrayList<com.aeriotv.android.core.data.db.entity.EpgProgrammeEntity>()
         for (ch in channels) {
             rows.addAll(epgProgrammeDao.forChannelInWindow(playlistId, ch.guideChannelId().value, fromMillis, toMillis))
         }
-        // Up to 5 keys per channel; 150 channels keeps a batch under SQLite's 999 parameters.
-        for (batch in channels.chunked(150)) {
-            val raw = batch.flatMap {
-                com.aeriotv.android.core.guide.GuideMatchMaps.rawKeysOf(it, withNumber = true)
-            }.distinct()
-            if (raw.isEmpty()) continue
-            var afterId = 0L
-            while (true) {
-                val page = epgProgrammeDao.rawKeyedInWindowPage(
-                    playlistId, raw, fromMillis, toMillis, afterId, CHANNEL_WINDOW_PAGE_ROWS,
-                )
-                rows.addAll(page)
-                if (page.size < CHANNEL_WINDOW_PAGE_ROWS) break
-                afterId = page.last().id
-            }
+        // Rows under raw grid keys: the raw ids actually stored come from the
+        // (playlistId, channelId) index alone, matched here as the keys are
+        // (trimmed, any case), and each is read by its exact id through the
+        // unique index -- never a scan of the table or of the whole window.
+        val wantedRaw = channels.flatMapTo(HashSet()) {
+            com.aeriotv.android.core.guide.GuideMatchMaps.rawKeysOf(it, withNumber = true)
+        }.mapTo(HashSet()) { it.trim().lowercase() }
+        if (wantedRaw.isNotEmpty()) {
+            epgProgrammeDao.rawKeyedChannelIds(playlistId)
+                .filter { it.trim().lowercase() in wantedRaw }
+                .forEach { id -> rows.addAll(epgProgrammeDao.forChannelInWindow(playlistId, id, fromMillis, toMillis)) }
         }
         rows.distinctBy { it.id }.map { it.toProgramme() }
     }
@@ -2302,9 +2297,15 @@ class PlaylistRepository @Inject constructor(
      */
     suspend fun deleteRawKeyedEpg(playlistId: String, rawKeys: Collection<String>, fromMillis: Long, toMillis: Long): Int =
         withContext(layeringDispatcher) {
-            rawKeys.distinct().chunked(900).sumOf { chunk ->
-                epgProgrammeDao.deleteRawKeyedInWindow(playlistId, chunk, fromMillis, toMillis)
-            }
+            if (rawKeys.isEmpty()) return@withContext 0
+            // The raw ids actually stored, from the index alone, matched here the
+            // way the old query matched them (trimmed, any case); then each one is
+            // deleted by its exact id through the index. Same rows as the
+            // normalized IN query, without scanning the whole table.
+            val wanted = rawKeys.mapTo(HashSet()) { it.trim().lowercase() }
+            epgProgrammeDao.rawKeyedChannelIds(playlistId)
+                .filter { it.trim().lowercase() in wanted }
+                .sumOf { id -> epgProgrammeDao.deleteCoveredSpanForChannel(playlistId, id, fromMillis, toMillis) }
         }
 
     /**

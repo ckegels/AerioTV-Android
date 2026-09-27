@@ -95,28 +95,6 @@ interface EpgProgrammeDao {
         toMillis: Long,
     ): List<EpgProgrammeEntity>
 
-    /**
-     * Rows stored under raw grid keys (the stock day-chunk sweep), one page in
-     * id order. A raw key is matched normalized, which no index can answer, so
-     * the time-window index is named: only the window's rows are visited, not
-     * the whole table the id order would walk.
-     */
-    @Query(
-        "SELECT * FROM epg_programme INDEXED BY index_epg_programme_playlistId_endMillis " +
-            "WHERE playlistId = :playlistId AND endMillis > :fromMillis AND startMillis < :toMillis " +
-            "AND channelId NOT LIKE 'disp:%' AND channelId NOT LIKE 'm3u:%' " +
-            "AND lower(trim(channelId)) IN (:rawKeys) " +
-            "AND id > :afterId ORDER BY id LIMIT :limit"
-    )
-    suspend fun rawKeyedInWindowPage(
-        playlistId: String,
-        rawKeys: List<String>,
-        fromMillis: Long,
-        toMillis: Long,
-        afterId: Long,
-        limit: Int,
-    ): List<EpgProgrammeEntity>
-
     @Query(
         "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
             "AND endMillis > :fromMillis AND startMillis < :toMillis " +
@@ -129,20 +107,6 @@ interface EpgProgrammeDao {
         fromMillis: Long,
         toMillis: Long,
     ): List<EpgProgrammeEntity>
-
-    /** Raw-keyed rows (never canonical ones) for [rawKeys] overlapping the window; see PlaylistRepository.deleteRawKeyedEpg. */
-    @Query(
-        "DELETE FROM epg_programme WHERE playlistId = :playlistId " +
-            "AND endMillis > :fromMillis AND startMillis < :toMillis " +
-            "AND channelId NOT LIKE 'disp:%' AND channelId NOT LIKE 'm3u:%' " +
-            "AND lower(trim(channelId)) IN (:rawKeys)"
-    )
-    suspend fun deleteRawKeyedInWindow(
-        playlistId: String,
-        rawKeys: List<String>,
-        fromMillis: Long,
-        toMillis: Long,
-    ): Int
 
     /**
      * EPG-scope search for the global Search surface (parity task #41 / iOS
@@ -259,7 +223,21 @@ interface EpgProgrammeDao {
         channelId: String,
         fromMillis: Long,
         toMillis: Long,
+    ): Int
+
+    /**
+     * The distinct channel ids stored under raw grid keys (not a canonical
+     * disp: / m3u: id), read from the (playlistId, channelId) index alone: the
+     * programme rows are never touched. The raw keys used to be matched
+     * normalized (lower(trim(channelId))), which no index can answer, so
+     * every server guide update scanned the whole table -- 11.8 s to save 802
+     * rows on a Chromecast HD whose table comes off storage.
+     */
+    @Query(
+        "SELECT DISTINCT channelId FROM epg_programme INDEXED BY index_epg_programme_playlistId_channelId " +
+            "WHERE playlistId = :playlistId AND channelId NOT LIKE 'disp:%' AND channelId NOT LIKE 'm3u:%'"
     )
+    suspend fun rawKeyedChannelIds(playlistId: String): List<String>
 
     /**
      * Merge a fresh feed into one source's cached guide in a single
