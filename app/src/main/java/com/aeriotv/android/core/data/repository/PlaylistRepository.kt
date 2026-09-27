@@ -819,10 +819,12 @@ class PlaylistRepository @Inject constructor(
         when (answer) {
             is DispatcharrClient.DispatchMoreAnswer.Present -> {
                 com.aeriotv.android.core.network.DispatchMore.register(routes, answer.server)
+                val server = answer.server
                 Log.i(
                     TAG_CAPS,
-                    "Dispatch More ${answer.server.build.ifBlank { "(no build name)" }} " +
-                        "for ${playlist.id.take(8)}: device headers on, reports=${answer.server.reports}",
+                    "${server.build.ifBlank { "Dispatch More" }} for ${playlist.id.take(8)}: " +
+                        "device headers on (server switches: devices=${server.devices} " +
+                        "switch_hints=${server.switchHints} reports=${server.reports})",
                 )
             }
             DispatcharrClient.DispatchMoreAnswer.Absent ->

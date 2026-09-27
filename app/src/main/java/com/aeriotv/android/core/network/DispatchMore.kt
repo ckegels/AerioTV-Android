@@ -39,6 +39,10 @@ object DispatchMore {
         val reports: Boolean = false,
         val reportPath: String = DEFAULT_REPORT_PATH,
         val build: String = "",
+        /** The admin's switches, for the log only: the headers are sent
+         *  whatever they say, and the server decides what to do with them. */
+        val devices: Boolean = false,
+        val switchHints: Boolean = false,
     )
 
     // The formats the server accepts; anything else it ignores.

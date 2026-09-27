@@ -519,6 +519,8 @@ class DispatcharrClient @Inject constructor() {
                     reportPath = (root["report_url"] as? JsonPrimitive)?.contentOrNull
                         ?.takeIf { it.startsWith("/") } ?: DispatchMore.DEFAULT_REPORT_PATH,
                     build = (root["build"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                    devices = (root["devices"] as? JsonPrimitive)?.booleanOrNull == true,
+                    switchHints = (root["switch_hints"] as? JsonPrimitive)?.booleanOrNull == true,
                 ),
             )
         }.getOrNull()
