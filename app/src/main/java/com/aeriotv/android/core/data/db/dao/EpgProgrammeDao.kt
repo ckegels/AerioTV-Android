@@ -36,24 +36,35 @@ interface EpgProgrammeDao {
      * composite index without re-measuring this read.
      */
     /**
-     * One page of [forPlaylistInWindow], in id order after [afterId]. Big
-     * reads must go through pages: Android copies query results into 2 MB
-     * cursor windows and, when one fills, re-runs the query from the start
-     * and steps past every row already delivered, so a single 40K-row read
-     * (tens of MB with descriptions) costs quadratic work. Profiled on a
-     * Chromecast HD: 22 s for the launch guide read, 66 % of all CPU. Each
-     * page here fits one window, and the next page seeks straight to its
-     * first id.
+     * One page of [forPlaylistInWindow], in (endMillis, id) order after
+     * ([afterEnd], [afterId]); the first page passes ([fromMillis],
+     * Long.MAX_VALUE). Big reads must go through pages: Android copies query
+     * results into 2 MB cursor windows and, when one fills, re-runs the query
+     * from the start and steps past every row already delivered, so a single
+     * 40K-row read (tens of MB with descriptions) costs quadratic work.
+     * Profiled on a Chromecast HD: 22 s for the launch guide read, 66 % of all
+     * CPU. Each page here fits one window.
+     *
+     * The order is the (playlistId, endMillis) index's own, so each page seeks
+     * into that index and reads on from where the last one stopped. Paged by
+     * id instead, SQLite walked the playlistId index in id order: every row of
+     * the playlist, the whole cache, was visited to keep the window's (41K
+     * rows in 15.5 s on a Chromecast HD, whose 105 MB cache comes off storage
+     * with memory and swap full). An overlapping programme ends before
+     * [toMillis] plus its own length, so `endMillis < to + 26 h` (93600000)
+     * bounds the range without losing rows; a programme longer than 26 h is
+     * not drawn.
      */
     @Query(
         "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
-            "AND endMillis > :fromMillis AND startMillis < :toMillis " +
-            "AND id > :afterId ORDER BY id LIMIT :limit"
+            "AND (endMillis, id) > (:afterEnd, :afterId) " +
+            "AND endMillis < :toMillis + 93600000 AND startMillis < :toMillis " +
+            "ORDER BY endMillis, id LIMIT :limit"
     )
     suspend fun forPlaylistInWindowPage(
         playlistId: String,
-        fromMillis: Long,
         toMillis: Long,
+        afterEnd: Long,
         afterId: Long,
         limit: Int,
     ): List<EpgProgrammeEntity>

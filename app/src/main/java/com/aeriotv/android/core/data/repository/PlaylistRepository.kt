@@ -2151,21 +2151,28 @@ class PlaylistRepository @Inject constructor(
             // Paged (EpgProgrammeDao.forPlaylistInWindowPage): one query
             // for tens of thousands of rows re-runs itself for every 2 MB
             // cursor window it fills.
-            val out = ArrayList<EPGProgramme>()
+            // Row id with each programme: the pages come in time order, and the
+            // guide's dedup keeps the first of two rows in a slot, which has
+            // always been the lower id. Sorted back before returning.
+            val out = ArrayList<Pair<Long, EPGProgramme>>()
             // One copy per distinct string for this load: every row read from
             // Room brings its own copies, so a channel's key, a category or a
             // rerun's title and description were stored once per programme.
             val pool = StringPool()
-            var afterId = 0L
+            // (endMillis, id) > (fromMillis, MAX) is endMillis > fromMillis.
+            var afterEnd = fromMillis
+            var afterId = Long.MAX_VALUE
             while (true) {
                 val page = epgProgrammeDao.forPlaylistInWindowPage(
-                    playlistId, fromMillis, toMillis, afterId, EPG_READ_PAGE_ROWS,
+                    playlistId, toMillis, afterEnd, afterId, EPG_READ_PAGE_ROWS,
                 )
-                page.mapTo(out) { it.toProgramme(pool) }
+                page.mapTo(out) { it.id to it.toProgramme(pool) }
                 if (page.size < EPG_READ_PAGE_ROWS) break
+                afterEnd = page.last().endMillis
                 afterId = page.last().id
             }
-            out
+            out.sortBy { it.first }
+            out.map { it.second }
         }
 
     /**
