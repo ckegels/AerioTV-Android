@@ -94,6 +94,23 @@ class LiveStreamFailover(
     @Volatile var onLearnFirstByte: ((channelId: String, ms: Int) -> Unit)? = null
 
     private var deadlineJob: Job? = null
+
+    /** The picture deadline (arrTV optimization "leave a stream that is slow
+     *  to start"): no first frame within the budget walks to the next stream,
+     *  whatever the bytes are doing. */
+    private var pictureJob: Job? = null
+    @Volatile private var firstFrameSeen = false
+
+    /** The server's own faster failover is on for the stream being played
+     *  (capabilities, Dispatch More v212): it leaves a silent stream after
+     *  5 s and one check, so the app waits longer and lets it move first --
+     *  both moving at once would skip a stream. Set by the holder. */
+    @Volatile var serverFastFailover: () -> Boolean = { false }
+
+    /** Whether a picture is to be expected at all: false for Audio Only and
+     *  for a stream found to carry no video (radio), which never render a
+     *  frame and must not be walked for it. Set by the holder; main thread. */
+    @Volatile var pictureExpected: () -> Boolean = { true }
     private var stepJob: Job? = null
     private var channelId: String? = null
     private var channelName: String = "?"
@@ -121,6 +138,7 @@ class LiveStreamFailover(
 
     /** The budget the current deadline is running with, for the log line. */
     private var budgetMs = FIRST_TUNE_FIRST_BYTE_MS
+    private var pictureBudgetMs = SLOW_START_MIN_MS
     /** Streams already walked this tune; the walk never revisits one. */
     private val tried = mutableSetOf<Int>()
     private var activeStreamId: Int? = null
@@ -276,6 +294,8 @@ class LiveStreamFailover(
         deadlineJob?.cancel()
         deadlineJob = null
         firstByteSeen = false
+        pictureJob?.cancel()
+        pictureJob = null
     }
 
     /** Channel change or full teardown: forget everything about the walk. */
@@ -315,6 +335,7 @@ class LiveStreamFailover(
         // two (learned first-byte times here are 0.1-3 s), so the budgets sized
         // for an antenna tuner's lock cost 28 s per dead stream for nothing.
         val fast = ArrTvOptimizations.fastFailover
+        val serverLeads = fast && runCatching { serverFastFailover() }.getOrDefault(false)
         budgetMs = if (!firstAttempt) {
             if (fast) FAST_STEP_FIRST_BYTE_MS else STEP_FIRST_BYTE_MS
         } else {
@@ -325,6 +346,8 @@ class LiveStreamFailover(
                 maxOf(FIRST_TUNE_FIRST_BYTE_MS, fromLearned).coerceAtMost(FIRST_BYTE_BUDGET_MAX_MS)
             }
         }
+        if (serverLeads) budgetMs = maxOf(budgetMs, SERVER_LEADS_MS)
+        armPictureDeadline(serverLeads)
         Log.i(
             TAG,
             "[FAILOVER] channel=$channelName silent-start budget ${budgetMs}ms " +
@@ -342,6 +365,58 @@ class LiveStreamFailover(
                     handleNoFirstByte(since)
                     return@launch
                 }
+            }
+        }
+    }
+
+    /**
+     * No first picture within [pictureBudgetMs] of this ingest: the stream is
+     * too slow to start (dead, slow to connect, or trickling in), whatever its
+     * bytes are doing. A good stream here starts in 1-4 s. The budget is twice
+     * the channel's own start time this session (at least
+     * [SLOW_START_MIN_MS], at most [SLOW_START_MAX_MS]), so a channel that is
+     * always a little slow is not left every time.
+     */
+    private fun armPictureDeadline(serverLeads: Boolean) {
+        firstFrameSeen = false
+        pictureJob?.cancel()
+        pictureJob = null
+        if (!ArrTvOptimizations.slowStart) return
+        val id = channelId ?: return
+        val learned = learnedFirstFrame[id]
+        var budget = maxOf(SLOW_START_MIN_MS, (learned ?: 0L) * 2).coerceAtMost(SLOW_START_MAX_MS)
+        if (serverLeads) budget = maxOf(budget, SERVER_LEADS_MS)
+        pictureBudgetMs = budget
+        pictureJob = scope.launch {
+            delay(budget)
+            if (firstFrameSeen || channelId != id) return@launch
+            if (!runCatching { pictureExpected() }.getOrDefault(true)) return@launch
+            val h = hooks
+            if (h == null || !h.canSwitch(id)) {
+                Log.i(TAG, "[FAILOVER] channel=$channelName no picture after ${budget}ms; no switchable streams")
+                return@launch
+            }
+            if (stepJob?.isActive == true) return@launch
+            // Bytes may well be arriving: this walk is not ended by them.
+            unplayableWalk = true
+            serverReason = null
+            Log.i(TAG, "[FAILOVER] channel=$channelName no picture after ${budget}ms; walking to the next stream")
+            if (walkStartedAtMs == 0L) walkStartedAtMs = SystemClock.elapsedRealtime()
+            stepJob = scope.launch { step(h, id) }
+        }
+    }
+
+    /** The first frame of this ingest rendered: the picture deadline is met.
+     *  A clean start (no walk) teaches the channel's start time. */
+    fun noteFirstFrame() {
+        scope.launch {
+            if (firstFrameSeen) return@launch
+            firstFrameSeen = true
+            pictureJob?.cancel()
+            pictureJob = null
+            val id = channelId
+            if (steps == 0 && id != null && tuneStartedAtMs != 0L) {
+                learnedFirstFrame[id] = SystemClock.elapsedRealtime() - tuneStartedAtMs
             }
         }
     }
@@ -443,7 +518,7 @@ class LiveStreamFailover(
         Log.i(
             TAG,
             "[FAILOVER] channel=$channelName stream $step/${ids.size} id=$target " +
-                "reason=${serverReason ?: if (unplayableWalk) "bytes but nothing playable on this device" else "no bytes within the ${budgetMs}ms silent-start budget"}",
+                "reason=${serverReason ?: if (unplayableWalk) "no picture (bytes but nothing playable, or too slow to start)" else "no bytes within the ${budgetMs}ms silent-start budget"}",
         )
         armDeadline(firstAttempt = false)
     }
@@ -477,6 +552,19 @@ class LiveStreamFailover(
         const val FAST_FIRST_TUNE_FIRST_BYTE_MS = 6_000L
         const val FAST_FIRST_BYTE_BUDGET_MAX_MS = 12_000L
         const val FAST_STEP_FIRST_BYTE_MS = 5_000L
+
+        /** The picture deadline: at least this long, at most [SLOW_START_MAX_MS]. */
+        const val SLOW_START_MIN_MS = 8_000L
+        const val SLOW_START_MAX_MS = 20_000L
+
+        /** With the server's own faster failover on, the app's first moves wait
+         *  at least this long (the server leaves a silent stream after 5 s and a
+         *  check, 5-10 s). */
+        const val SERVER_LEADS_MS = 12_000L
+
+        /** How long each channel took to its first picture on a clean start
+         *  this session, for the picture deadline. */
+        private val learnedFirstFrame = ConcurrentHashMap<String, Long>()
 
         /** A channel learned to start slowly gets 1.5x its learned
          *  time-to-first-byte (never less than the base budget). */

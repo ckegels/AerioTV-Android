@@ -522,6 +522,7 @@ class DispatcharrClient @Inject constructor() {
                     devices = (root["devices"] as? JsonPrimitive)?.booleanOrNull == true,
                     switchHints = (root["switch_hints"] as? JsonPrimitive)?.booleanOrNull == true,
                     stallSwitch = (root["stall_switch"] as? JsonPrimitive)?.booleanOrNull == true,
+                    fastFailover = (root["fast_failover"] as? JsonPrimitive)?.booleanOrNull == true,
                     stallPath = (root["stall_url"] as? JsonPrimitive)?.contentOrNull
                         ?.takeIf { it.startsWith("/") } ?: DispatchMore.DEFAULT_STALL_PATH,
                 ),

@@ -27,6 +27,11 @@ object ArrTvOptimizations {
      *  about a second); off: the long waits sized for antenna tuners. */
     @Volatile var fastFailover = true
 
+    /** Walk to the next stream when no first picture came within twice the
+     *  channel's usual start time (at least 8 s): a dead, slow-to-connect or
+     *  trickling stream, whatever its bytes are doing. */
+    @Volatile var slowStart = true
+
     /** Walk to the next stream when data arrives and nothing becomes
      *  playable (a stream this device cannot decode). */
     @Volatile var skipUnplayable = true
@@ -65,6 +70,13 @@ enum class ArrTvOptimization(
         "Faster switch to the next stream",
         "Waits about 6 s instead of 28 s for a stream that sends nothing, and 6 s instead of 15 s for one it cannot play.",
         { ArrTvOptimizations.fastFailover = it },
+    ),
+    SLOW_START(
+        "arrtv_opt_slow_start",
+        "Leave a stream that is slow to start",
+        "No picture within twice the channel's usual start time (at least 8 s): the channel's next stream is tried. " +
+            "With the server's own faster failover on, the server moves first.",
+        { ArrTvOptimizations.slowStart = it },
     ),
     SKIP_UNPLAYABLE(
         "arrtv_opt_skip_unplayable",

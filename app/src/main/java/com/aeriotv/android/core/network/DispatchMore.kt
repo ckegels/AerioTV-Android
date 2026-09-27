@@ -49,6 +49,10 @@ object DispatchMore {
          *  picture stalls (v207, "Change stream when arrTV stutters"). */
         val stallSwitch: Boolean = false,
         val stallPath: String = DEFAULT_STALL_PATH,
+        /** The server leaves a silent stream of a channel this device starts
+         *  after 5 s and one check (v212, "Faster failover when arrTV starts a
+         *  channel"): the app's own first moves then wait for it. */
+        val fastFailover: Boolean = false,
     )
 
     // The formats the server accepts; anything else it ignores.

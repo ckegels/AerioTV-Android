@@ -241,6 +241,18 @@ class AerioExoPlayerHolder @Inject constructor(
         // lands, so the deadline is cancelled from there rather than by a second
         // counter.
         tracer.onFirstByte = { liveFailover.noteFirstByte() }
+        // The server leads the first moves when its own faster failover is on
+        // for this stream (it only knows this device through the device header).
+        liveFailover.pictureExpected = {
+            val p = player
+            p != null && !remoteAudioOnly &&
+                !p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO) &&
+                (p.currentTracks.isEmpty || p.currentTracks.containsType(C.TRACK_TYPE_VIDEO))
+        }
+        liveFailover.serverFastFailover = {
+            ArrTvOptimizations.identifyDevice &&
+                com.aeriotv.android.core.network.DispatchMore.serverFor(lastPlayUrl)?.fastFailover == true
+        }
         // 409 on a failover step: this device plays the channel on a stream of
         // its own; a fresh connection gets it one chosen afresh (contract 8.3).
         liveFailover.onOwnStream = {
@@ -1657,6 +1669,7 @@ class AerioExoPlayerHolder @Inject constructor(
             // rendered" from "decoded but never painted". Once per prime, so
             // it's cheap enough for release builds.
             Log.i(TAG, "first video frame rendered ch=$currentChannelId (+${SystemClock.elapsedRealtime() - streamPrimedAtMs}ms)")
+            liveFailover.noteFirstFrame()
             tracer.onFirstFrame()
         }
     }

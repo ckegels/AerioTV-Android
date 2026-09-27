@@ -825,7 +825,7 @@ class PlaylistRepository @Inject constructor(
                     "${server.build.ifBlank { "Dispatch More" }} for ${playlist.id.take(8)}: " +
                         "device headers on (server switches: devices=${server.devices} " +
                         "switch_hints=${server.switchHints} reports=${server.reports} " +
-                        "stall_switch=${server.stallSwitch})",
+                        "stall_switch=${server.stallSwitch} fast_failover=${server.fastFailover})",
                 )
             }
             DispatcharrClient.DispatchMoreAnswer.Absent ->
