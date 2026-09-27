@@ -35,18 +35,9 @@ interface EpgProgrammeDao {
      * return a two-day window out of a 267K-row table. Do not remove the
      * composite index without re-measuring this read.
      */
-    // The index answers only one range: `endMillis > from` alone visits every
-    // programme ending after the window starts, i.e. every future day of the
-    // cache, and filters `startMillis < to` afterwards (the whole Guide Days
-    // ahead for a 10 h launch paint). A programme that overlaps the window
-    // ends before `to` plus its own length, so an upper bound on endMillis of
-    // `to` + 26 h (93600000) keeps the same rows and lets the index stop there
-    // (same 20507 rows, 0.21 s -> 0.09 s on a copy of the table; more on a TV
-    // reading from storage). A programme longer than 26 h is not drawn.
     @Query(
         "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
-            "AND endMillis > :fromMillis AND startMillis < :toMillis " +
-            "AND endMillis < :toMillis + 93600000"
+            "AND endMillis > :fromMillis AND startMillis < :toMillis"
     )
     suspend fun forPlaylistInWindow(
         playlistId: String,
