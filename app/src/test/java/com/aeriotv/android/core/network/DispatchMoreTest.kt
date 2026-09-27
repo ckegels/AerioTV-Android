@@ -94,6 +94,17 @@ class DispatchMoreTest {
     }
 
     @Test
+    fun aRefusedStallStopsStallsToThatServerOnly() {
+        DispatchMore.register(listOf(lan), DispatchMore.Server(stallSwitch = true))
+        DispatchMore.register(listOf(wan), DispatchMore.Server(stallSwitch = true))
+        DispatchMore.stallRefused(direct(lan, a))
+        assertEquals(false, DispatchMore.serverFor(direct(lan, a))?.stallSwitch)
+        assertEquals(true, DispatchMore.serverFor(direct(wan, a))?.stallSwitch)
+        // Still a Dispatch More server: the device headers go on
+        assertTrue(DispatchMore.deviceHeaders(direct(lan, a)).isNotEmpty())
+    }
+
+    @Test
     fun theServersSurviveARestart() {
         val stored = DispatchMore.snapshot()
         DispatchMore.unregister(listOf(wan, lan))

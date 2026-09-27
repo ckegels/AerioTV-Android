@@ -82,6 +82,7 @@ class AerioExoPlayerHolder @Inject constructor(
     private val timeshift: dagger.Lazy<com.aeriotv.android.core.timeshift.TimeshiftController>,
     private val appPreferences: com.aeriotv.android.core.preferences.AppPreferences,
     private val firstByteLearner: com.aeriotv.android.core.preferences.LiveFirstByteLearner,
+    private val dispatchMoreReports: dagger.Lazy<com.aeriotv.android.core.network.DispatchMoreReports>,
 ) {
 
     var player: ExoPlayer? = null
@@ -232,7 +233,10 @@ class AerioExoPlayerHolder @Inject constructor(
         }
         // Learned live start buffer: the tracer reports the feed shape at every
         // stall, this decides whether the feed was bursty-but-real-time.
-        tracer.onStall = { snapshot -> learnStartBuffer(snapshot) }
+        tracer.onStall = { snapshot ->
+            learnStartBuffer(snapshot)
+            reportStallToServer(snapshot)
+        }
         // No-first-byte failover: the tracer already knows when the first byte
         // lands, so the deadline is cancelled from there rather than by a second
         // counter.
@@ -2715,6 +2719,28 @@ class AerioExoPlayerHolder @Inject constructor(
         p.stop()
         retireLiveCalls(p, staleCalls)
         p.clearMediaItems()
+    }
+
+    /**
+     * Dispatch More "Stutter": a live rebuffer after the first frame goes to the
+     * server straight away (when it says stall_switch), which moves the channel
+     * to its next stream of the same quality or lower. Not for catch-up or
+     * timeshift; the server ignores the first 10 s after a start or a switch.
+     */
+    private fun reportStallToServer(snapshot: PlaybackTracer.FeedStallSnapshot) {
+        if (!snapshot.isLive || isCatchup || isTimeshifting) return
+        val url = lastPlayUrl ?: return
+        val facts = tracer.reportFacts()
+        dispatchMoreReports.get().reportStall(
+            url,
+            mapOf(
+                "stalls" to facts["stalls"],
+                "feed_media_ratio" to snapshot.feedMediaRatio,
+                "worst_gap_ms" to snapshot.worstGapMs,
+                "bandwidth_kbps" to facts["bitrate_estimate_kbps"],
+                "dropped_frames" to facts["dropped_frames"],
+            ),
+        )
     }
 
     /** The stream the player is on, for a problem report: the live URL, or

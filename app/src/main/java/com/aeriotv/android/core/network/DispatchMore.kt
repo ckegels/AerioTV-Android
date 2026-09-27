@@ -32,6 +32,7 @@ object DispatchMore {
     const val HEADER_MULTIVIEW = "X-Dispatch-Multiview"
     const val HEADER_PREVIOUS = "X-Dispatch-Previous-Channel"
     const val DEFAULT_REPORT_PATH = "/api/core/app-reports/"
+    const val DEFAULT_STALL_PATH = "/api/core/app-stall/"
 
     /** What one server said on /api/core/capabilities/. */
     @Serializable
@@ -43,6 +44,10 @@ object DispatchMore {
          *  whatever they say, and the server decides what to do with them. */
         val devices: Boolean = false,
         val switchHints: Boolean = false,
+        /** The server changes a channel's stream when this device says its
+         *  picture stalls (v207, "Change stream when arrTV stutters"). */
+        val stallSwitch: Boolean = false,
+        val stallPath: String = DEFAULT_STALL_PATH,
     )
 
     // The formats the server accepts; anything else it ignores.
@@ -85,6 +90,13 @@ object DispatchMore {
 
     fun unregister(baseUrls: Collection<String?>) {
         baseUrls.mapNotNull { originOf(it) }.forEach { servers.remove(it) }
+    }
+
+    /** The server answered a stall with 403 (its switch went off): send none to
+     *  it until the next capabilities call says otherwise. */
+    fun stallRefused(url: String?) {
+        val origin = originOf(url) ?: return
+        servers.computeIfPresent(origin) { _, s -> s.copy(stallSwitch = false) }
     }
 
     /** The server behind [url], when it is a Dispatch More server. */

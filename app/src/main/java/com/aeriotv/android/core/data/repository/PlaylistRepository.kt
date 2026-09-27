@@ -824,7 +824,8 @@ class PlaylistRepository @Inject constructor(
                     TAG_CAPS,
                     "${server.build.ifBlank { "Dispatch More" }} for ${playlist.id.take(8)}: " +
                         "device headers on (server switches: devices=${server.devices} " +
-                        "switch_hints=${server.switchHints} reports=${server.reports})",
+                        "switch_hints=${server.switchHints} reports=${server.reports} " +
+                        "stall_switch=${server.stallSwitch})",
                 )
             }
             DispatcharrClient.DispatchMoreAnswer.Absent ->

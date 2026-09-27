@@ -11,6 +11,7 @@ import com.aeriotv.android.core.debug.DebugLogger
 import com.aeriotv.android.core.debug.LogSanitizer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -144,6 +145,40 @@ class DispatchMoreReports @Inject constructor(
             runCatching { proc.destroy() }
             text.takeLast(LOG_MAX)
         }.getOrElse { "(no log: ${it.message})" }
+    }
+
+    private val stallScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * The picture of a live stream stopped after its first frame: tell the
+     * server at once, fire and forget (contract "Stutter"). Only the device
+     * knows it is stuttering; the server moves the channel to its next stream
+     * of the same quality or lower, in place, when its switch is on. One
+     * request per stall; nothing is done with the answer except stopping after
+     * a 403 until the next capabilities call.
+     */
+    fun reportStall(streamUrl: String, facts: Map<String, Any?>) {
+        val server = DispatchMore.serverFor(streamUrl)?.takeIf { it.stallSwitch } ?: return
+        val base = DispatchMore.originOf(streamUrl) ?: return
+        val ref = DispatchMore.channelRef(streamUrl) ?: return
+        stallScope.launch {
+            val playlist = dao.firstActive()?.takeIf { !it.apiKey.isNullOrBlank() } ?: return@launch
+            val body = toJson(
+                buildMap {
+                    if (streamUrl.contains("/proxy/ts/stream/")) put("channel_uuid", ref)
+                    else ref.toIntOrNull()?.let { put("channel_id", it) }
+                    putAll(facts)
+                },
+            )
+            val (status, action) = runCatching {
+                auth.withApiKeyRetry(playlist.id) { key -> client.sendAppStall(base, key, server.stallPath, body) }
+            }.getOrElse {
+                Log.w(TAG, "stall not sent: ${it.message}")
+                return@launch
+            }
+            if (status == 403) DispatchMore.stallRefused(streamUrl)
+            Log.i(TAG, "stall sent for $ref: HTTP $status ${action.orEmpty()}")
+        }
     }
 
     companion object {

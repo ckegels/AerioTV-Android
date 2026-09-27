@@ -521,6 +521,9 @@ class DispatcharrClient @Inject constructor() {
                     build = (root["build"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
                     devices = (root["devices"] as? JsonPrimitive)?.booleanOrNull == true,
                     switchHints = (root["switch_hints"] as? JsonPrimitive)?.booleanOrNull == true,
+                    stallSwitch = (root["stall_switch"] as? JsonPrimitive)?.booleanOrNull == true,
+                    stallPath = (root["stall_url"] as? JsonPrimitive)?.contentOrNull
+                        ?.takeIf { it.startsWith("/") } ?: DispatchMore.DEFAULT_STALL_PATH,
                 ),
             )
         }.getOrNull()
@@ -564,6 +567,28 @@ class DispatcharrClient @Inject constructor() {
                 )
             }
         }
+    }
+
+    /**
+     * POST a stall (Dispatch More v207, contract "Stutter"): the picture of a
+     * live stream stopped after its first frame. Returns the HTTP status and
+     * the server's `action`; nothing is done with it, the server swaps the
+     * stream in place. 401 is thrown so withApiKeyRetry logs in again.
+     */
+    suspend fun sendAppStall(baseUrl: String, apiKey: String, path: String, stall: JsonObject): Pair<Int, String?> {
+        val response = client.post("${baseUrl.trimEnd('/')}$path") {
+            applyAuth(apiKey)
+            contentType(ContentType.Application.Json)
+            setBody(stall)
+        }
+        if (response.status.value == 401) throw DispatcharrError.Unauthorized("Stall refused: 401")
+        val body = runCatching { response.body<JsonElement>() as? JsonObject }.getOrNull()
+        val action = listOfNotNull(
+            (body?.get("action") as? JsonPrimitive)?.contentOrNull,
+            (body?.get("stream") as? JsonPrimitive)?.contentOrNull,
+            (body?.get("reason") as? JsonPrimitive)?.contentOrNull,
+        ).joinToString(" ").ifBlank { null }
+        return response.status.value to action
     }
 
     // Cast audio, 2026-09-13: the /api/core/outputprofiles/ fetch and the
