@@ -2201,10 +2201,11 @@ class PlaylistRepository @Inject constructor(
      * [saveEpgToCache] replaces the source's rows after a network fetch, pruning
      * programmes that have already ended.
      */
+    /** Low-memory profile (DeviceMemory): keep less of the guide in memory. */
+    val lowMemory: Boolean get() = com.aeriotv.android.core.system.DeviceMemory.isLow(context)
+
     suspend fun loadCachedEpg(playlistId: String): List<EPGProgramme> =
-        withContext(layeringDispatcher) {
-            epgProgrammeDao.forPlaylist(playlistId).map { it.toProgramme() }
-        }
+        loadCachedEpg(playlistId, Long.MIN_VALUE, Long.MAX_VALUE)
 
     /**
      * Time-windowed cached-EPG read (iOS GuideStore parity --
@@ -2223,9 +2224,24 @@ class PlaylistRepository @Inject constructor(
         toMillis: Long,
     ): List<EPGProgramme> =
         withContext(layeringDispatcher) {
-            epgProgrammeDao
-                .forPlaylistInWindow(playlistId, fromMillis, toMillis)
-                .map { it.toProgramme() }
+            // Paged (EpgProgrammeDao.forPlaylistInWindowPage): one query
+            // for tens of thousands of rows re-runs itself for every 2 MB
+            // cursor window it fills.
+            val out = ArrayList<EPGProgramme>()
+            // One copy per distinct string for this load: every row read from
+            // Room brings its own copies, so a channel's key, a category or a
+            // rerun's title and description were stored once per programme.
+            val pool = StringPool()
+            var afterId = 0L
+            while (true) {
+                val page = epgProgrammeDao.forPlaylistInWindowPage(
+                    playlistId, fromMillis, toMillis, afterId, EPG_READ_PAGE_ROWS,
+                )
+                page.mapTo(out) { it.toProgramme(pool) }
+                if (page.size < EPG_READ_PAGE_ROWS) break
+                afterId = page.last().id
+            }
+            out
         }
 
     /**
@@ -3649,16 +3665,23 @@ private fun List<DispatcharrEpgEntry>.toProgrammes(): List<EPGProgramme> =
         )
     }
 
-/** EPG disk-cache row <-> domain model mapping. */
-private fun EpgProgrammeEntity.toProgramme(): EPGProgramme = EPGProgramme(
-    channelId = channelId,
-    title = title,
-    description = description,
+/** Keeps one copy of each distinct string during one cache read (loadCachedEpg). */
+private class StringPool {
+    private val strings = HashMap<String, String>(8192)
+    fun of(s: String): String = strings.getOrPut(s) { s }
+    fun ofOrNull(s: String?): String? = s?.let(::of)
+}
+
+/** EPG disk-cache row <-> domain model mapping; [pool] shares repeated strings. */
+private fun EpgProgrammeEntity.toProgramme(pool: StringPool? = null): EPGProgramme = EPGProgramme(
+    channelId = pool?.of(channelId) ?: channelId,
+    title = pool?.of(title) ?: title,
+    description = pool?.of(description) ?: description,
     startMillis = startMillis,
     endMillis = endMillis,
-    category = category,
+    category = pool?.of(category) ?: category,
     dispatcharrProgramId = dispatcharrProgramId,
-    subTitle = subTitle,
+    subTitle = pool?.ofOrNull(subTitle) ?: subTitle,
     season = season,
     episode = episode,
     isNew = isNew,
@@ -3666,7 +3689,7 @@ private fun EpgProgrammeEntity.toProgramme(): EPGProgramme = EPGProgramme(
     isPremiere = isPremiere,
     isFinale = isFinale,
     isRepeat = isRepeat,
-    iconUrl = iconUrl,
+    iconUrl = pool?.ofOrNull(iconUrl) ?: iconUrl,
 )
 
 private fun EPGProgramme.toCacheEntity(playlistId: String, fetchedAt: Long): EpgProgrammeEntity =
@@ -3755,3 +3778,7 @@ private const val TAG_CAPS = "AerioCaps"
 
 /** Rows per page for the live guide window's per-channel read (fits one 2 MB cursor window). */
 private const val CHANNEL_WINDOW_PAGE_ROWS = 1000
+
+/** Rows per page for big EPG cache reads: small enough that a page (with
+ *  descriptions) fits one 2 MB cursor window. */
+private const val EPG_READ_PAGE_ROWS = 1000
