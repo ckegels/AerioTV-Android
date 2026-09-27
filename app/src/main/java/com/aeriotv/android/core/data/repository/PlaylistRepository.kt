@@ -1068,6 +1068,14 @@ class PlaylistRepository @Inject constructor(
 
     private val layeringScope = CoroutineScope(SupervisorJob() + layeringDispatcher)
 
+    /** Guide reads somebody is waiting for (the launch paint, a guide window
+     *  patch, search): normal priority, not [layeringDispatcher]. On that
+     *  pool a Chromecast HD busy at launch starved them -- 38 s to read 29K
+     *  cached programmes, 4.7 s for 67 rows -- behind its two background
+     *  threads' channel refresh and downloads. Reads only; the downloads,
+     *  parsing and saves stay in the background. */
+    private val guideReadDispatcher = Dispatchers.IO
+
     /** One layering job per playlist. A refresh while one is running reuses it
      *  rather than downloading the same feeds twice in parallel. */
     private val layeringJobs = ConcurrentHashMap<String, Job>()
@@ -2203,7 +2211,7 @@ class PlaylistRepository @Inject constructor(
      * programmes that have already ended.
      */
     suspend fun loadCachedEpg(playlistId: String): List<EPGProgramme> =
-        withContext(layeringDispatcher) {
+        withContext(guideReadDispatcher) {
             epgProgrammeDao.forPlaylist(playlistId).map { it.toProgramme() }
         }
 
@@ -2223,7 +2231,7 @@ class PlaylistRepository @Inject constructor(
         fromMillis: Long,
         toMillis: Long,
     ): List<EPGProgramme> =
-        withContext(layeringDispatcher) {
+        withContext(guideReadDispatcher) {
             epgProgrammeDao
                 .forPlaylistInWindow(playlistId, fromMillis, toMillis)
                 .map { it.toProgramme() }
@@ -2242,7 +2250,7 @@ class PlaylistRepository @Inject constructor(
      * guide-jump path is complete; wire this into the Search VM when #41 lands.
      */
     suspend fun searchEpg(playlistId: String, query: String): List<EPGProgramme> =
-        withContext(layeringDispatcher) {
+        withContext(guideReadDispatcher) {
             val q = query.trim()
             if (q.isBlank()) return@withContext emptyList()
             val like = "%" + q.replace("%", "\\%").replace("_", "\\_") + "%"
@@ -2263,7 +2271,7 @@ class PlaylistRepository @Inject constructor(
         channels: List<M3UChannel>,
         fromMillis: Long,
         toMillis: Long,
-    ): List<EPGProgramme> = withContext(layeringDispatcher) {
+    ): List<EPGProgramme> = withContext(guideReadDispatcher) {
         // Canonical rows one channel at a time (the unique index answers each
         // from that channel's rows), a result of its own each, so no read spans
         // several cursor windows (which fails when a write lands between their
@@ -2335,7 +2343,7 @@ class PlaylistRepository @Inject constructor(
      * what Guide Days semantics actually promise.
      */
     suspend fun cachedEpgSpan(playlistId: String): Pair<Long, Long>? =
-        withContext(layeringDispatcher) {
+        withContext(guideReadDispatcher) {
             val from = epgProgrammeDao.earliestStart(playlistId) ?: return@withContext null
             val to = epgProgrammeDao.latestEnd(playlistId) ?: return@withContext null
             from to to
