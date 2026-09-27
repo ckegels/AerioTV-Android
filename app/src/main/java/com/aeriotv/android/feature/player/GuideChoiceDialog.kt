@@ -56,7 +56,8 @@ private sealed interface GuideListState {
  * without changing anything.
  *
  * When the server says it is still reading guides nobody had read, the list
- * is asked for once more after [READING_AGAIN_MS], not repeatedly.
+ * is asked for again every [READING_AGAIN_MS] while it says so, at most
+ * [READING_ASKS] times; rows that arrive are added without moving the focus.
  */
 @Composable
 internal fun GuideChoiceDialog(
@@ -66,20 +67,22 @@ internal fun GuideChoiceDialog(
 ) {
     var state by remember { mutableStateOf<GuideListState>(GuideListState.Loading) }
     var askedAgain by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val firstRow = remember { FocusRequester() }
     val closeButton = remember { FocusRequester() }
 
     LaunchedEffect(request) {
         state = guides.list(request.streamUrl).toState()
-        val shown = state as? GuideListState.Shown
-        if (shown?.choices?.reading == true) {
+        var asks = 0
+        while ((state as? GuideListState.Shown)?.choices?.reading == true && asks < READING_ASKS) {
             kotlinx.coroutines.delay(READING_AGAIN_MS)
-            askedAgain = true
+            asks++
             val again = guides.list(request.streamUrl).toState()
             // Only a list that arrived replaces the one on screen
-            if (again is GuideListState.Shown) state = again.copy(choices = again.choices.copy(reading = false))
-            else state = shown.copy(choices = shown.choices.copy(reading = false))
+            if (again is GuideListState.Shown) state = again
         }
+        askedAgain = true
+        (state as? GuideListState.Shown)?.let { state = it.copy(choices = it.choices.copy(reading = false)) }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -108,13 +111,16 @@ internal fun GuideChoiceDialog(
         }
     }
 
-    // D-pad focus: the first guide when there is one, otherwise Close
+    // D-pad focus: the first guide when there is one, otherwise Close. Once a
+    // row has it, a list that grows while guides are read leaves it where it is.
     LaunchedEffect(state) {
-        if (state is GuideListState.Loading) return@LaunchedEffect
+        if (state is GuideListState.Loading || focused) return@LaunchedEffect
         // The dialog's window composes a moment after this effect starts
         kotlinx.coroutines.delay(100)
         val hasRows = (state as? GuideListState.Shown)?.choices?.guides?.isNotEmpty() == true
-        runCatching { if (hasRows) firstRow.requestFocus() else closeButton.requestFocus() }
+        runCatching {
+            if (hasRows) firstRow.requestFocus().also { focused = true } else closeButton.requestFocus()
+        }
     }
 }
 
@@ -134,8 +140,9 @@ private fun GuideList(
         },
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    val stillReading = choices.reading && !askedAgain
     if (choices.guides.isEmpty()) {
-        Text("No other guide has anything on for this channel right now.")
+        if (!stillReading) Text("No other guide has anything on for this channel right now.")
     } else {
         LazyColumn(
             modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
@@ -150,7 +157,7 @@ private fun GuideList(
             }
         }
     }
-    if (choices.reading && !askedAgain) {
+    if (stillReading) {
         Text("Looking for more guides…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -211,5 +218,6 @@ private fun span(programme: DispatcharrClient.GuideProgramme): String =
 
 private fun time(ms: Long): String = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(ms))
 
-/** The server was still reading guides: ask once more after this long. */
-private const val READING_AGAIN_MS = 10_000L
+/** The server was still reading guides: ask again after this long, at most this often. */
+private const val READING_AGAIN_MS = 5_000L
+private const val READING_ASKS = 12
