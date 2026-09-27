@@ -9,18 +9,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import com.aeriotv.android.core.network.DispatchMoreReports
-import com.aeriotv.android.core.network.DispatcharrClient
-import kotlinx.coroutines.launch
 
 /**
  * A report as it was when the user asked for it: the moment, the stream and
@@ -48,8 +42,9 @@ internal enum class ProblemKind(val code: String, val label: String) {
 
 /**
  * "Send a report to the server" (Dispatch More): one press on what went
- * wrong sends it, then the server's answer -- the report's id, or why it was
- * not taken. Nothing is retried; the user can send again.
+ * wrong sends it and closes the popup at once; the server's answer comes as a
+ * short notice (DispatchMoreReports.sendInBackground). Nothing is retried; the
+ * user can send again.
  */
 @Composable
 internal fun ProblemReportDialog(
@@ -57,63 +52,43 @@ internal fun ProblemReportDialog(
     reports: DispatchMoreReports,
     onDismiss: () -> Unit,
 ) {
-    var sending by remember { mutableStateOf<ProblemKind?>(null) }
-    var answer by remember { mutableStateOf<DispatcharrClient.ReportAnswer?>(null) }
-    val scope = rememberCoroutineScope()
     val firstChoice = remember { FocusRequester() }
-    val closeButton = remember { FocusRequester() }
     AlertDialog(
-        onDismissRequest = { if (sending == null) onDismiss() },
+        onDismissRequest = onDismiss,
         title = { Text("What went wrong?") },
         text = {
-            when (val a = answer) {
-                is DispatcharrClient.ReportAnswer.Sent ->
-                    Text("Sent. The server keeps it as report ${a.id}, with what it knew about ${request.channelName} at that moment.")
-                is DispatcharrClient.ReportAnswer.Refused ->
-                    Text("Not sent: ${a.message}")
-                null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("About ${request.channelName}. The player's state and its log go with it.")
-                    ProblemKind.entries.forEachIndexed { index, kind ->
-                        OutlinedButton(
-                            enabled = sending == null,
-                            onClick = {
-                                sending = kind
-                                scope.launch {
-                                    answer = reports.send(
-                                        what = kind.label,
-                                        happenedAtMs = request.atMs,
-                                        streamUrl = request.streamUrl,
-                                        player = request.player,
-                                        extra = request.extra + ("problem" to kind.code),
-                                    )
-                                    sending = null
-                                }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(if (index == 0) Modifier.focusRequester(firstChoice) else Modifier),
-                        ) {
-                            Text(if (sending == kind) "Sending…" else kind.label)
-                        }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("About ${request.channelName}. The player's state and its log go with it.")
+                ProblemKind.entries.forEachIndexed { index, kind ->
+                    OutlinedButton(
+                        onClick = {
+                            reports.sendInBackground(
+                                what = kind.label,
+                                happenedAtMs = request.atMs,
+                                streamUrl = request.streamUrl,
+                                player = request.player,
+                                extra = request.extra + ("problem" to kind.code),
+                            )
+                            onDismiss()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (index == 0) Modifier.focusRequester(firstChoice) else Modifier),
+                    ) {
+                        Text(kind.label)
                     }
                 }
             }
         },
-        confirmButton = {
-            if (answer != null) {
-                TextButton(onClick = onDismiss, modifier = Modifier.focusRequester(closeButton)) { Text("Close") }
-            }
-        },
+        confirmButton = {},
         dismissButton = {
-            if (answer == null) {
-                TextButton(enabled = sending == null, onClick = onDismiss) { Text("Cancel") }
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
-    // D-pad focus: on the first choice when the dialog opens, on Close once answered.
-    LaunchedEffect(answer) {
+    // D-pad focus on the first choice when the dialog opens.
+    LaunchedEffect(Unit) {
         // The dialog's window composes a moment after this effect starts.
         kotlinx.coroutines.delay(100)
-        runCatching { if (answer == null) firstChoice.requestFocus() else closeButton.requestFocus() }
+        runCatching { firstChoice.requestFocus() }
     }
 }

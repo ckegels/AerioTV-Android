@@ -45,6 +45,35 @@ class DispatchMoreReports @Inject constructor(
     fun canReport(streamUrl: String?): Boolean =
         DispatchMore.serverFor(streamUrl)?.reports == true && DispatchMore.channelRef(streamUrl) != null
 
+    /** Sends outlive the screen that asked for them: the report popup closes
+     *  the moment a reason is chosen. */
+    private val sendScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * [send] without waiting for it: the answer comes as a short notice
+     * ("Report sent" with the server's id, or why it was not taken), so the
+     * player is back on screen at once.
+     */
+    fun sendInBackground(
+        what: String,
+        happenedAtMs: Long,
+        streamUrl: String,
+        player: Map<String, Any?>,
+        extra: Map<String, Any?>,
+    ) {
+        sendScope.launch {
+            val answer = runCatching { send(what, happenedAtMs, streamUrl, player, extra) }
+                .getOrElse { DispatcharrClient.ReportAnswer.Refused(it.message ?: "Could not reach the server") }
+            val text = when (answer) {
+                is DispatcharrClient.ReportAnswer.Sent -> "Report sent (report ${answer.id})"
+                is DispatcharrClient.ReportAnswer.Refused -> "Report not sent: ${answer.message}"
+            }
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     /**
      * Send one report about [streamUrl]. [what] is the user's line (may be
      * blank), [happenedAtMs] when they asked to report, [player] the player's
