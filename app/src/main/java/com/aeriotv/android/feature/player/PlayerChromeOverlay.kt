@@ -1161,10 +1161,15 @@ private fun PlayerControlCircle(
  * Hold OK opens the Options menu the moment the hold is recognised, while the
  * button is still down. The menu's first row then has focus, and the
  * button's repeats and its release would reach it and pick it. While
- * [holding], the menu swallows OK -- the repeats and the release -- so only a
- * press made after letting go picks a row. Set by PlayerScreen when it opens
- * the menu from a hold; cleared by the release, wherever it lands, and when
- * the menu closes.
+ * [holding], the menu swallows OK until a fresh press (a DOWN that is not a
+ * repeat), so only a press made after letting go picks a row.
+ *
+ * The release is no signal to rely on: the menu window takes focus mid-hold,
+ * and Android then hands the player a CANCELED release while the remaining
+ * repeats and the real release go to the menu. Clearing on that release let
+ * the rest of the hold pick "Send a report to the server". Set by
+ * PlayerScreen when it opens the menu from a hold; cleared by the next fresh
+ * press and when the menu closes.
  */
 internal object OptionsMenuHoldGate {
     @Volatile var holding = false
@@ -1175,7 +1180,10 @@ internal object OptionsMenuHoldGate {
         val ok = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
             event.keyCode == android.view.KeyEvent.KEYCODE_ENTER
         if (!ok) return false
-        if (event.action == android.view.KeyEvent.ACTION_UP) holding = false
+        if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            holding = false
+            return false
+        }
         return true
     }
 }
