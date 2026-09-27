@@ -47,10 +47,9 @@ import kotlinx.coroutines.withContext
  * Load: channel reloads are debounced. EPG events (dozens of sources refresh
  * throughout the day) are coalesced into one window check (one request) with
  * a cooldown; the open app writes and repaints only the channels whose
- * schedule changed. While this runs, the stock full sweep waits while
- * the guide is on screen ([EpgSweepGate.guideOnScreen]) and guide swaps
- * wait for it to leave the screen: updates land while the user watches, not
- * while they browse. Nothing runs during multiview.
+ * schedule changed, also while the guide is on screen. While this runs, the
+ * stock full sweep waits while the guide is on screen
+ * ([EpgSweepGate.guideOnScreen]). Nothing runs during multiview.
  */
 @Singleton
 class DispatcharrLiveUpdates @Inject constructor(

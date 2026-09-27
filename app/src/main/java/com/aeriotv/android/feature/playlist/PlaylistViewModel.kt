@@ -170,14 +170,6 @@ class PlaylistViewModel @Inject constructor(
     data class ActiveRoute(val isLan: Boolean, val url: String)
 
     companion object {
-        /** rebuildGuideCatalog reasons that come from background refreshes.
-         *  Not "fetch": the playlist's main guide download (launch, stale
-         *  refresh) always applies, or channels the cached guide missed kept
-         *  showing "No info" for as long as the guide stayed on screen. */
-        private val BACKGROUND_GUIDE_REBUILDS = setOf(
-            "enrich", "history", "guide-update", "channels-update", "guide-window",
-        )
-
         const val ALL_GROUPS = "All"
         /** Pinned Favorites group inside Live TV (Apple parity: Favorites is a
          *  channel group, not a tab). Never a provider group name. */
@@ -388,41 +380,20 @@ class PlaylistViewModel @Inject constructor(
                         com.aeriotv.android.core.guide.GuideIdentityHash.of(update.channels),
                     )
                 }
-                // Guide updates are applied while the user watches, not while
-                // they browse the guide: the rows are already in the cache, so
-                // only the swap into the visible guide waits (setGuideOnScreen).
-                if (com.aeriotv.android.core.data.repository.EpgSweepGate.guideOnScreen) {
-                    deferCacheUpdate(update)
-                } else {
-                    applyCacheUpdate(update)
-                }
+                // Applied at once, also while the guide is on screen: holding
+                // them until it left meant a guide browsed for a while showed
+                // "No info" and stale programmes the app already had (seen on a
+                // Chromecast HD). A lineup change and a guide window patch only
+                // the channels that changed.
+                applyCacheUpdate(update)
             }
         }
     }
 
-    /** Updates that arrived while the guide was on screen, newest kept. */
-    private var deferredChannelsUpdate: PlaylistRepository.CacheUpdate.Channels? = null
-    private var deferredGuideWindow: PlaylistRepository.CacheUpdate.GuideWindow? = null
-
-    /** A full guide rebuild owed to data written while the guide was on screen. */
-    @Volatile private var fullRebuildPending = false
-
-    private fun deferCacheUpdate(update: PlaylistRepository.CacheUpdate) {
-        // Plain labels: class names are obfuscated in release builds.
-        val what = when (update) {
-            is PlaylistRepository.CacheUpdate.Channels -> { deferredChannelsUpdate = update; "channel lineup" }
-            is PlaylistRepository.CacheUpdate.Guide -> { fullRebuildPending = true; "guide rows" }
-            is PlaylistRepository.CacheUpdate.GuideWindow -> { deferredGuideWindow = update; "guide window" }
-        }
-        Log.i(TAG, "cache update: $what kept until the guide leaves the screen")
-    }
-
     /**
      * The guide screen reports whether it is on screen (its tab showing, not
-     * covered by the fullscreen player). While it is, background updates are
-     * saved but not swapped into the guide and the full sweep waits; when it
-     * leaves, everything owed is applied, so the guide is current the next
-     * time it opens.
+     * covered by the fullscreen player). While it is, the full 13-day sweep
+     * waits (EpgSweepGate); guide updates themselves apply at once.
      */
     fun setGuideOnScreen(owner: Any, onScreen: Boolean) {
         // Per guide instance: during a screen transition the outgoing guide's
@@ -432,30 +403,10 @@ class PlaylistViewModel @Inject constructor(
         val now = guideScreenOwners.isNotEmpty()
         if (gate.guideOnScreen == now) return
         gate.guideOnScreen = now
-        Log.i(TAG, "guide ${if (now) "on screen: background guide updates wait" else "left the screen"}")
-        if (!now) viewModelScope.launch { applyDeferredGuideUpdates() }
+        Log.i(TAG, "guide ${if (now) "on screen" else "left the screen"}")
     }
 
     private val guideScreenOwners = HashSet<Any>()
-
-    private suspend fun applyDeferredGuideUpdates() {
-        val gate = com.aeriotv.android.core.data.repository.EpgSweepGate
-        deferredChannelsUpdate?.let { deferredChannelsUpdate = null; applyCacheUpdate(it) }
-        if (gate.guideOnScreen) return
-        val window = deferredGuideWindow
-        deferredGuideWindow = null
-        if (fullRebuildPending) {
-            // A full rebuild covers any window update that came with it.
-            fullRebuildPending = false
-            val active = runCatching { repository.activePlaylist() }.getOrNull() ?: return
-            Log.i(TAG, "guide left the screen: applying the deferred guide rebuild")
-            runCatching { rebuildGuideCatalog(active, "deferred") }
-                .onFailure { Log.w(TAG, "deferred guide rebuild failed", it) }
-        } else if (window != null) {
-            Log.i(TAG, "guide left the screen: applying the deferred guide window")
-            applyCacheUpdate(window)
-        }
-    }
 
     private suspend fun applyCacheUpdate(update: PlaylistRepository.CacheUpdate) {
         val active = runCatching { repository.activePlaylist() }.getOrNull()
@@ -1120,18 +1071,6 @@ class PlaylistViewModel @Inject constructor(
     ) {
         val channels = _state.value.channels
         if (channels.isEmpty()) return
-        // Background refreshes do not swap the guide while it is being
-        // browsed (a rebuild is seconds of work and moves everything under
-        // the user); it is owed and applied once the guide leaves the screen.
-        // An empty guide, the launch paint and a user's jump always apply.
-        if (reason in BACKGROUND_GUIDE_REBUILDS &&
-            com.aeriotv.android.core.data.repository.EpgSweepGate.guideOnScreen &&
-            _state.value.epgByChannel.isNotEmpty()
-        ) {
-            fullRebuildPending = true
-            Log.i(TAG, "guide rebuild ($reason) kept until the guide leaves the screen")
-            return
-        }
         val (fromMillis, toMillis) = guideWindow(playlist)
         val stableOrder = appPreferences.dispatcharrLiveUpdates.first()
         val t0 = android.os.SystemClock.elapsedRealtime()
