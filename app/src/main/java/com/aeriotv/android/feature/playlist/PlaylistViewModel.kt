@@ -468,11 +468,24 @@ class PlaylistViewModel @Inject constructor(
             repository.loadCachedEpgForChannels(playlist.id, touched, catalog.windowStartMs, catalog.windowEndMs)
         }
         val ids = touched.mapTo(HashSet()) { it.guideChannelId().value }
-        val next = withContext(Dispatchers.Default) { catalog.forLineup(after, ids, rows) }
-        val applied = epgWriteMutex.withLock {
-            val ok = _state.value.epgByChannel === catalog
-            if (ok) _state.update { it.copy(epgByChannel = next) }
-            ok
+        val beforeHash = com.aeriotv.android.core.guide.GuideIdentityHash.of(before)
+        // The launch rebuild can swap the guide while the rows are read. A
+        // guide still built for the old lineup (same window) takes the same
+        // patch; anything else is left to a full rebuild.
+        var applied = false
+        repeat(2) {
+            if (applied) return@repeat
+            val base = (_state.value.epgByChannel as? com.aeriotv.android.core.guide.GuideCatalog)
+                ?.takeIf {
+                    it.identityHash == beforeHash &&
+                        it.windowStartMs == catalog.windowStartMs && it.windowEndMs == catalog.windowEndMs
+                } ?: return@repeat
+            val next = withContext(Dispatchers.Default) { base.forLineup(after, ids, rows) }
+            applied = epgWriteMutex.withLock {
+                val ok = _state.value.epgByChannel === base
+                if (ok) _state.update { it.copy(epgByChannel = next) }
+                ok
+            }
         }
         if (applied) {
             Log.i(
@@ -1125,14 +1138,24 @@ class PlaylistViewModel @Inject constructor(
                 stableOrder = stableOrder,
             )
         }
-        epgWriteMutex.withLock {
-            val retentionDays = resolveGuideDays(playlist.epgRetentionDays) ?: GUIDE_DAYS_ALL_MAX_BACK
-            _state.update { it.copy(epgByChannel = catalog, epgHistoryHours = retentionDays * 24) }
+        val published = epgWriteMutex.withLock {
+            // Built for a lineup that changed while it ran, when the guide on
+            // screen already follows the new one (patched for it): keep that.
+            val now = _state.value
+            val current = now.epgByChannel as? com.aeriotv.android.core.guide.GuideCatalog
+            val superseded = now.channels !== channels && current != null &&
+                current.identityHash == com.aeriotv.android.core.guide.GuideIdentityHash.of(now.channels)
+            if (!superseded) {
+                val retentionDays = resolveGuideDays(playlist.epgRetentionDays) ?: GUIDE_DAYS_ALL_MAX_BACK
+                _state.update { it.copy(epgByChannel = catalog, epgHistoryHours = retentionDays * 24) }
+            }
+            !superseded
         }
         Log.i(
             TAG,
             "guide catalog rebuilt ($reason): ${rows.size} rows -> ${catalog.size} channels " +
-                "in ${android.os.SystemClock.elapsedRealtime() - t0}ms",
+                "in ${android.os.SystemClock.elapsedRealtime() - t0}ms" +
+                if (published) "" else " (dropped: the guide already follows a newer lineup)",
         )
     }
 
