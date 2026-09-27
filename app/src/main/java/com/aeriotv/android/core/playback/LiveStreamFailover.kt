@@ -172,8 +172,10 @@ class LiveStreamFailover(
      */
     fun onLiveTune(channelId: String?, channelName: String?, userInitiated: Boolean) {
         if (channelId == null) {
-            disarm()
-            _statusText.value = null
+            // A tune with no channel to walk: forget the previous channel's,
+            // so nothing walks this one on its behalf.
+            resetWalk()
+            this.channelId = null
             return
         }
         if (userInitiated || channelId != this.channelId) resetWalk()
@@ -310,6 +312,10 @@ class LiveStreamFailover(
         deadlineJob?.cancel()
         deadlineJob = null
         firstByteSeen = false
+        // Nothing is armed, so no bytes are "flowing on this ingest": a stale
+        // arm time made a tune that armed nothing look minutes old to the
+        // unplayable rule, which walked a channel a second after it opened.
+        armedAtMs = 0L
         pictureJob?.cancel()
         pictureJob = null
     }
@@ -463,6 +469,20 @@ class LiveStreamFailover(
             if (steps == 0 && id != null && tuneStartedAtMs != 0L) {
                 learnedFirstFrame[id] = SystemClock.elapsedRealtime() - tuneStartedAtMs
             }
+            // A picture ends the walk. A stream the server swapped in behind
+            // the open connection sends no new "first byte" (the bytes never
+            // stopped), so waiting for one left "Trying another stream..."
+            // on screen over a playing channel for good.
+            if (!firstByteSeen) {
+                firstByteSeen = true
+                deadlineJob?.cancel()
+                deadlineJob = null
+            }
+            unplayableWalk = false
+            if (steps > 0) {
+                Log.i(TAG, "[FAILOVER] channel=$channelName picture on stream id=${activeStreamId ?: "unknown"}")
+            }
+            _statusText.value = null
         }
     }
 
