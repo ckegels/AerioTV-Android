@@ -1659,6 +1659,21 @@ class AppPreferences @Inject constructor(
         store.edit { it[keyEpgIdentityHash(playlistId)] = hash }
     }
 
+    /** The same channel list as a GuideIdentityHash.signature, to tell a few
+     *  changed channels from a list keyed another way. Empty when never stamped. */
+    fun epgIdentitySignature(playlistId: String): kotlinx.coroutines.flow.Flow<String> =
+        store.data.map { it[stringPreferencesKey("epg_identity_sig_$playlistId")] ?: "" }
+
+    /** Stamps the hash and the signature of [channels] together. */
+    suspend fun stampEpgIdentity(playlistId: String, channels: List<com.aeriotv.android.core.data.M3UChannel>) {
+        val hash = com.aeriotv.android.core.guide.GuideIdentityHash.of(channels)
+        val sig = com.aeriotv.android.core.guide.GuideIdentityHash.signature(channels)
+        store.edit {
+            it[keyEpgIdentityHash(playlistId)] = hash
+            it[stringPreferencesKey("epg_identity_sig_$playlistId")] = sig
+        }
+    }
+
     /**
      * ETag / Last-Modified from the last COMPLETE parse of an upstream EPG
      * feed, keyed by feed url (guide rebuild: unchanged feeds are not

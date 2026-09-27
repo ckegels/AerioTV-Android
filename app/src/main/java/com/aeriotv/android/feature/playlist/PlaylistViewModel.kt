@@ -174,6 +174,10 @@ class PlaylistViewModel @Inject constructor(
          *  bulk and rebuilt instead of patched channel by channel. */
         private const val LARGE_WINDOW_CHANGE_DIVISOR = 4
 
+        /** Signature similarity at or above which a changed channel list is
+         *  still the cached guide's list (see identityStale). */
+        private const val IDENTITY_SAME_LIST_SIMILARITY = 0.5
+
         const val ALL_GROUPS = "All"
         /** Pinned Favorites group inside Live TV (Apple parity: Favorites is a
          *  channel group, not a tab). Never a provider group name. */
@@ -379,10 +383,7 @@ class PlaylistViewModel @Inject constructor(
                 // channel's canonical id, so they stay valid for every channel
                 // that remains.
                 if (update is PlaylistRepository.CacheUpdate.Channels) {
-                    appPreferences.setEpgIdentityHash(
-                        update.playlistId,
-                        com.aeriotv.android.core.guide.GuideIdentityHash.of(update.channels),
-                    )
+                    appPreferences.stampEpgIdentity(update.playlistId, update.channels)
                 }
                 // Applied at once, also while the guide is on screen: holding
                 // them until it left meant a guide browsed for a while showed
@@ -1284,7 +1285,24 @@ class PlaylistViewModel @Inject constructor(
         // and again mid-session after layering landed.
         val identityHash = com.aeriotv.android.core.guide.GuideIdentityHash.of(channelsForBridge)
         val storedHash = appPreferences.epgIdentityHash(playlist.id).first()
-        val identityStale = hasCache && channelsForBridge.isNotEmpty() && storedHash != identityHash
+        // A few channels more or less is not another channel list: the rows
+        // are stored per channel, so they stay right for every channel that
+        // remains. Purging the whole cache for it -- a lineup of 1432 against
+        // a stamp of 1428 -- refetched the entire guide at launch and kept a
+        // Chromecast HD's disk busy for minutes. Only a list that shares
+        // under half its channels with the stamp's (or one never signed) is
+        // treated as another list.
+        val similarity = if (storedHash == identityHash) 1.0 else
+            com.aeriotv.android.core.guide.GuideIdentityHash.similarity(
+                appPreferences.epgIdentitySignature(playlist.id).first(),
+                com.aeriotv.android.core.guide.GuideIdentityHash.signature(channelsForBridge),
+            )
+        val identityStale = hasCache && channelsForBridge.isNotEmpty() && storedHash != identityHash &&
+            similarity < IDENTITY_SAME_LIST_SIMILARITY
+        if (hasCache && channelsForBridge.isNotEmpty() && storedHash != identityHash && !identityStale) {
+            Log.i(TAG, "loadEpgIfConfigured: channel list moved a little (similarity $similarity); cache kept")
+            runCatching { appPreferences.stampEpgIdentity(playlist.id, channelsForBridge) }
+        }
         if (identityStale) {
             Log.w(
                 TAG,
@@ -1410,7 +1428,7 @@ class PlaylistViewModel @Inject constructor(
                 }
                 Log.i(TAG, "EPG loaded: ${programmes.size} programmes")
                 // Stamp the cache with the identity it was built for (see identityStale).
-                runCatching { appPreferences.setEpgIdentityHash(playlist.id, com.aeriotv.android.core.guide.GuideIdentityHash.of(channelsNow)) }
+                runCatching { appPreferences.stampEpgIdentity(playlist.id, channelsNow) }
                 // A fetch that yields ZERO programmes is a FAILED fetch, not an
                 // empty guide, and it must not be allowed to overwrite anything.
                 // Installing it wiped the 6,916 rows the cached paint had just
