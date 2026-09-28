@@ -37,8 +37,8 @@ class DispatchMoreGuides @Inject constructor(
     fun canChoose(streamUrl: String?): Boolean =
         DispatchMore.serverFor(streamUrl)?.guideChoice == true && DispatchMore.channelRef(streamUrl) != null
 
-    suspend fun list(streamUrl: String): DispatcharrClient.GuideAnswer =
-        call(streamUrl) { base, key, path, channel -> client.fetchGuideChoices(base, key, path, channel) }
+    suspend fun list(streamUrl: String, shown: List<Int> = emptyList()): DispatcharrClient.GuideAnswer =
+        call(streamUrl) { base, key, path, channel -> client.fetchGuideChoices(base, key, path, channel, shown) }
 
     suspend fun choose(streamUrl: String, epgId: Int): DispatcharrClient.GuideAnswer =
         call(streamUrl) { base, key, path, channel -> client.chooseGuide(base, key, path, channel, epgId) }

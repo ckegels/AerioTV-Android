@@ -21,6 +21,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,12 +42,6 @@ import java.util.Date
 /** What the list is about: the stream being watched, and its channel's name. */
 internal data class GuideChoiceRequest(val streamUrl: String, val channelName: String)
 
-private sealed interface GuideListState {
-    data object Loading : GuideListState
-    data class Shown(val choices: DispatcharrClient.GuideChoices) : GuideListState
-    data class Failed(val message: String) : GuideListState
-}
-
 /**
  * "Wrong guide? Choose another" (Dispatch More, contract 7a): what the
  * channel's guide says now, then the guides it could be on, each with the
@@ -55,9 +50,12 @@ private sealed interface GuideListState {
  * made in the background and a short notice says how it went. Back closes
  * without changing anything.
  *
- * When the server says it is still reading guides nobody had read, the list
- * is asked for again every [READING_AGAIN_MS] while it says so, at most
- * [READING_ASKS] times; rows that arrive are added without moving the focus.
+ * The server sends the list a page at a time, best first and less sure the
+ * further down (v217). "Load more" at the bottom asks for the next page for
+ * as long as the server says there is one; the focus moves to its first row.
+ * While the server says it is still reading guides nobody had read, the
+ * latest page is asked for again every [READING_AGAIN_MS], at most
+ * [READING_ASKS] times, without moving the focus.
  */
 @Composable
 internal fun GuideChoiceDialog(
@@ -65,24 +63,46 @@ internal fun GuideChoiceDialog(
     guides: DispatchMoreGuides,
     onDismiss: () -> Unit,
 ) {
-    var state by remember { mutableStateOf<GuideListState>(GuideListState.Loading) }
-    var askedAgain by remember { mutableStateOf(false) }
-    var focused by remember { mutableStateOf(false) }
-    val firstRow = remember { FocusRequester() }
+    var loaded by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf<String?>(null) }
+    var current by remember { mutableStateOf<DispatcharrClient.GuideOption?>(null) }
+    var pages by remember { mutableStateOf(listOf<List<DispatcharrClient.GuideOption>>()) }
+    var reading by remember { mutableStateOf(false) }
+    var more by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var pagesWanted by remember { mutableIntStateOf(1) }
+    var focusedPage by remember { mutableIntStateOf(-1) }
+    val pageStart = remember { FocusRequester() }
+    val loadMoreButton = remember { FocusRequester() }
     val closeButton = remember { FocusRequester() }
 
-    LaunchedEffect(request) {
-        state = guides.list(request.streamUrl).toState()
+    LaunchedEffect(request, pagesWanted) {
+        val page = pagesWanted - 1
+        val before = pages.take(page).flatten().map { it.epgId }
+        loadingMore = page > 0
+        fun apply(answer: DispatcharrClient.GuideAnswer) {
+            val listed = (answer as? DispatcharrClient.GuideAnswer.Listed)?.choices
+            if (listed == null) {
+                if (page == 0 && !loaded) failed = (answer as? DispatcharrClient.GuideAnswer.Refused)?.message
+                    ?: "Unexpected answer"
+                return
+            }
+            if (page == 0) current = listed.current
+            val seen = before.toSet()
+            pages = pages.take(page) + listOf(listed.guides.filter { it.epgId !in seen })
+            reading = listed.reading
+            more = listed.more
+        }
+        apply(guides.list(request.streamUrl, before))
+        loaded = true
+        loadingMore = false
         var asks = 0
-        while ((state as? GuideListState.Shown)?.choices?.reading == true && asks < READING_ASKS) {
+        while (reading && asks < READING_ASKS) {
             kotlinx.coroutines.delay(READING_AGAIN_MS)
             asks++
-            val again = guides.list(request.streamUrl).toState()
-            // Only a list that arrived replaces the one on screen
-            if (again is GuideListState.Shown) state = again
+            apply(guides.list(request.streamUrl, before))
         }
-        askedAgain = true
-        (state as? GuideListState.Shown)?.let { state = it.copy(choices = it.choices.copy(reading = false)) }
+        reading = false
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -93,13 +113,22 @@ internal fun GuideChoiceDialog(
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Wrong guide? Choose another", style = MaterialTheme.typography.titleLarge)
-                when (val s = state) {
-                    GuideListState.Loading -> {
+                when {
+                    failed != null -> Text(failed.orEmpty())
+                    !loaded -> {
                         Text("Looking for the guides ${request.channelName} could be on…")
                         CircularProgressIndicator(Modifier.padding(8.dp))
                     }
-                    is GuideListState.Failed -> Text(s.message)
-                    is GuideListState.Shown -> GuideList(s.choices, askedAgain, firstRow) { option ->
+                    else -> GuideList(
+                        current = current,
+                        pages = pages,
+                        reading = reading,
+                        more = more,
+                        loadingMore = loadingMore,
+                        pageStart = pageStart,
+                        loadMoreButton = loadMoreButton,
+                        onLoadMore = { if (!loadingMore) pagesWanted = pages.size + 1 },
+                    ) { option ->
                         guides.chooseInBackground(request.streamUrl, option)
                         onDismiss()
                     }
@@ -111,27 +140,41 @@ internal fun GuideChoiceDialog(
         }
     }
 
-    // D-pad focus: the first guide when there is one, otherwise Close. Once a
-    // row has it, a list that grows while guides are read leaves it where it is.
-    LaunchedEffect(state) {
-        if (state is GuideListState.Loading || focused) return@LaunchedEffect
+    // D-pad focus: the first row of each page as it arrives (the first guide
+    // at the start, the first new one after "Load more"); Load more or Close
+    // when a page brought none. A page that grows while it is read leaves it.
+    val lastPageHasRows = pages.lastOrNull()?.isNotEmpty() == true
+    LaunchedEffect(loaded, failed, pages.size, lastPageHasRows, loadingMore) {
+        if (!loaded && failed == null) return@LaunchedEffect
+        if (loadingMore) return@LaunchedEffect
+        val page = pages.size - 1
+        if (page <= focusedPage) return@LaunchedEffect
         // The dialog's window composes a moment after this effect starts
         kotlinx.coroutines.delay(100)
-        val hasRows = (state as? GuideListState.Shown)?.choices?.guides?.isNotEmpty() == true
         runCatching {
-            if (hasRows) firstRow.requestFocus().also { focused = true } else closeButton.requestFocus()
+            when {
+                // Only a page with rows counts as focused: an empty one that
+                // fills while it is read still gets its first row focused
+                lastPageHasRows -> pageStart.requestFocus().also { focusedPage = page }
+                more -> loadMoreButton.requestFocus()
+                else -> closeButton.requestFocus()
+            }
         }
     }
 }
 
 @Composable
 private fun GuideList(
-    choices: DispatcharrClient.GuideChoices,
-    askedAgain: Boolean,
-    firstRow: FocusRequester,
+    current: DispatcharrClient.GuideOption?,
+    pages: List<List<DispatcharrClient.GuideOption>>,
+    reading: Boolean,
+    more: Boolean,
+    loadingMore: Boolean,
+    pageStart: FocusRequester,
+    loadMoreButton: FocusRequester,
+    onLoadMore: () -> Unit,
     onChoose: (DispatcharrClient.GuideOption) -> Unit,
 ) {
-    val current = choices.current
     Text(
         when {
             current == null -> "Guide now: none"
@@ -140,24 +183,37 @@ private fun GuideList(
         },
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    val stillReading = choices.reading && !askedAgain
-    if (choices.guides.isEmpty()) {
-        if (!stillReading) Text("No other guide has anything on for this channel right now.")
-    } else {
+    val all = pages.flatten()
+    val firstOfLastPage = pages.lastOrNull()?.firstOrNull()
+    if (all.isEmpty() && !reading && !more) {
+        Text("No other guide has anything on for this channel right now.")
+    }
+    if (all.isNotEmpty() || more || loadingMore) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            items(choices.guides, key = { it.epgId }) { option ->
+            items(all, key = { it.epgId }) { option ->
                 GuideRow(
                     option = option,
-                    modifier = if (option == choices.guides.first()) Modifier.focusRequester(firstRow) else Modifier,
+                    modifier = if (option == firstOfLastPage) Modifier.focusRequester(pageStart) else Modifier,
                     onClick = { onChoose(option) },
                 )
             }
+            if (loadingMore) {
+                item(key = "loading-more") {
+                    Text("Loading more…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else if (more) {
+                item(key = "load-more") {
+                    TextButton(onClick = onLoadMore, modifier = Modifier.focusRequester(loadMoreButton)) {
+                        Text("Load more")
+                    }
+                }
+            }
         }
     }
-    if (stillReading) {
+    if (reading) {
         Text("Looking for more guides…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -205,12 +261,6 @@ private fun GuideRow(option: DispatcharrClient.GuideOption, modifier: Modifier, 
             }
         }
     }
-}
-
-private fun DispatcharrClient.GuideAnswer.toState(): GuideListState = when (this) {
-    is DispatcharrClient.GuideAnswer.Listed -> GuideListState.Shown(choices)
-    is DispatcharrClient.GuideAnswer.Refused -> GuideListState.Failed(message)
-    is DispatcharrClient.GuideAnswer.Chosen -> GuideListState.Failed("Unexpected answer")
 }
 
 private fun span(programme: DispatcharrClient.GuideProgramme): String =

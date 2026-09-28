@@ -608,8 +608,14 @@ class DispatcharrClient @Inject constructor() {
         val next: GuideProgramme?,
     )
 
-    /** The guide choice's list: the channel's guide now, and the others it could be. */
-    data class GuideChoices(val current: GuideOption?, val guides: List<GuideOption>, val reading: Boolean)
+    /** The guide choice's list: the channel's guide now, and the others it could be;
+     *  [more] when asking again with these shown finds further ones (v217). */
+    data class GuideChoices(
+        val current: GuideOption?,
+        val guides: List<GuideOption>,
+        val reading: Boolean,
+        val more: Boolean = false,
+    )
 
     sealed interface GuideAnswer {
         data class Listed(val choices: GuideChoices) : GuideAnswer
@@ -621,13 +627,23 @@ class DispatcharrClient @Inject constructor() {
     /**
      * GET the guides a channel could be on (Dispatch More v216, contract 7a):
      * only guides with a programme on now, best first. [channel] is the
-     * channel's UUID or number id, as its stream URL carries it.
+     * channel's UUID or number id, as its stream URL carries it. [shown] asks
+     * for the next page: the guides already listed, left out of the answer.
      */
-    suspend fun fetchGuideChoices(baseUrl: String, apiKey: String, path: String, channel: String): GuideAnswer {
+    suspend fun fetchGuideChoices(
+        baseUrl: String,
+        apiKey: String,
+        path: String,
+        channel: String,
+        shown: List<Int> = emptyList(),
+    ): GuideAnswer {
         val response = try {
             client.get("${baseUrl.trimEnd('/')}$path") {
                 applyAuth(apiKey)
-                url { parameters.append("channel", channel) }
+                url {
+                    parameters.append("channel", channel)
+                    if (shown.isNotEmpty()) parameters.append("shown", shown.joinToString(","))
+                }
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -643,6 +659,7 @@ class DispatcharrClient @Inject constructor() {
                 current = (body["current"] as? JsonObject)?.let(::guideOption),
                 guides = guides,
                 reading = (body["reading"] as? JsonPrimitive)?.booleanOrNull == true,
+                more = (body["more"] as? JsonPrimitive)?.booleanOrNull == true,
             ),
         )
     }
