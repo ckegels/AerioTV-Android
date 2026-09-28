@@ -72,8 +72,23 @@ class DispatcharrLiveUpdates @Inject constructor(
      * updates are off.
      */
     fun refreshGuideSoon(reason: String) {
-        guideRequests.tryEmit(reason)
+        if (guideRequests.subscriptionCount.value > 0) {
+            guideRequests.tryEmit(reason)
+            return
+        }
+        // Live updates are off (or the app is not following a Dispatcharr
+        // source): the choice is still followed, once, without the socket.
+        val scope = appScope ?: return
+        scope.launch {
+            val playlist = repository.activePlaylist() ?: return@launch
+            delay(GUIDE_CHOICE_RELOAD_MS)
+            runCatching { checkChannels(playlist.id, "$reason (without live updates)", withGuide = true) }
+                .onFailure { if (it is CancellationException) throw it; Log.w(TAG, "guide choice reload failed", it) }
+        }
     }
+
+    /** The application scope [start] was given, for work outside a live-updates session. */
+    @Volatile private var appScope: CoroutineScope? = null
 
     /** What identifies a connection; other row changes (counts, timestamps) must not reconnect. */
     private data class Target(val playlist: PlaylistEntity) {
@@ -91,6 +106,7 @@ class DispatcharrLiveUpdates @Inject constructor(
     fun start(scope: CoroutineScope) {
         if (started) return
         started = true
+        appScope = scope
         // Full screen vs corner player feeds PlaybackActivityTracker.watching.
         scope.launch {
             exoWindowState.mode.collect {
@@ -192,11 +208,23 @@ class DispatcharrLiveUpdates @Inject constructor(
         }
 
         launch {
-            guideRequests.collect { reason ->
+            // collectLatest: a second choice restarts the round for both
+            guideRequests.collectLatest { reason ->
+                // The channel's guide key changed: the lineup is read again
+                // first (the new key), then its programmes. The server reads a
+                // guide nobody had read in the background, so the window is
+                // looked at again a little later; a Dispatch More that says
+                // when it has read it (v219) makes these a formality.
                 delay(GUIDE_CHOICE_RELOAD_MS)
                 awaitNoMultiview()
                 lastWindowAt = System.currentTimeMillis()
-                announceGuideWindow(playlist.id, reason)
+                checkChannels(playlist.id, reason, withGuide = true)
+                for (again in GUIDE_CHOICE_AGAIN_MS) {
+                    delay(again)
+                    awaitNoMultiview()
+                    lastWindowAt = System.currentTimeMillis()
+                    announceGuideWindow(playlist.id, "$reason, again")
+                }
             }
         }
 
@@ -371,7 +399,9 @@ class DispatcharrLiveUpdates @Inject constructor(
         const val EPG_COOLDOWN_MS = 10L * 60_000L
         /** After a guide is chosen in the player: the server reads the new
          *  guide's programmes in the background after the save. */
-        const val GUIDE_CHOICE_RELOAD_MS = 5_000L
+        const val GUIDE_CHOICE_RELOAD_MS = 2_000L
+        /** Then the window again after these (30 s and 90 s after the choice). */
+        val GUIDE_CHOICE_AGAIN_MS = listOf(28_000L, 60_000L)
         const val MULTIVIEW_POLL_MS = 60_000L
         /** Owed full sweeps (every Guide Days day, back and ahead) run at most
          *  this often: the live window keeps the next 24 h current, and a sweep
