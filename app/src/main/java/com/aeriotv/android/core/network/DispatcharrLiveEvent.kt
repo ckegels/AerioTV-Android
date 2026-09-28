@@ -27,6 +27,10 @@ import kotlinx.serialization.json.intOrNull
  *
  *     {"type": "update", "data": {"type": "channels_changed",
  *      "source": "show_groups", "channels": ["<uuid>", ...], "changes": 2}}
+ *
+ * Dispatch More (v219) sends the same message with `"guide": true` when a
+ * channel is put on another guide (the Guides tab, or "Wrong guide?" in any
+ * app) and again once that guide's programmes have been read.
  */
 sealed interface DispatcharrLiveEvent {
     data object Connected : DispatcharrLiveEvent
@@ -42,8 +46,13 @@ sealed interface DispatcharrLiveEvent {
     data class EpgRefreshed(val sourceId: Int?) : DispatcharrLiveEvent
 
     /** Something on the server changed channels and said so (a plugin such as
-     *  Show Groups switching its copies in and out of a profile). */
-    data class ChannelsChanged(val source: String?, val channelUuids: List<String>) : DispatcharrLiveEvent
+     *  Show Groups switching its copies in and out of a profile). [guide]: it
+     *  was their guide, so their programmes are to be fetched too. */
+    data class ChannelsChanged(
+        val source: String?,
+        val channelUuids: List<String>,
+        val guide: Boolean = false,
+    ) : DispatcharrLiveEvent
 
     /** A recording was scheduled, started, stopped, changed or removed. */
     data object RecordingsChanged : DispatcharrLiveEvent
@@ -86,6 +95,7 @@ sealed interface DispatcharrLiveEvent {
                     data.string("source"),
                     (data["channels"] as? kotlinx.serialization.json.JsonArray)
                         ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty(),
+                    guide = (data["guide"] as? JsonPrimitive)?.contentOrNull == "true",
                 )
                 in RECORDING_TYPES -> RecordingsChanged
                 else -> null

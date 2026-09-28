@@ -130,11 +130,17 @@ class DispatcharrLiveUpdates @Inject constructor(
         launch { connection.run(playlist) { repository.effectiveBaseUrl(playlist) } }
 
         var channelJob: Job? = null
-        fun scheduleChannelCheck(reason: String, afterMs: Long) {
+        // A guide change is owed a guide window even when the lineup comes back
+        // unchanged ("guide read": the channel already had the new key)
+        var guideOwed = false
+        fun scheduleChannelCheck(reason: String, afterMs: Long, guide: Boolean = false) {
+            if (guide) guideOwed = true
             channelJob?.cancel()
             channelJob = launch {
                 delay(afterMs)
-                checkChannels(playlist.id, reason)
+                val withGuide = guideOwed
+                guideOwed = false
+                checkChannels(playlist.id, reason, withGuide)
             }
         }
 
@@ -232,8 +238,10 @@ class DispatcharrLiveUpdates @Inject constructor(
                 // for a show must not wait for the 10-minute check.
                 is DispatcharrLiveEvent.ChannelsChanged ->
                     scheduleChannelCheck(
-                        "${event.source ?: "server"} changed ${event.channelUuids.size} channels",
-                        CHANNELS_CHANGED_DEBOUNCE_MS,
+                        "${event.source ?: "server"} changed ${event.channelUuids.size} channels" +
+                            if (event.guide) " (guide)" else "",
+                        if (event.guide) GUIDE_CHANGED_DEBOUNCE_MS else CHANNELS_CHANGED_DEBOUNCE_MS,
+                        guide = event.guide,
                     )
                 DispatcharrLiveEvent.RecordingsChanged -> Unit
             }
@@ -242,9 +250,11 @@ class DispatcharrLiveUpdates @Inject constructor(
 
     /**
      * Re-fetch the lineup and hand it to the open app when it changed. New
-     * channels have no guide on screen yet, so a window check follows.
+     * channels, and channels put on another guide, have no programmes on screen
+     * under their new key yet, so a window check follows; [withGuide] asks for
+     * one whatever the lineup says (the server said a guide changed or was read).
      */
-    private suspend fun checkChannels(playlistId: String, reason: String) {
+    private suspend fun checkChannels(playlistId: String, reason: String, withGuide: Boolean = false) {
         awaitNoMultiview()
         val playlist = repository.activePlaylist()?.takeIf { it.id == playlistId } ?: return
         val before = repository.loadCachedChannels(playlistId)
@@ -255,12 +265,22 @@ class DispatcharrLiveUpdates @Inject constructor(
             return
         }
         val diff = ChannelListDiff.between(before, channels)
-        Log.i(TAG, "channel check ($reason): $diff")
-        if (!diff.hasChanges) return
-        repository.announceCacheUpdate(PlaylistRepository.CacheUpdate.Channels(playlistId, channels))
-        // New channels have no guide on screen yet: the window check fetches
-        // and patches them like any other changed channel.
-        if (diff.added > 0) announceGuideWindow(playlistId, "new channels")
+        val beforeKeys = before.associate { it.id to it.tvgID }
+        val rekeyed = channels.count { ch -> beforeKeys[ch.id]?.let { it != ch.tvgID } == true }
+        Log.i(TAG, "channel check ($reason): $diff" + if (rekeyed > 0) ", $rekeyed on another guide" else "")
+        if (diff.hasChanges) {
+            repository.announceCacheUpdate(PlaylistRepository.CacheUpdate.Channels(playlistId, channels))
+        }
+        // New channels and channels on another guide have nothing under their
+        // key yet: the window check fetches and patches them like any other
+        // changed channel. (It used to follow only new channels, so a guide
+        // changed on the server showed its old programmes -- or none -- until
+        // the next full sweep.)
+        when {
+            diff.added > 0 -> announceGuideWindow(playlistId, "new channels")
+            rekeyed > 0 -> announceGuideWindow(playlistId, "$rekeyed channels on another guide")
+            withGuide -> announceGuideWindow(playlistId, "guide changed on the server")
+        }
     }
 
     /**
@@ -340,6 +360,8 @@ class DispatcharrLiveUpdates @Inject constructor(
         /** A plugin's pass sends one message; a second pass a minute later is
          *  its own check. */
         const val CHANNELS_CHANGED_DEBOUNCE_MS = 2_000L
+        /** A guide changed on the server: long enough to take a whole Guides apply as one. */
+        const val GUIDE_CHANGED_DEBOUNCE_MS = 1_000L
         const val CONNECT_SETTLE_MS = 10_000L
         const val CHANNEL_CHECK_INTERVAL_MS = 10L * 60_000L
         const val EPG_DEBOUNCE_MS = 60_000L
