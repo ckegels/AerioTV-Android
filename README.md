@@ -41,9 +41,9 @@ ArrTV has its own app ID (`com.ckegels.arrtv`), so it installs **next to** Aerio
 
 ArrTV updates itself from the releases of this repository.
 
-- **Settings › App Updates › Check for updates** looks for a new version and shows the result on the button (up to date, a new version, or an error).
-- **Check for updates automatically** (off by default) makes ArrTV look for a new version each time it opens and offer it.
-- Download and install happen in the app. Android asks once to allow ArrTV to install apps, and shows its own confirmation for each update. Your channels, settings and recordings are kept.
+- **Update** at the bottom of the side panel (compact layout), or **Settings › App Updates › Check for updates**: checks now and, when there is a new version, downloads and installs it in one go. Up to date or a failed check is a short notice, not a popup.
+- **Check for updates automatically** (on by default) makes ArrTV look for a new version each time it opens and offer it once; its **Update** button then does the rest. Nothing is ever installed without somebody pressing Update.
+- Android asks once to allow ArrTV to install apps. Android 12 and newer then install ArrTV's updates without asking again (once ArrTV installed the version it replaces); Android 11 and older show Android's own confirmation for each update. Your channels, settings and recordings are kept.
 - Each release includes a compile profile for Android 9 and newer, which the updater installs with the update. Android then prepares the app during the install, so it is fast right away instead of only after the TV's overnight maintenance.
 
 Updates are refused while a local recording is running, so a recording is never cut off.
@@ -62,16 +62,17 @@ Compared with AerioTV:
 
 **Player (TV)**
 - **Info bar overlay** (Settings › Player › Overlay Style › Info bar, off by default). Changing channel shows a full-width bar along the bottom: the channel logo, the programme with season and episode, time, progress, minutes left, channel number and name, picture format, description and what's next, with the group and the clock at the top.
-- **OK** shows the same bar with a timeline and a row of cards: **TV guide**, **History** and the next channels in the guide; OK on a channel card tunes it.
-- **Hold OK** opens the options menu in the middle of the screen: subtitles, audio track, speed, picture scale, record, sleep timer, stream info, switch stream, add to Multiview and audio only.
-- Channel up / down wraps around: down on the first channel goes to the last one.
+- **OK** shows the same bar with a timeline across the screen, under it the elapsed and total time, **start, back, a big play / pause, forward and live** (the ones beside play / pause work with Live Rewind), **LIVE**, and a row of cards: **TV guide**, **History** and the next channels in the guide; OK on a channel card tunes it. It stays up 10 seconds without input.
+- **Hold OK**, or **Down** from the cards, slides up the options: a row of icons with small labels -- report a problem, wrong guide (Dispatch More), subtitles, audio track, speed, picture scale, record, sleep timer, stream info, switch stream, Multiview and audio only. Back or Up closes it.
+- Channel up / down wraps around: down on the first channel goes to the last one; in the guide, down past the last channel goes back to the first.
 
 **Dispatcharr**
-- **Live updates** (Settings › General › Live updates, off by default, needs a username and password login): ArrTV listens to your Dispatcharr server and applies new, removed or changed channels and guide updates while the app is open, without a restart. Only the channels that changed are rewritten.
+- **Live updates** (Settings › General › Live updates, on by default, needs a username and password login): ArrTV listens to your Dispatcharr server and applies new, removed or changed channels and guide updates while the app is open, without a restart. Only the channels that changed are rewritten, and a channel put on another guide shows its new programmes within seconds.
+- **With [Dispatch More](https://github.com/ckegels/dispatch-more)** (a modified Dispatcharr, every part switched on there): each TV is recognised as its own device, gets streams it can decode and fails over faster; **Send a report to the server** tells the server what went wrong with a channel in one press; **Wrong guide? Choose another** shows the guides a channel could be on with what is on each now, so the right one is picked by comparing it with the picture, and changes it for everyone. Each part has its own switch in Settings › General › arrTV optimizations.
 - Background data (the scheduled refresh and the guide sweep) now shows up in the open app, and the scheduled refresh also runs while one channel is playing.
 
 **TV layout**
-- **Compact modern layout** (Settings › Appearance › Layout, TV only, off by default): a navigation rail on the left instead of the top tab bar, a guide with a group sidebar and a program preview, and compact guide rows with channel number, logo and name on one line. Turning it off restores your previous settings exactly.
+- **Compact modern layout** (Settings › Appearance › Layout, TV only, off by default): a navigation rail on the left instead of the top tab bar (with **ArrTV look** and **Settings** under the tabs and **Update** at the bottom), a guide with a group sidebar and a program preview, and compact guide rows with channel number, logo and name on one line. Turning it off restores your previous settings exactly.
 - Monochrome theme by default and the ArrTV icon and TV banner.
 
 **Speed and reliability**
@@ -88,7 +89,7 @@ Standard buttons in the player (all of them can be changed in Settings › Remot
 | Button | Short press | Hold |
 |---|---|---|
 | Up / Down | Next / previous channel | Recently watched / Search |
-| OK | Show the info bar and cards (or the player controls) | Options menu (info bar style) |
+| OK | Show the info bar and cards (or the player controls) | Options (info bar style) |
 | Left | Channel list | Back to the guide, playback continues in the corner |
 | Right | Previous channel | Program info |
 | Back | Back to the guide, playback continues in the corner | Stop playback |
