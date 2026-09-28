@@ -155,6 +155,8 @@ internal fun PlayerInfoBarOverlay(
     /** Down from the card row: the options menu. */
     onOpenOptions: () -> Unit = {},
 ) {
+    // Read when the card row wants the focus, not when it was drawn
+    val visibleNow by androidx.compose.runtime.rememberUpdatedState(visible)
     AnimatedVisibility(
         visible = visible && channel != null,
         enter = fadeIn(),
@@ -245,6 +247,7 @@ internal fun PlayerInfoBarOverlay(
                         onInteraction = onInteraction,
                         up = playPauseFocus,
                         onDown = onOpenOptions,
+                        active = { visibleNow },
                     )
                     Icon(
                         imageVector = Icons.Filled.KeyboardArrowDown,
@@ -405,12 +408,16 @@ private fun InfoBarCardRow(
     onInteraction: () -> Unit,
     up: FocusRequester,
     onDown: () -> Unit,
+    /** Still meant to be on screen: a row fading out (the options menu took
+     *  its place) must not take the focus from what replaced it. */
+    active: () -> Boolean,
 ) {
     val upToPlayPause = Modifier.focusProperties { this.up = up }
     val guideFocus = remember { FocusRequester() }
+    val stillActive by androidx.compose.runtime.rememberUpdatedState(active)
     LaunchedEffect(Unit) {
         delay(100)
-        runCatching { guideFocus.requestFocus() }
+        if (stillActive()) runCatching { guideFocus.requestFocus() }
     }
     LazyRow(
         contentPadding = PaddingValues(horizontal = EDGE),

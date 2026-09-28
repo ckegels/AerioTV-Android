@@ -31,12 +31,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -93,16 +96,21 @@ internal fun InfoBarOptionsBar(
         modifier = modifier,
     ) {
         val first = remember { FocusRequester() }
+        var inside by remember { mutableStateOf(false) }
         LaunchedEffect(Unit) {
-            // The row is laid out a frame after it starts to slide in
-            repeat(10) {
-                if (runCatching { first.requestFocus() }.isSuccess) return@LaunchedEffect
-                delay(16)
+            // Taken, and taken back for the first half second: the info bar
+            // it replaces (fading out, still there) can ask for the focus
+            // after this did, and then vanish with it, leaving nothing lit
+            // and Left / Right going nowhere.
+            repeat(FOCUS_TRIES) {
+                if (!inside) runCatching { first.requestFocus() }
+                delay(FOCUS_EVERY_MS)
             }
         }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .onFocusChanged { inside = it.hasFocus }
                 .background(
                     Brush.verticalGradient(
                         0f to Color.Transparent,
@@ -203,3 +211,6 @@ private fun OptionItem(option: PlayerOption, modifier: Modifier = Modifier) {
         }
     }
 }
+
+private const val FOCUS_TRIES = 15
+private const val FOCUS_EVERY_MS = 33L
