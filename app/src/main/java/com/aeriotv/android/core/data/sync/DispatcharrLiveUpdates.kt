@@ -61,6 +61,20 @@ class DispatcharrLiveUpdates @Inject constructor(
 ) {
     private var started = false
 
+    /** Guide window fetches asked for from elsewhere (a guide chosen in the player). */
+    private val guideRequests = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+
+    /**
+     * Fetch the guide window again shortly: a channel was just put on another
+     * guide from the player ("Wrong guide? Choose another"), and the server
+     * reads the new guide's programmes in the background after the save. Only
+     * the channels whose programmes changed are repainted. Nothing while live
+     * updates are off.
+     */
+    fun refreshGuideSoon(reason: String) {
+        guideRequests.tryEmit(reason)
+    }
+
     /** What identifies a connection; other row changes (counts, timestamps) must not reconnect. */
     private data class Target(val playlist: PlaylistEntity) {
         override fun equals(other: Any?): Boolean {
@@ -168,6 +182,15 @@ class DispatcharrLiveUpdates @Inject constructor(
         launch {
             EpgSweepGate.guideOnScreenFlow.collect { onScreen ->
                 if (!onScreen) tryOwedSweep("guide left the screen")
+            }
+        }
+
+        launch {
+            guideRequests.collect { reason ->
+                delay(GUIDE_CHOICE_RELOAD_MS)
+                awaitNoMultiview()
+                lastWindowAt = System.currentTimeMillis()
+                announceGuideWindow(playlist.id, reason)
             }
         }
 
@@ -324,6 +347,9 @@ class DispatcharrLiveUpdates @Inject constructor(
          *  compare: seconds of work and garbage on a Chromecast HD, with dozens of
          *  sources refreshing through the day. At most every 10 minutes. */
         const val EPG_COOLDOWN_MS = 10L * 60_000L
+        /** After a guide is chosen in the player: the server reads the new
+         *  guide's programmes in the background after the save. */
+        const val GUIDE_CHOICE_RELOAD_MS = 5_000L
         const val MULTIVIEW_POLL_MS = 60_000L
         /** Owed full sweeps (every Guide Days day, back and ahead) run at most
          *  this often: the live window keeps the next 24 h current, and a sweep
