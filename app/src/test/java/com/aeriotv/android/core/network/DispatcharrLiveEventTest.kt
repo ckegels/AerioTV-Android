@@ -102,6 +102,15 @@ class DispatcharrLiveEventTest {
     }
 
     @Test
+    fun aGuideChangedOnTheServerSaysSo() {
+        val frame = """{"type": "update", "data": {"type": "channels_changed", "source": "guides", "channels": ["a1b2"], "changes": 1, "guide": true}}"""
+        assertEquals(
+            DispatcharrLiveEvent.ChannelsChanged("guides", listOf("a1b2"), guide = true),
+            DispatcharrLiveEvent.parse(frame),
+        )
+    }
+
+    @Test
     fun malformedFramesNeverThrow() {
         listOf("", "not json", "{", "[]", "null", """{"type": "update"}""", """{"type": "update", "data": "m3u_refresh"}""",
             """{"type": "update", "data": {"type": "m3u_refresh", "status": "success", "action": "parsing", "channels_created": "many"}}""",
