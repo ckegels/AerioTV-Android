@@ -1078,6 +1078,9 @@ fun MainScaffold(
                 // zIndex paints it over the page it slides across.
                 if (compactModern) {
                     val railItems = remember(tabs) { listOf(AppTab.Search) + tabs }
+                    // Update at the rail's bottom: checks now and, when there
+                    // is one, updates (github builds only; hidden elsewhere).
+                    val updateVm: com.aeriotv.android.feature.update.UpdateViewModel = hiltViewModel()
                     TvNavRail(
                         items = railItems,
                         selected = selectedTab,
@@ -1096,6 +1099,7 @@ fun MainScaffold(
                         },
                         onFocusChanged = { topNavHasFocusState.value = it },
                         onApplyLook = applyArrTvLook,
+                        onUpdate = if (updateVm.isEnabled) ({ updateVm.manualCheck() }) else null,
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .zIndex(2f)

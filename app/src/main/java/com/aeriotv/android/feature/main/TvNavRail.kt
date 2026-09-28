@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -81,6 +82,8 @@ internal fun TvNavRail(
     modifier: Modifier = Modifier,
     /** "ArrTV look" action above Settings (not a tab); null hides it. */
     onApplyLook: (() -> Unit)? = null,
+    /** "Update" action at the very bottom (not a tab); null hides it. */
+    onUpdate: (() -> Unit)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     val offset by animateDpAsState(
@@ -111,9 +114,8 @@ internal fun TvNavRail(
             .focusGroup(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        items.forEachIndexed { index, tab ->
-            // Settings sits at the bottom, as on the tab bar's right edge.
-            if (tab == AppTab.Settings && index > 0) Spacer(Modifier.weight(1f))
+        items.forEach { tab ->
+            // ArrTV look and Settings follow the tabs; Update has the bottom.
             if (tab == AppTab.Settings && onApplyLook != null) {
                 TvNavRailRow(
                     icon = Icons.Filled.AutoAwesome,
@@ -127,6 +129,15 @@ internal fun TvNavRail(
                 selected = tab == selected,
                 onClick = { onSelect(tab) },
                 modifier = itemRequesters[tab]?.let { Modifier.focusRequester(it) } ?: Modifier,
+            )
+        }
+        if (onUpdate != null) {
+            Spacer(Modifier.weight(1f))
+            TvNavRailRow(
+                icon = Icons.Filled.SystemUpdate,
+                label = "Update",
+                selected = false,
+                onClick = onUpdate,
             )
         }
     }
