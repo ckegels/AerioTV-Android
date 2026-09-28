@@ -6,6 +6,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -39,8 +40,14 @@ import com.aeriotv.android.core.network.DispatcharrClient
 import java.text.DateFormat
 import java.util.Date
 
-/** What the list is about: the stream being watched, and its channel's name. */
-internal data class GuideChoiceRequest(val streamUrl: String, val channelName: String)
+/** What the list is about: the stream being watched, and its channel's name.
+ *  [report] is the problem report "Could not find the guide" sends, read at the
+ *  press like the report menu's; null where the server takes no reports. */
+internal data class GuideChoiceRequest(
+    val streamUrl: String,
+    val channelName: String,
+    val report: ProblemReportRequest? = null,
+)
 
 /**
  * "Wrong guide? Choose another" (Dispatch More, contract 7a): what the
@@ -62,6 +69,8 @@ internal fun GuideChoiceDialog(
     request: GuideChoiceRequest,
     guides: DispatchMoreGuides,
     onDismiss: () -> Unit,
+    /** "Could not find the guide": sends the report; null hides the button. */
+    onCouldNotFind: (() -> Unit)? = null,
 ) {
     var loaded by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf<String?>(null) }
@@ -113,6 +122,16 @@ internal fun GuideChoiceDialog(
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Wrong guide? Choose another", style = MaterialTheme.typography.titleLarge)
+                // Which channel this is about: the list is compared with its picture
+                if (request.channelName.isNotBlank()) {
+                    Text(
+                        request.channelName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 when {
                     failed != null -> Text(failed.orEmpty())
                     !loaded -> {
@@ -133,8 +152,17 @@ internal fun GuideChoiceDialog(
                         onDismiss()
                     }
                 }
-                TextButton(onClick = onDismiss, modifier = Modifier.focusRequester(closeButton)) {
-                    Text("Close")
+                // At the very bottom: none of these is it. Sends the same report as
+                // the report menu's "Wrong or missing guide", and closes.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onCouldNotFind != null) {
+                        TextButton(onClick = { onCouldNotFind(); onDismiss() }) {
+                            Text("Could not find the guide")
+                        }
+                    }
+                    TextButton(onClick = onDismiss, modifier = Modifier.focusRequester(closeButton)) {
+                        Text("Close")
+                    }
                 }
             }
         }

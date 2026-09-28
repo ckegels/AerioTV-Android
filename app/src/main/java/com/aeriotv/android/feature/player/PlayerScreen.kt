@@ -1814,7 +1814,24 @@ fun PlayerScreen(
                 },
                 open = open@{
                     val url = exoHolder.reportableStreamUrl ?: return@open
-                    guideChoice = GuideChoiceRequest(url, reportChannel.value?.name.orEmpty())
+                    // The report "Could not find the guide" sends, read now like the
+                    // report menu's, so it describes the channel as it was
+                    val report = if (problemReports.canReport(url)) {
+                        ProblemReportRequest(
+                            atMs = System.currentTimeMillis(),
+                            streamUrl = url,
+                            channelName = reportChannel.value?.name.orEmpty(),
+                            player = exoHolder.problemReportPlayer(),
+                            extra = mapOf(
+                                "channel" to reportChannel.value?.name,
+                                "programme" to reportProgramme.value?.title,
+                                "cast" to reportCasting.value,
+                            ),
+                        )
+                    } else {
+                        null
+                    }
+                    guideChoice = GuideChoiceRequest(url, reportChannel.value?.name.orEmpty(), report)
                 },
             )
             onDispose { GuideChoiceMenu.action = null }
@@ -1824,6 +1841,20 @@ fun PlayerScreen(
                 request = request,
                 guides = guideChoices,
                 onDismiss = { guideChoice = null },
+                onCouldNotFind = request.report?.let { report ->
+                    {
+                        problemReports.sendInBackground(
+                            what = ProblemKind.GUIDE.label,
+                            happenedAtMs = report.atMs,
+                            streamUrl = report.streamUrl,
+                            player = report.player,
+                            extra = report.extra + mapOf(
+                                "problem" to ProblemKind.GUIDE.code,
+                                "from" to "guide list: could not find the guide",
+                            ),
+                        )
+                    }
+                },
             )
         }
 
