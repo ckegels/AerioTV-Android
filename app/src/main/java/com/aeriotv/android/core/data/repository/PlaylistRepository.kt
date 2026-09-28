@@ -2210,10 +2210,11 @@ class PlaylistRepository @Inject constructor(
      * [saveEpgToCache] replaces the source's rows after a network fetch, pruning
      * programmes that have already ended.
      */
+    /** Low-memory profile (DeviceMemory): keep less of the guide in memory. */
+    val lowMemory: Boolean get() = com.aeriotv.android.core.system.DeviceMemory.isLow(context)
+
     suspend fun loadCachedEpg(playlistId: String): List<EPGProgramme> =
-        withContext(guideReadDispatcher) {
-            epgProgrammeDao.forPlaylist(playlistId).map { it.toProgramme() }
-        }
+        loadCachedEpg(playlistId, Long.MIN_VALUE, Long.MAX_VALUE)
 
     /**
      * Time-windowed cached-EPG read (iOS GuideStore parity --
@@ -2232,9 +2233,40 @@ class PlaylistRepository @Inject constructor(
         toMillis: Long,
     ): List<EPGProgramme> =
         withContext(guideReadDispatcher) {
-            epgProgrammeDao
-                .forPlaylistInWindow(playlistId, fromMillis, toMillis)
-                .map { it.toProgramme() }
+            // Ids from the index, then the rows in id order: the order they
+            // lie in the file (EpgProgrammeDao.idsInWindow). In chunks, each
+            // small enough for one 2 MB cursor window: a single query for tens
+            // of thousands of rows re-runs itself for every window it fills.
+            // Returned in id order: the guide's dedup keeps the first of two
+            // rows in a slot, which has always been the lower id.
+            val startedAt = android.os.SystemClock.elapsedRealtime()
+            val ids = epgProgrammeDao.idsInWindow(playlistId, fromMillis, toMillis).sorted()
+            val idsMs = android.os.SystemClock.elapsedRealtime() - startedAt
+            val out = ArrayList<EPGProgramme>(ids.size)
+            // One copy per distinct string for this load: every row read from
+            // Room brings its own copies, so a channel's key, a category or a
+            // rerun's title and description were stored once per programme.
+            val pool = StringPool()
+            // Where the time goes, per chunk: the query (Room's own threads,
+            // queueing included) and turning rows into programmes (here).
+            var queryMs = 0L
+            var mapMs = 0L
+            var slowest = 0L
+            for (chunk in ids.chunked(EPG_READ_ID_CHUNK)) {
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                val rows = epgProgrammeDao.byIdsStartingBefore(chunk, toMillis)
+                val t1 = android.os.SystemClock.elapsedRealtime()
+                rows.mapTo(out) { it.toProgramme(pool) }
+                queryMs += t1 - t0
+                slowest = maxOf(slowest, t1 - t0)
+                mapMs += android.os.SystemClock.elapsedRealtime() - t1
+            }
+            Log.i(
+                "PlaylistRepo",
+                "[EPG] cache read: ${ids.size} ids in ${idsMs}ms, ${out.size} rows in ${queryMs}ms " +
+                    "(slowest chunk ${slowest}ms), mapped in ${mapMs}ms",
+            )
+            out
         }
 
     /**
@@ -3664,16 +3696,23 @@ private fun List<DispatcharrEpgEntry>.toProgrammes(): List<EPGProgramme> =
         )
     }
 
-/** EPG disk-cache row <-> domain model mapping. */
-private fun EpgProgrammeEntity.toProgramme(): EPGProgramme = EPGProgramme(
-    channelId = channelId,
-    title = title,
-    description = description,
+/** Keeps one copy of each distinct string during one cache read (loadCachedEpg). */
+private class StringPool {
+    private val strings = HashMap<String, String>(8192)
+    fun of(s: String): String = strings.getOrPut(s) { s }
+    fun ofOrNull(s: String?): String? = s?.let(::of)
+}
+
+/** EPG disk-cache row <-> domain model mapping; [pool] shares repeated strings. */
+private fun EpgProgrammeEntity.toProgramme(pool: StringPool? = null): EPGProgramme = EPGProgramme(
+    channelId = pool?.of(channelId) ?: channelId,
+    title = pool?.of(title) ?: title,
+    description = pool?.of(description) ?: description,
     startMillis = startMillis,
     endMillis = endMillis,
-    category = category,
+    category = pool?.of(category) ?: category,
     dispatcharrProgramId = dispatcharrProgramId,
-    subTitle = subTitle,
+    subTitle = pool?.ofOrNull(subTitle) ?: subTitle,
     season = season,
     episode = episode,
     isNew = isNew,
@@ -3681,7 +3720,7 @@ private fun EpgProgrammeEntity.toProgramme(): EPGProgramme = EPGProgramme(
     isPremiere = isPremiere,
     isFinale = isFinale,
     isRepeat = isRepeat,
-    iconUrl = iconUrl,
+    iconUrl = pool?.ofOrNull(iconUrl) ?: iconUrl,
 )
 
 private fun EPGProgramme.toCacheEntity(playlistId: String, fetchedAt: Long): EpgProgrammeEntity =
@@ -3770,3 +3809,7 @@ private const val TAG_CAPS = "AerioCaps"
 
 /** Rows per page for the live guide window's per-channel read (fits one 2 MB cursor window). */
 private const val CHANNEL_WINDOW_PAGE_ROWS = 1000
+
+/** Row ids per query of the launch guide read: under SQLite's 999 bound
+ *  parameters, and a page of rows that fits one cursor window. */
+private const val EPG_READ_ID_CHUNK = 900
