@@ -1317,8 +1317,10 @@ class AppPreferences @Inject constructor(
      * (the socket accepts a JWT only; see DispatcharrLiveEligibility). Off by
      * default so nothing changes for anyone who does not opt in.
      */
+    /** On unless switched off: it is how a Dispatcharr change (a guide put on
+     *  a channel, a source refreshed) reaches the open app within seconds. */
     val dispatcharrLiveUpdates: Flow<Boolean> =
-        store.data.map { it[KEY_DISPATCHARR_LIVE_UPDATES] ?: false }
+        store.data.map { it[KEY_DISPATCHARR_LIVE_UPDATES] ?: true }
     suspend fun setDispatcharrLiveUpdates(value: Boolean) {
         store.edit { it[KEY_DISPATCHARR_LIVE_UPDATES] = value }
     }
