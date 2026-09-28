@@ -164,6 +164,10 @@ class GithubUpdateManager @Inject constructor(
                     json.encodeToString(PendingUpdate.serializer(), verified.copy(dmPath = dmPath)),
                 )
                 _state.value = UpdateState.ReadyToInstall(info)
+                // Every download is somebody pressing Update (checks only
+                // offer), so it goes straight on to the install: no second
+                // "Ready to install" stop to press through.
+                install()
             } catch (t: Throwable) {
                 Log.w(TAG, "download failed", t)
                 _state.value = UpdateState.Error(
@@ -472,8 +476,11 @@ class GithubUpdateManager @Inject constructor(
         ).apply {
             setSize(staged.length() + (dm?.length() ?: 0L))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // Attended install (Phase A): the system confirm dialog shows.
-                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+                // Somebody pressed Update: Android 12+ skips its own confirm
+                // when this app installed the version being replaced, and
+                // shows it otherwise (STATUS_PENDING_USER_ACTION). Android 11
+                // and older always ask once.
+                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
             }
         }
         val sessionId = installer.createSession(params)

@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
  */
 @HiltViewModel
 class UpdateViewModel @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val manager: UpdateManager,
     private val preferences: AppPreferences,
 ) : ViewModel() {
@@ -36,17 +37,32 @@ class UpdateViewModel @Inject constructor(
     private val _checking = MutableStateFlow(false)
     val checking: StateFlow<Boolean> = _checking.asStateFlow()
 
+    /**
+     * Check now (the rail's Update, Settings' check button). Somebody asked,
+     * so an update found is downloaded and installed at once instead of first
+     * asking "Update available?"; up to date or a failed check is a short
+     * notice rather than a popup.
+     */
     fun manualCheck() {
         if (_checking.value) return
         _checking.value = true
         viewModelScope.launch {
             try {
                 manager.check(manual = true)
+                when (val after = manager.state.value) {
+                    is UpdateState.Available -> manager.startDownload()
+                    is UpdateState.UpToDate -> notice("ArrTV is up to date")
+                    is UpdateState.Error -> if (after.info == null) notice(after.message)
+                    else -> Unit
+                }
             } finally {
                 _checking.value = false
             }
         }
     }
+
+    private fun notice(text: String) =
+        android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
     fun resumePending() = viewModelScope.launch { manager.resumePending() }
     fun download() = manager.startDownload()
     fun install() = manager.install()
