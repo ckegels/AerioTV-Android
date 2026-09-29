@@ -720,11 +720,15 @@ fun GuideScreen(
         val group = GuideOpenGroups.take() ?: return@LaunchedEffect
         if (group.isNotBlank() && state.selectedGroup != group) {
             viewModel.onGroupSelected(group)
-            // The rows follow the group a frame or two later
-            delay(250L)
         }
+        // After the guide's own hand-over: it puts the focus on the playing channel's cell
+        // (the mini-channel refocus, then the launch loop), and focus on the grid closes the
+        // groups list -- opened any earlier, it was shut again 0.3 s later (seen on the Shield)
+        delay(700L)
         miniChannelId?.let { grid.focusChannel(it) }
         openGroupMenu()
+        delay(400L)
+        if (!groupSidebarOpen && sidebarGroupMode) openGroupMenu()
         com.aeriotv.android.ui.tv.TvFocusTrace.guide("groups opened on '$group' from the player ${traceGates()}")
     }
     val hostAction: (com.aeriotv.android.core.remote.GuideRemoteAction) -> Boolean = { action ->
