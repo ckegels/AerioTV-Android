@@ -715,6 +715,11 @@ fun GuideScreen(
     // Left in the player (with the side channel list off): the guide opens on the group being
     // watched, with the groups list open on it -- the user, 2026-09-29. The player leaves the
     // group in GuideOpenGroups as it hands over to the mini; taken once, here.
+    // Read when it runs, not when it started: the guide shows pills for its first half second
+    // and the group sidebar after that, and the action kept from the start opened pills that
+    // were not there (seen on the Shield)
+    val openGroupsNow by androidx.compose.runtime.rememberUpdatedState(openGroupMenu)
+    val sidebarModeNow by androidx.compose.runtime.rememberUpdatedState(sidebarGroupMode)
     LaunchedEffect(miniChannelId, tabActive, rows.isEmpty) {
         if (!isTv || !tabActive || rows.isEmpty) return@LaunchedEffect
         val group = GuideOpenGroups.take() ?: return@LaunchedEffect
@@ -726,9 +731,9 @@ fun GuideScreen(
         // groups list -- opened any earlier, it was shut again 0.3 s later (seen on the Shield)
         delay(700L)
         miniChannelId?.let { grid.focusChannel(it) }
-        openGroupMenu()
+        openGroupsNow()
         delay(400L)
-        if (!groupSidebarOpen && sidebarGroupMode) openGroupMenu()
+        if (!groupSidebarOpen && sidebarModeNow) openGroupsNow()
         com.aeriotv.android.ui.tv.TvFocusTrace.guide("groups opened on '$group' from the player ${traceGates()}")
     }
     val hostAction: (com.aeriotv.android.core.remote.GuideRemoteAction) -> Boolean = { action ->
