@@ -114,11 +114,15 @@ internal fun GuideChoiceDialog(
         reading = false
     }
 
+    // At most 90 % of the screen, the list in the middle giving way: a TV is 540 dp tall,
+    // and the list's 420 dp with everything around it came to ~700, so the dialog, centred,
+    // lost its title and the channel's name off the top and its buttons off the bottom
+    val maxHeight = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.9f).dp
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.widthIn(min = 420.dp, max = 640.dp),
+            modifier = Modifier.widthIn(min = 420.dp, max = 640.dp).heightIn(max = maxHeight),
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Wrong guide? Choose another", style = MaterialTheme.typography.titleLarge)
@@ -192,7 +196,7 @@ internal fun GuideChoiceDialog(
 }
 
 @Composable
-private fun GuideList(
+private fun androidx.compose.foundation.layout.ColumnScope.GuideList(
     current: DispatcharrClient.GuideOption?,
     pages: List<List<DispatcharrClient.GuideOption>>,
     reading: Boolean,
@@ -218,7 +222,8 @@ private fun GuideList(
     }
     if (all.isNotEmpty() || more || loadingMore) {
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+            // Takes what the title, the channel and the buttons leave, and scrolls
+            modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             items(all, key = { it.epgId }) { option ->
