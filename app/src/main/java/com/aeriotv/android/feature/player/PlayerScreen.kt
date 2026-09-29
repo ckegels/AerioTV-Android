@@ -287,6 +287,8 @@ fun PlayerScreen(
         if (resolved != currentIndex) currentIndex = resolved
     }
     val currentChannel = channels.getOrNull(currentIndex)
+    // Read by the remote handler, which is made once: kept current, not captured
+    val groupWatched by androidx.compose.runtime.rememberUpdatedState(currentChannel?.groupTitle.orEmpty())
 
     // Task #148 milestone B: catch-up mode state. scrubTargetWallMs (below)
     // holds PROGRAMME-relative ms in this mode instead of wall-clock.
@@ -2094,6 +2096,8 @@ fun PlayerScreen(
                     // off (the default), the main guide instead, the channel
                     // playing in the corner -- as MINIMIZE_TO_GUIDE does.
                     if (!sideChannelList && !isCatchupMode) {
+                        // ...with the groups list open on the group being watched
+                        com.aeriotv.android.feature.livetv.grid.GuideOpenGroups.request(groupWatched)
                         exoWindowState.requestMini()
                         miniPlayerVm.showMiniPlayer()
                         onClose()

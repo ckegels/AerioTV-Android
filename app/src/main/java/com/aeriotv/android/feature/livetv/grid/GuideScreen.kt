@@ -712,6 +712,21 @@ fun GuideScreen(
             true
         } else runCatching { pillsFocus.requestFocus() }.getOrDefault(false)
     }
+    // Left in the player (with the side channel list off): the guide opens on the group being
+    // watched, with the groups list open on it -- the user, 2026-09-29. The player leaves the
+    // group in GuideOpenGroups as it hands over to the mini; taken once, here.
+    LaunchedEffect(miniChannelId, tabActive, rows.isEmpty) {
+        if (!isTv || !tabActive || rows.isEmpty) return@LaunchedEffect
+        val group = GuideOpenGroups.take() ?: return@LaunchedEffect
+        if (group.isNotBlank() && state.selectedGroup != group) {
+            viewModel.onGroupSelected(group)
+            // The rows follow the group a frame or two later
+            delay(250L)
+        }
+        miniChannelId?.let { grid.focusChannel(it) }
+        openGroupMenu()
+        com.aeriotv.android.ui.tv.TvFocusTrace.guide("groups opened on '$group' from the player ${traceGates()}")
+    }
     val hostAction: (com.aeriotv.android.core.remote.GuideRemoteAction) -> Boolean = { action ->
         when (action) {
             com.aeriotv.android.core.remote.GuideRemoteAction.FOCUS_GROUP_PILLS -> openGroupMenu()
@@ -1518,3 +1533,17 @@ internal const val GUIDE_PHONE_SUBTEXT_SHARE = 0.6f
 
 /** Share of a tablet / TV guide row taken by secondary lines. */
 internal const val GUIDE_SUBTEXT_SHARE = 0.45f
+
+/**
+ * The player asking the guide, on the way to it, to open the groups list on the group being
+ * watched (Left with the side channel list switched off). One request, taken once.
+ */
+internal object GuideOpenGroups {
+    @Volatile private var group: String? = null
+
+    fun request(groupTitle: String) {
+        group = groupTitle
+    }
+
+    fun take(): String? = group.also { group = null }
+}
