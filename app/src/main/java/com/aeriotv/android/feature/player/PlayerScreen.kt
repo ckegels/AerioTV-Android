@@ -2080,8 +2080,13 @@ fun PlayerScreen(
     // On TV, when the chrome hides (fullscreen video), pull D-pad focus to the
     // playback surface so the remote's up/down reaches the channel-flip handler
     // instead of being swallowed by a stale focus target.
-    LaunchedEffect(chromeVisible, isTvForm) {
-        if (isTvForm && !chromeVisible) {
+    // Not while Recently Watched or the channel list is up: History in the
+    // info bar hides the chrome and opens Recently Watched in one go, and this
+    // pull took the focus away from the list it had just opened (nothing
+    // lit, no key reached it). When the list closes this runs again and the
+    // video gets the focus back.
+    LaunchedEffect(chromeVisible, isTvForm, recentsOverlayVisible, channelListVisible) {
+        if (isTvForm && !chromeVisible && !recentsOverlayVisible && !channelListVisible) {
             delay(100)
             runCatching { playbackFocus.requestFocus() }
         }
