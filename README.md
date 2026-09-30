@@ -4,83 +4,142 @@
 
 # ArrTV
 
-ArrTV is an IPTV app for **Google TV / Android TV**, phones and tablets. It plays live TV with a full program guide, movies and series, and recordings from a **Dispatcharr** server, an **Xtream Codes** provider or an **M3U** playlist.
+ArrTV is an IPTV app for **Google TV / Android TV**, phones and tablets. It plays live TV with a
+full program guide, movies, series and recordings from a **Dispatcharr** server, an **Xtream
+Codes** provider or an **M3U** playlist.
 
-ArrTV is a modified version of [AerioTV for Android](https://github.com/jonzey231/AerioTV-Android) by Logan Jones. It keeps everything AerioTV does and adds a TV player overlay in the style of classic IPTV set-top apps, live updates from Dispatcharr, a compact TV layout, speed fixes for low-end TV boxes, and its own update channel. ArrTV is not affiliated with AerioTV or with the Dispatcharr project.
+> [!TIP]
+> **ArrTV is built to be used with [Dispatch More](https://github.com/ckegels/dispatch-more)**, a
+> modified Dispatcharr server. ArrTV works with any Dispatcharr, but many of its best features
+> need Dispatch More on the server: see [Works best with Dispatch More](#works-best-with-dispatch-more).
 
-- [Install](#install)
-- [Updates](#updates)
-- [First setup](#first-setup)
-- [What ArrTV adds](#what-arrtv-adds)
-- [Remote control](#remote-control)
-- [Features](#features)
-- [Supported servers](#supported-servers)
-- [Tips for low-end TV boxes](#tips-for-low-end-tv-boxes)
-- [Building from source](#building-from-source)
-- [License](#license)
+ArrTV is a modified version of [AerioTV for Android](https://github.com/jonzey231/AerioTV-Android)
+by Logan Jones. It keeps everything AerioTV does and adds a TV player overlay in the style of
+classic IPTV set-top apps, live updates from Dispatcharr, a compact TV layout, simpler
+recording, speed fixes for low-end TV boxes, and its own update channel. ArrTV is not affiliated
+with AerioTV or with the Dispatcharr project.
+
+**Contents:** [Works best with Dispatch More](#works-best-with-dispatch-more) · [Install](#install) ·
+[First setup](#first-setup) · [Updates](#updates) · [What ArrTV adds](#what-arrtv-adds) ·
+[Remote control](#remote-control) · [Features](#features) · [Supported servers](#supported-servers) ·
+[Tips for low-end TV boxes](#tips-for-low-end-tv-boxes) · [Building from source](#building-from-source) ·
+[License](#license)
+
+## Works best with Dispatch More
+
+[Dispatch More](https://github.com/ckegels/dispatch-more) installs over an existing Dispatcharr
+(Linux, LXC or Docker) with one command, and comes off again with one button. Together with
+ArrTV it adds:
+
+| Feature | What it does |
+|---|---|
+| **Each TV is its own device** | Switching channels on one TV never cuts off another TV on the same provider login, and each TV gets streams it can play. |
+| **Faster failover** | A stream that does not start is replaced by the next one sooner; a stuttering stream is reported so the server can switch. |
+| **Report a problem** | One press sends what went wrong with a channel to the server. |
+| **Wrong guide? Choose another** | Pick the right guide for a channel from the player, by comparing what is on each with the picture. It changes for everyone. |
+| **Instant updates** | New channels, Show Groups (channels grouped by what is on, like Cooking or Movies) and guide changes appear within seconds. |
+| **Ad breaks skipped in recordings** | Breaks the server marks are skipped while you watch; the recording is never cut. |
+| **Recordings that start** | On a Linux Dispatcharr install, stock Dispatcharr never starts a recording; Dispatch More fixes that. |
+
+Each of these has a switch in ArrTV (Settings › General › arrTV optimizations) and on the server.
+Without Dispatch More, ArrTV works like any Dispatcharr app and simply leaves these out.
 
 ## Install
 
-ArrTV is not in the Play Store. Install the APK from this repository's releases.
+ArrTV is not in the Play Store. It installs from this repository's releases.
 
 **Direct download (always the latest version):**
 `https://github.com/ckegels/AerioTV-Android/releases/latest/download/ArrTV.apk`
 
 **On Google TV / Android TV**
+
 1. Install the **Downloader** app (by AFTVnews) from the Play Store.
-2. In Downloader, enter the direct download link above and install the APK.
-3. When asked, allow Downloader to install unknown apps.
+2. In Downloader, enter the direct download link above.
+3. When asked, allow Downloader to install unknown apps, then install ArrTV.
 
-Alternatives: send `ArrTV.apk` to the TV with an app like *Send Files to TV* and open it with a file manager, or install it from a computer with `adb install ArrTV.apk`.
+Other ways: send `ArrTV.apk` to the TV with an app like *Send Files to TV* and open it with a
+file manager, or install it from a computer with `adb install ArrTV.apk`.
 
-**On a phone or tablet:** open the direct download link, then open the downloaded file and allow your browser to install unknown apps.
+**On a phone or tablet:** open the direct download link, open the downloaded file, and allow
+your browser to install unknown apps.
 
-ArrTV has its own app ID (`com.ckegels.arrtv`), so it installs **next to** AerioTV instead of replacing it. Android 8.0 or newer is required.
+ArrTV has its own app ID (`com.ckegels.arrtv`), so it installs **next to** AerioTV instead of
+replacing it. Android 8.0 or newer is required.
 
-## Updates
-
-ArrTV updates itself from the releases of this repository.
-
-- **Update** at the bottom of the side panel (compact layout), or **Settings › App Updates › Check for updates**: checks now and, when there is a new version, downloads and installs it in one go. Up to date or a failed check is a short notice, not a popup.
-- **Check for updates automatically** (on by default) makes ArrTV look for a new version each time it opens and offer it once; its **Update** button then does the rest. Nothing is ever installed without somebody pressing Update.
-- Android asks once to allow ArrTV to install apps. Android 12 and newer then install ArrTV's updates without asking again (once ArrTV installed the version it replaces); Android 11 and older show Android's own confirmation for each update. Your channels, settings and recordings are kept.
-- Each release includes a compile profile for Android 9 and newer, which the updater installs with the update. Android then prepares the app during the install, so it is fast right away instead of only after the TV's overnight maintenance.
-
-Updates are refused while a local recording is running, so a recording is never cut off.
+**The server:** to get everything ArrTV can do, install [Dispatch More](https://github.com/ckegels/dispatch-more#install)
+on your Dispatcharr (one command) and switch on what you want under Settings → Streaming → arrTV.
 
 ## First setup
 
-1. Open ArrTV. On the welcome screen, ArrTV looks for **Dispatcharr servers on your network** for a few seconds. A server it finds appears as the first option; pick it and enter only your username and password.
+1. Open ArrTV. On the welcome screen it looks for **Dispatcharr servers on your network** for a
+   few seconds. Pick the one it finds and enter your username and password.
 2. Otherwise choose **Connect a Server** and pick Dispatcharr, Xtream Codes or M3U.
-3. Optional: **Sync via Google Account** carries playlists, favorites, reminders, watch progress and settings between your devices.
+3. Optional: **Sync via Google Account** carries playlists, favorites, reminders, watch progress
+   and settings between your devices.
 
-Network discovery only searches the TV's own network (the same subnet) on Dispatcharr's standard port 9191. A server in another subnet, behind a VPN or on another port is added with **Connect a Server**.
+Network discovery only searches the TV's own network on Dispatcharr's standard port 9191. A
+server in another network, behind a VPN or on another port is added with **Connect a Server**.
+
+## Updates
+
+ArrTV updates itself from this repository's releases.
+
+- **Update** at the bottom of the side panel (compact layout), or **Settings › App Updates ›
+  Check for updates**: checks now and, when there is a new version, downloads and installs it.
+- **Check for updates automatically** (on by default) looks for a new version each time ArrTV
+  opens and offers it once. Nothing is installed without somebody pressing Update.
+- Android asks once to allow ArrTV to install apps. Android 12 and newer then update without
+  asking again; Android 11 and older show a confirmation for each update. Your channels,
+  settings and recordings are kept.
+- Each release includes a compile profile, so the app is fast right away after an update.
+
+Updates are refused while a local recording is running, so a recording is never cut off.
 
 ## What ArrTV adds
 
 Compared with AerioTV:
 
 **Player (TV)**
-- **Info bar overlay** (Settings › Player › Overlay Style › Info bar, off by default). Changing channel shows a full-width bar along the bottom: the channel logo, the programme with season and episode, time, progress, minutes left, channel number and name, picture format, description and what's next, with the group and the clock at the top.
-- **OK** shows the same bar with a timeline across the screen, under it the elapsed and total time, **start, back, a big play / pause, forward and live** (the ones beside play / pause work with Live Rewind), **LIVE**, and a row of cards: **TV guide**, **History** and the next channels in the guide; OK on a channel card tunes it. It stays up 10 seconds without input.
-- **Hold OK**, or **Down** from the cards, slides up the options: a row of icons with small labels -- report a problem, wrong guide (Dispatch More), subtitles, audio track, speed, picture scale, record, sleep timer, stream info, switch stream, Multiview and audio only. Back or Up closes it.
-- Channel up / down wraps around: down on the first channel goes to the last one; in the guide, down past the last channel goes back to the first.
+- **Info bar overlay** (Settings › Player › Overlay Style › Info bar, off by default). Changing
+  channel shows a bar along the bottom with the channel logo, the programme with season and
+  episode, time, progress, minutes left, channel number and name, picture format, description
+  and what's next.
+- **OK** shows the same bar with a timeline, **start, back, play / pause, forward and live**
+  buttons, and a row of cards: **TV guide**, **History** and the next channels in the guide.
+- **Hold OK**, or **Down** from the cards, slides up the options: report a problem, wrong guide
+  (Dispatch More), subtitles, audio track, speed, picture scale, record, sleep timer, stream
+  info, switch stream, Multiview and audio only.
+- Channel up / down wraps around from the last channel to the first and back.
+
+**Recording**
+- **Start 5 minutes early and end 5 minutes late** by default (Settings › DVR).
+- **The record sheet asks one thing:** this episode, all episodes or new episodes only. One line
+  says what will happen; **Adjust** changes the times, the destination or ad breaks for that
+  one recording.
+- **Ad breaks skipped** in server recordings (with Dispatch More and Comskip in Mark mode):
+  skipped automatically with a few seconds to press Left and go back, or with a **Skip ad**
+  button (Settings › DVR › Commercial Breaks).
 
 **Dispatcharr**
-- **Live updates** (Settings › General › Live updates, on by default, needs a username and password login): ArrTV listens to your Dispatcharr server and applies new, removed or changed channels and guide updates while the app is open, without a restart. Only the channels that changed are rewritten, and a channel put on another guide shows its new programmes within seconds.
-- **With [Dispatch More](https://github.com/ckegels/dispatch-more)** (a modified Dispatcharr, every part switched on there): each TV is recognised as its own device, gets streams it can decode and fails over faster; **Send a report to the server** tells the server what went wrong with a channel in one press; **Wrong guide? Choose another** shows the guides a channel could be on with what is on each now, so the right one is picked by comparing it with the picture, and changes it for everyone. Each part has its own switch in Settings › General › arrTV optimizations.
-- Background data (the scheduled refresh and the guide sweep) now shows up in the open app, and the scheduled refresh also runs while one channel is playing.
+- **Live updates** (Settings › General › Live updates, on by default, needs a username and
+  password login): new, removed or changed channels and guide updates appear while the app is
+  open, without a restart.
+- **With [Dispatch More](https://github.com/ckegels/dispatch-more)**: see
+  [Works best with Dispatch More](#works-best-with-dispatch-more). Each part has its own switch
+  in Settings › General › arrTV optimizations.
+- Background data (the scheduled refresh and the guide sweep) shows up in the open app, and the
+  scheduled refresh also runs while one channel is playing.
 
 **TV layout**
-- **Compact modern layout** (Settings › Appearance › Layout, TV only, off by default): a navigation rail on the left instead of the top tab bar (with **ArrTV look** and **Settings** under the tabs and **Update** at the bottom), a guide with a group sidebar and a program preview, and compact guide rows with channel number, logo and name on one line. Turning it off restores your previous settings exactly.
-- Monochrome theme by default and the ArrTV icon and TV banner.
+- **Compact modern layout** (Settings › Appearance › Layout, TV only, off by default): a
+  navigation rail on the left instead of the top tab bar, a guide with a group sidebar and a
+  programme preview, and compact guide rows. Turning it off restores your previous settings.
+- Monochrome theme by default, and the ArrTV icon and TV banner.
 
 **Speed and reliability**
-- The guide loads several times faster on low-end boxes: cached programmes are read in pages instead of one huge database query (22 s → 6 s on a Chromecast with Google TV HD).
-- The guide paints a small time window first and fills in the rest in the background.
-- The visible guide is no longer cleared when the device runs low on memory, and it stays on screen while its cache is rebuilt.
+- The guide loads several times faster on low-end boxes (22 s → 6 s on a Chromecast with Google
+  TV HD), paints a small time window first, and stays on screen when memory runs low.
 - Delete Playlist is instant; the playlist's cached data is removed in the background.
-- Guide group pills stay reachable with the remote after picking a group further down the list.
 
 ## Remote control
 
@@ -90,7 +149,7 @@ Standard buttons in the player (all of them can be changed in Settings › Remot
 |---|---|---|
 | Up / Down | Next / previous channel | Recently watched / Search |
 | OK | Show the info bar and cards (or the player controls) | Options (info bar style) |
-| Left | Channel list | Back to the guide, playback continues in the corner |
+| Left | The guide (or a channel list from the side, if switched on in Settings › Player) | Back to the guide, playback continues in the corner |
 | Right | Previous channel | Program info |
 | Back | Back to the guide, playback continues in the corner | Stop playback |
 
@@ -103,7 +162,7 @@ Everything from AerioTV, including:
 - **Live TV and guide**: hardware-accelerated playback (Media3 / ExoPlayer, HLS, DASH, MPEG-TS, HEVC and HDR where the device supports it), a full EPG grid, favorites, hidden groups, reminders, catch-up on channels that support it, and jump to any cached day.
 - **Live Rewind**: pause and rewind live TV from a buffer on the device (Settings › Player).
 - **Multiview**: up to 9 channels at once, with audio on the selected tile.
-- **Recording**: server-side on Dispatcharr (keeps running when the app is closed, with Comskip) and local recording on the device for every server type, with start-early and end-late buffers.
+- **Recording**: server-side on Dispatcharr (keeps running when the app is closed, with ad breaks marked by Comskip) and local recording on the device for every server type, with start-early and end-late buffers.
 - **Movies and series** from Dispatcharr (with TMDB details) and Xtream Codes, with Continue Watching.
 - **Casting** from a phone to Google Cast devices.
 - **Picture-in-picture**, sleep timer, audio-only mode, subtitle and audio track selection, stream info, and refresh-rate matching.
