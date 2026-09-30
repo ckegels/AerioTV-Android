@@ -98,7 +98,7 @@ fun RecordProgramSheet(
     // Pull the user's default pre/post-roll so the radios pre-select correctly.
     val defaultPreRoll by settingsViewModel.dvrDefaultPreRollMins.collectAsStateWithLifecycle(initialValue = 5)
     val defaultPostRoll by settingsViewModel.dvrDefaultPostRollMins.collectAsStateWithLifecycle(initialValue = 5)
-    val defaultRemoveCommercials by settingsViewModel.dvrRemoveCommercials.collectAsStateWithLifecycle(initialValue = false)
+    val defaultRemoveCommercials by settingsViewModel.dvrRemoveCommercials.collectAsStateWithLifecycle(initialValue = true)
     val storageCapMB by settingsViewModel.dvrMaxLocalStorageMB.collectAsStateWithLifecycle(initialValue = 10_240)
     val dvrState by dvrViewModel.state.collectAsStateWithLifecycle()
 
@@ -740,7 +740,7 @@ private fun TvRecordForm(
                 if (adjusting && isDispatcharr && !usingRule) {
                     val disabled = !destinationServer
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TvSectionTitle("Remove Commercials (Comskip)", dim = disabled)
+                        TvSectionTitle("Mark Ad Breaks (Comskip)", dim = disabled)
                         Spacer(Modifier.height(3.dp))
                         TvPillRow(alpha = if (disabled) 0.45f else 1f) {
                             SheetPill("Off", selected = !removeCommercials, onClick = { if (!disabled) onRemoveCommercials(false) })
@@ -748,7 +748,7 @@ private fun TvRecordForm(
                         }
                         Text(
                             if (disabled) "Comskip runs server-side. Switch the destination to Dispatcharr server to enable."
-                            else "Server-side: detects and removes commercial breaks after the recording completes, when Comskip is configured on the Dispatcharr server.",
+                            else "Server-side: finds the ad breaks after the recording completes, when Comskip is set up on the Dispatcharr server; the player skips them.",
                             fontSize = 9.sp.subtext(), lineHeight = 12.sp.subtext(), color = colors.onSurfaceVariant, modifier = Modifier.padding(start = 2.dp, top = 1.dp),
                         )
                     }
@@ -867,7 +867,7 @@ private fun tvOptionsSummary(isLive: Boolean, preRoll: Int, postRoll: Int, toSer
     listOfNotNull(
         if (isLive) "from now" else if (preRoll > 0) "$preRoll min early" else "on time",
         if (postRoll > 0) "$postRoll min late" else "ends on time",
-        if (!toServer) "on this device" else if (comskip) "commercials removed" else "commercials kept",
+        if (!toServer) "on this device" else if (comskip) "ad breaks marked" else "ad breaks not marked",
     ).joinToString(" · ").replaceFirstChar { it.uppercase() }
 
 /** "Records 12:00 PM to 3:35 PM · 3 h 35 min" (tvOS recordingWindowSummary). */

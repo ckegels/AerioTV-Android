@@ -622,6 +622,10 @@ class SettingsViewModel @Inject constructor(
     fun setDvrRemoveCommercials(value: Boolean) {
         viewModelScope.launch { prefs.setDvrRemoveCommercials(value) }
     }
+    val dvrCommercialBreaks: Flow<String> = prefs.dvrCommercialBreaks
+    fun setDvrCommercialBreaks(value: String) {
+        viewModelScope.launch { prefs.setDvrCommercialBreaks(value) }
+    }
 
     val dvrCustomFolderUri: Flow<String> = prefs.dvrCustomFolderUri
     fun setDvrCustomFolderUri(value: String) {

@@ -81,7 +81,8 @@ fun DvrSettingsScreen(
     val capMB by settingsVm.dvrMaxLocalStorageMB.collectAsStateWithLifecycle(initialValue = 10_240)
     val preRoll by settingsVm.dvrDefaultPreRollMins.collectAsStateWithLifecycle(initialValue = 5)
     val postRoll by settingsVm.dvrDefaultPostRollMins.collectAsStateWithLifecycle(initialValue = 5)
-    val removeCommercials by settingsVm.dvrRemoveCommercials.collectAsStateWithLifecycle(initialValue = false)
+    val removeCommercials by settingsVm.dvrRemoveCommercials.collectAsStateWithLifecycle(initialValue = true)
+    val commercialBreaks by settingsVm.dvrCommercialBreaks.collectAsStateWithLifecycle(initialValue = "auto")
     val customFolderUri by settingsVm.dvrCustomFolderUri.collectAsStateWithLifecycle(initialValue = "")
     val keepAwake by settingsVm.dvrKeepAwakeDuringRecording.collectAsStateWithLifecycle(initialValue = true)
     val context = LocalContext.current
@@ -173,6 +174,30 @@ fun DvrSettingsScreen(
             }
 
             item {
+                // Breaks Comskip marked on a server recording (Dispatch More v239, Comskip in
+                // "mark" mode): the recording stays whole and the player skips them
+                Card(
+                    header = "Commercial Breaks",
+                    footer = "For server recordings whose breaks Comskip marked (Dispatcharr's Comskip in Mark mode). The recording is never cut, so a wrong guess costs nothing: after an automatic skip, press Left to go back.",
+                ) {
+                    Column {
+                        listOf(
+                            "auto" to "Skip automatically",
+                            "button" to "Show a Skip ad button",
+                            "off" to "Play them",
+                        ).forEachIndexed { index, (value, label) ->
+                            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                            DestinationRow(
+                                label = label,
+                                selected = commercialBreaks == value,
+                                onSelect = { settingsVm.setDvrCommercialBreaks(value) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
                 // What the record sheet used to ask every time; it now shows it in one line and
                 // only opens the rows under "Adjust"
                 Card(
@@ -180,8 +205,8 @@ fun DvrSettingsScreen(
                     footer = "Dispatcharr runs Comskip after the recording ends and cuts the breaks it finds, when Comskip is set up on the server. Series rules use the server's own buffer and Comskip settings.",
                 ) {
                     SettingsToggleRow(
-                        title = "Remove commercials",
-                        subtitle = "Comskip on new server recordings. It guesses: it can leave ads in or cut part of the programme.",
+                        title = "Mark ad breaks (Comskip)",
+                        subtitle = "Comskip on new server recordings. In Mark mode it only marks the breaks for skipping; in Cut mode it cuts them out, and a wrong guess cuts part of the programme.",
                         checked = removeCommercials,
                         onCheckedChange = settingsVm::setDvrRemoveCommercials,
                     )

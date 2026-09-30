@@ -1716,12 +1716,19 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_DVR_DEFAULT_POST_ROLL] = value }
     }
 
-    /** Have the server remove commercial breaks (Comskip) from a recording. Off by default:
-     *  Comskip guesses, and on European channels it guesses wrong often enough to cut parts of
-     *  the programme (the user's decision, 2026-09-30). */
-    val dvrRemoveCommercials: Flow<Boolean> = store.data.map { it[KEY_DVR_REMOVE_COMMERCIALS] ?: false }
+    /** Ask the server to run Comskip on a recording. On by default: with Dispatcharr's Comskip in
+     *  Mark mode it only marks the breaks, which the player then skips (CommercialBreaks.kt);
+     *  nothing is cut (the user, 2026-09-30, after cutting was turned off as too risky). */
+    val dvrRemoveCommercials: Flow<Boolean> = store.data.map { it[KEY_DVR_REMOVE_COMMERCIALS] ?: true }
     suspend fun setDvrRemoveCommercials(value: Boolean) {
         store.edit { it[KEY_DVR_REMOVE_COMMERCIALS] = value }
+    }
+
+    /** What the player does at a commercial break Comskip marked on a recording: "auto"
+     *  skips it (with a moment to go back), "button" offers Skip ad, "off" plays it. */
+    val dvrCommercialBreaks: Flow<String> = store.data.map { it[KEY_DVR_COMMERCIAL_BREAKS] ?: "auto" }
+    suspend fun setDvrCommercialBreaks(value: String) {
+        store.edit { it[KEY_DVR_COMMERCIAL_BREAKS] = value }
     }
 
     /**
@@ -2043,6 +2050,7 @@ class AppPreferences @Inject constructor(
         val KEY_DVR_DEFAULT_PRE_ROLL = intPreferencesKey("dvr_default_pre_roll_mins_v2")
         val KEY_DVR_DEFAULT_POST_ROLL = intPreferencesKey("dvr_default_post_roll_mins_v2")
         val KEY_DVR_REMOVE_COMMERCIALS = booleanPreferencesKey("dvr_remove_commercials")
+        val KEY_DVR_COMMERCIAL_BREAKS = stringPreferencesKey("dvr_commercial_breaks")
         val KEY_DVR_DEFAULT_DESTINATION = stringPreferencesKey("dvr_default_destination")
         val KEY_LIVE_REWIND_ENABLED = booleanPreferencesKey("live_rewind_enabled")
         val KEY_LIVE_REWIND_DEPTH_MIN = intPreferencesKey("live_rewind_depth_minutes")
