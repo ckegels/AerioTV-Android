@@ -98,7 +98,7 @@ fun RecordProgramSheet(
     // Pull the user's default pre/post-roll so the radios pre-select correctly.
     val defaultPreRoll by settingsViewModel.dvrDefaultPreRollMins.collectAsStateWithLifecycle(initialValue = 5)
     val defaultPostRoll by settingsViewModel.dvrDefaultPostRollMins.collectAsStateWithLifecycle(initialValue = 5)
-    val defaultRemoveCommercials by settingsViewModel.dvrRemoveCommercials.collectAsStateWithLifecycle(initialValue = true)
+    val defaultRemoveCommercials by settingsViewModel.dvrRemoveCommercials.collectAsStateWithLifecycle(initialValue = false)
     val storageCapMB by settingsViewModel.dvrMaxLocalStorageMB.collectAsStateWithLifecycle(initialValue = 10_240)
     val dvrState by dvrViewModel.state.collectAsStateWithLifecycle()
 

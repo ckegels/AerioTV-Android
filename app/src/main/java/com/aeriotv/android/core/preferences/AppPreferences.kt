@@ -1716,8 +1716,10 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_DVR_DEFAULT_POST_ROLL] = value }
     }
 
-    /** Have the server remove commercial breaks (Comskip) from a recording. On by default. */
-    val dvrRemoveCommercials: Flow<Boolean> = store.data.map { it[KEY_DVR_REMOVE_COMMERCIALS] ?: true }
+    /** Have the server remove commercial breaks (Comskip) from a recording. Off by default:
+     *  Comskip guesses, and on European channels it guesses wrong often enough to cut parts of
+     *  the programme (the user's decision, 2026-09-30). */
+    val dvrRemoveCommercials: Flow<Boolean> = store.data.map { it[KEY_DVR_REMOVE_COMMERCIALS] ?: false }
     suspend fun setDvrRemoveCommercials(value: Boolean) {
         store.edit { it[KEY_DVR_REMOVE_COMMERCIALS] = value }
     }

@@ -81,7 +81,7 @@ fun DvrSettingsScreen(
     val capMB by settingsVm.dvrMaxLocalStorageMB.collectAsStateWithLifecycle(initialValue = 10_240)
     val preRoll by settingsVm.dvrDefaultPreRollMins.collectAsStateWithLifecycle(initialValue = 5)
     val postRoll by settingsVm.dvrDefaultPostRollMins.collectAsStateWithLifecycle(initialValue = 5)
-    val removeCommercials by settingsVm.dvrRemoveCommercials.collectAsStateWithLifecycle(initialValue = true)
+    val removeCommercials by settingsVm.dvrRemoveCommercials.collectAsStateWithLifecycle(initialValue = false)
     val customFolderUri by settingsVm.dvrCustomFolderUri.collectAsStateWithLifecycle(initialValue = "")
     val keepAwake by settingsVm.dvrKeepAwakeDuringRecording.collectAsStateWithLifecycle(initialValue = true)
     val context = LocalContext.current
@@ -181,7 +181,7 @@ fun DvrSettingsScreen(
                 ) {
                     SettingsToggleRow(
                         title = "Remove commercials",
-                        subtitle = "Comskip on new server recordings.",
+                        subtitle = "Comskip on new server recordings. It guesses: it can leave ads in or cut part of the programme.",
                         checked = removeCommercials,
                         onCheckedChange = settingsVm::setDvrRemoveCommercials,
                     )
