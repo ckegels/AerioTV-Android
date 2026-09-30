@@ -79,8 +79,9 @@ fun DvrSettingsScreen(
     dvrVm: DvrViewModel = hiltViewModel(),
 ) {
     val capMB by settingsVm.dvrMaxLocalStorageMB.collectAsStateWithLifecycle(initialValue = 10_240)
-    val preRoll by settingsVm.dvrDefaultPreRollMins.collectAsStateWithLifecycle(initialValue = 0)
-    val postRoll by settingsVm.dvrDefaultPostRollMins.collectAsStateWithLifecycle(initialValue = 0)
+    val preRoll by settingsVm.dvrDefaultPreRollMins.collectAsStateWithLifecycle(initialValue = 5)
+    val postRoll by settingsVm.dvrDefaultPostRollMins.collectAsStateWithLifecycle(initialValue = 5)
+    val removeCommercials by settingsVm.dvrRemoveCommercials.collectAsStateWithLifecycle(initialValue = true)
     val customFolderUri by settingsVm.dvrCustomFolderUri.collectAsStateWithLifecycle(initialValue = "")
     val keepAwake by settingsVm.dvrKeepAwakeDuringRecording.collectAsStateWithLifecycle(initialValue = true)
     val context = LocalContext.current
@@ -168,6 +169,22 @@ fun DvrSettingsScreen(
                             onSelect = settingsVm::setDvrDefaultPostRollMins,
                         )
                     }
+                }
+            }
+
+            item {
+                // What the record sheet used to ask every time; it now shows it in one line and
+                // only opens the rows under "Adjust"
+                Card(
+                    header = "Server Recordings",
+                    footer = "Dispatcharr runs Comskip after the recording ends and cuts the breaks it finds, when Comskip is set up on the server. Series rules use the server's own buffer and Comskip settings.",
+                ) {
+                    SettingsToggleRow(
+                        title = "Remove commercials",
+                        subtitle = "Comskip on new server recordings.",
+                        checked = removeCommercials,
+                        onCheckedChange = settingsVm::setDvrRemoveCommercials,
+                    )
                 }
             }
 
