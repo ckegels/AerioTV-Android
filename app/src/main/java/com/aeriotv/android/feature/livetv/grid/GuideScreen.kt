@@ -391,7 +391,8 @@ fun GuideScreen(
         // What the TV's cache holds, not only the day or so the catalog has decoded: the
         // older days load as the guide scrolls towards them (below). The user, 2026-10-01:
         // "the guide isn't going back" -- with keep-past-days on the server, the days
-        // were cached but the timeline stopped where the decoded catalog started.
+        // were cached but the timeline stopped where the decoded catalog started. Scrolling
+        // towards the edge loads the days (ensureGuideCovers in the combined build, or Jump To).
         ?: minOf(state.epgHistoryHours, maxOf(epgDaysBack, state.epgCachedDaysBack) * 24)).coerceAtLeast(1)
     val forwardHours = (guideDaysOffered?.times(24) ?: (epgDaysAhead * 24)).coerceAtLeast(3)
     // Guide jump-to-day (Roman via Discord 2026-09-06; Apple parity): the
@@ -427,19 +428,6 @@ fun GuideScreen(
         }
     }
     val grid = remember { GuideGridState(initialViewportStartMs = System.currentTimeMillis() - 15 * 60_000L) }
-    // Scrolling back towards the start of what the catalog has decoded widens it a day at a
-    // time, as a jump does (ensureGuideRange reads the cached days from Room).
-    val catalogNow by androidx.compose.runtime.rememberUpdatedState(state.epgByChannel)
-    LaunchedEffect(grid) {
-        androidx.compose.runtime.snapshotFlow { grid.viewportStartMs / 3_600_000L }
-            .collect {
-                val loadedFrom = catalogNow.values.minOfOrNull { list -> list.firstOrNull()?.startMillis ?: Long.MAX_VALUE }
-                    ?: Long.MAX_VALUE
-                if (grid.viewportStartMs < loadedFrom + 6 * 3_600_000L) {
-                    viewModel.ensureGuideRange(grid.viewportStartMs - 86_400_000L, 0L)
-                }
-            }
-    }
     val rows = remember(displayChannels, state.epgByChannel, windowStartMs, windowEndMs) {
         com.aeriotv.android.feature.livetv.GuideMemo.get(
             "rows",
