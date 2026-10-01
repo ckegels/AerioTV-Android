@@ -80,6 +80,7 @@ fun PlayerSettingsScreen(
     val autoRecoverFrozenStreams by viewModel.autoRecoverFrozenStreams
         .collectAsStateWithLifecycle(initialValue = true)
     val teletextSubtitles by viewModel.teletextSubtitles.collectAsStateWithLifecycle(initialValue = true)
+    val generatedCaptions by viewModel.generatedCaptions.collectAsStateWithLifecycle(initialValue = true)
     val audioPassthrough by viewModel.audioPassthroughEnabled.collectAsStateWithLifecycle(initialValue = false)
 
     val appleTVChannelFlip by viewModel.appleTVChannelFlip.collectAsStateWithLifecycle(initialValue = true)
@@ -298,6 +299,12 @@ fun PlayerSettingsScreen(
                         subtitle = "Offer the teletext subtitles many European channels send (page 888, 777, 150) under Subtitles. Takes effect on the next channel.",
                         checked = teletextSubtitles,
                         onCheckedChange = viewModel::setTeletextSubtitles,
+                    )
+                    SettingsToggleRow(
+                        title = "Generated Captions",
+                        subtitle = "On a Dispatch More server with its caption worker, Subtitles offers captions made from the sound for channels without their own. Takes effect on the next channel.",
+                        checked = generatedCaptions,
+                        onCheckedChange = viewModel::setGeneratedCaptions,
                     )
                 }
 
