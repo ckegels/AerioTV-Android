@@ -165,7 +165,7 @@ Everything from AerioTV, including:
 - **Recording**: server-side on Dispatcharr (keeps running when the app is closed, with ad breaks marked by Comskip) and local recording on the device for every server type, with start-early and end-late buffers.
 - **Movies and series** from Dispatcharr (with TMDB details) and Xtream Codes, with Continue Watching.
 - **Casting** from a phone to Google Cast devices.
-- **Picture-in-picture**, sleep timer, audio-only mode, subtitle and audio track selection, stream info, and refresh-rate matching.
+- **Picture-in-picture**, sleep timer, audio-only mode, subtitle and audio track selection (DVB, closed captions, and teletext subtitle pages such as 888, which most European channels use), stream info, and refresh-rate matching.
 - **LAN / WAN switching**: a separate home address for your server that is used automatically on your home network.
 - **Google Drive sync** (optional).
 
