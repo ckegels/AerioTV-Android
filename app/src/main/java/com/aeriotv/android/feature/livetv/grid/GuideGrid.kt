@@ -640,7 +640,8 @@ private fun TimeHeader(
                         android.text.format.DateFormat.getBestDateTimePattern(Locale.getDefault(), "EEEMMMd"),
                         Locale.getDefault(),
                     )
-                    if (viewDay != today) day.format(Date(state.anchorMs)) + "  ·  now " + time
+                    // Only the day: with the time it ran over the first half-hour label
+                    if (viewDay != today) day.format(Date(state.anchorMs))
                     else day.format(Date(nowMs)) + ", " + time
                 } else time
             }
