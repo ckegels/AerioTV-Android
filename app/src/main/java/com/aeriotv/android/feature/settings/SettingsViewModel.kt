@@ -410,6 +410,10 @@ class SettingsViewModel @Inject constructor(
     fun setTeletextSubtitles(value: Boolean) {
         viewModelScope.launch { prefs.setTeletextSubtitles(value) }
     }
+    val generatedCaptions: Flow<Boolean> = prefs.generatedCaptions
+    fun setGeneratedCaptions(value: Boolean) {
+        viewModelScope.launch { prefs.setGeneratedCaptions(value) }
+    }
 
     val autoRecoverFrozenStreams: Flow<Boolean> = prefs.autoRecoverFrozenStreams
     fun setAutoRecoverFrozenStreams(value: Boolean) {
