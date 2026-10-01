@@ -24,7 +24,8 @@ class GeneratedCaptionsTest {
     @Test
     fun aLineShowsWhileThePictureHasItsTime() {
         assertEquals("Goedenavond", captionLineAt(cues, 101.0))
-        assertEquals("Goedenavond\nen welkom", captionLineAt(cues, 102.7))
+        // The next line replaces the one before at once, never both
+        assertEquals("en welkom", captionLineAt(cues, 102.7))
         assertEquals("en welkom", captionLineAt(cues, 105.9))
         assertEquals("", captionLineAt(cues, 108.0))
         assertEquals("", captionLineAt(emptyList(), 101.0))

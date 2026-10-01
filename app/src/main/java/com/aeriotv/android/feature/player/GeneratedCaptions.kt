@@ -48,16 +48,17 @@ fun generatedCaptionsChannelUuid(streamUrl: String?): String? {
 }
 
 /**
- * The text to show at stream time [now]: the lines whose time holds it (a line stays a
- * moment past its end, so a short one can be read), at most two. Without a stream time --
- * the extractor's offset not known yet -- the newest line, unsynced.
+ * The text to show at stream time [now]: the latest line that has begun, while its time holds
+ * it (it stays a moment past its end, so a short one can be read). One line at a time: a line
+ * that has begun replaces the one before at once -- shown together, the previous one lingering
+ * over the new one made a mess (the user, 2026-10-01). Without a stream time (the extractor's
+ * offset not known yet) the newest line, unsynced.
  */
 fun captionLineAt(cues: List<LiveCaption>, now: Double?): String {
     if (cues.isEmpty()) return ""
     if (now == null) return cues.last().text
-    return cues.filter { now >= it.start - 0.2 && now <= it.end + 1.0 }
-        .takeLast(2)
-        .joinToString("\n") { it.text }
+    val current = cues.lastOrNull { now >= it.start - 0.2 } ?: return ""
+    return if (now <= current.end + 1.0) current.text else ""
 }
 
 /** What to say instead of captions, or "" while captions come. */
