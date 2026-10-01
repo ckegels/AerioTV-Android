@@ -2252,8 +2252,14 @@ class AerioExoPlayerHolder @Inject constructor(
             .build()
         tracer.markTuneStart(title, "catchup")
         val staleCalls = takeLiveCallTrackers()
+        // The archive's length is hidden from ExoPlayer, as the VOD screen's catch-up does
+        // (UnboundedLengthDataSource): with it, TsExtractor reads the last 112,800 bytes
+        // for the duration, and a provider whose archive length shifts between requests
+        // answers that read 416 -- a scrub that failed outright (Shield, 2026-10-01: the
+        // window's length came back 573,632,512 once and 574,284,468 the next time).
+        // Nothing here needs the length: every catch-up seek re-tunes (commitScrubCatchup).
         val source = ProgressiveMediaSource.Factory(
-            tracer.wrapDataSourceFactory(httpDataSourceFactory(isLive = true)),
+            tracer.wrapDataSourceFactory(UnboundedLengthDataSource.Factory(httpDataSourceFactory(isLive = true))),
             tsOnlyExtractorsFactory(),
         )
             // A Dispatcharr connection-limit refusal is shown, never re-GET.
