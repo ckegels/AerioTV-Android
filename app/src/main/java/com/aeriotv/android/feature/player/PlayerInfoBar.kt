@@ -260,6 +260,16 @@ internal fun PlayerInfoBarOverlay(
                         up = if (timeline != null) timelineFocus else null,
                         replay = replay != null,
                     )
+                    // A replay has no card row to take the focus: it goes to play / pause, or
+                    // the remote's keys reached the player behind the bar (nothing focused)
+                    if (replay != null) {
+                        LaunchedEffect(Unit) {
+                            repeat(10) {
+                                if (runCatching { playPauseFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+                                delay(50)
+                            }
+                        }
+                    }
                     // A replay is the lesser bar: no guide / history / channel cards
                     if (replay == null) {
                         Spacer(Modifier.height(12.dp))
