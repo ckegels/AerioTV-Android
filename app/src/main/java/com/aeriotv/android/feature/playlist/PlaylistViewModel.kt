@@ -1232,22 +1232,33 @@ class PlaylistViewModel @Inject constructor(
         }
         val published = epgWriteMutex.withLock {
             // Built for a lineup that changed while it ran, when the guide on
-            // screen already follows the new one (patched for it): keep that.
+            // screen already follows the new one (patched for it). The patched
+            // guide only has what the screen had -- at launch the quick window
+            // around now -- so keeping it left every other hour "No info" (Shield,
+            // 2026-10-02: a full rebuild dropped, the past empty until relaunch).
+            // The rows read are the same for the new lineup: build again from
+            // them (CPU only, the slow read is done) and publish that.
             val now = _state.value
             val current = now.epgByChannel as? com.aeriotv.android.core.guide.GuideCatalog
             val superseded = now.channels !== channels && current != null &&
                 current.identityHash == com.aeriotv.android.core.guide.GuideIdentityHash.of(now.channels)
-            if (!superseded) {
-                val retentionDays = resolveGuideDays(playlist.epgRetentionDays) ?: GUIDE_DAYS_ALL_MAX_BACK
-                _state.update { it.copy(epgByChannel = catalog, epgHistoryHours = retentionDays * 24) }
-            }
+            val publish = if (superseded) {
+                withContext(Dispatchers.Default) {
+                    com.aeriotv.android.core.guide.GuideCatalog.build(
+                        now.channels, rows, fromMillis, toMillis, previous = current,
+                        stableOrder = stableOrder,
+                    )
+                }
+            } else catalog
+            val retentionDays = resolveGuideDays(playlist.epgRetentionDays) ?: GUIDE_DAYS_ALL_MAX_BACK
+            _state.update { it.copy(epgByChannel = publish, epgHistoryHours = retentionDays * 24) }
             !superseded
         }
         Log.i(
             TAG,
             "guide catalog rebuilt ($reason): ${rows.size} rows -> ${catalog.size} channels " +
                 "in ${android.os.SystemClock.elapsedRealtime() - t0}ms" +
-                if (published) "" else " (dropped: the guide already follows a newer lineup)",
+                if (published) "" else " (built again for the newer lineup)",
         )
     }
 
