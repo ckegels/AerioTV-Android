@@ -2263,8 +2263,9 @@ class AerioExoPlayerHolder @Inject constructor(
             .build()
         tracer.markTuneStart(title, "catchup")
         val staleCalls = takeLiveCallTrackers()
+        // Archives stitched with timestamp jumps play through (TsTimestampSmoothingDataSource)
         val source = ProgressiveMediaSource.Factory(
-            tracer.wrapDataSourceFactory(httpDataSourceFactory(isLive = true)),
+            TsTimestampSmoothingDataSource.Factory(tracer.wrapDataSourceFactory(httpDataSourceFactory(isLive = true))),
             tsOnlyExtractorsFactory(),
         )
             // A Dispatcharr connection-limit refusal is shown, never re-GET.
