@@ -2125,6 +2125,23 @@ class PlaylistRepository @Inject constructor(
      * [saveEpgToCache] replaces the source's rows after a network fetch, pruning
      * programmes that have already ended.
      */
+    /**
+     * The ids [EpgProgrammeDao.idsInWindow] selects, read in slices of end time so no single
+     * result outgrows Android's 2 MB cursor window (EpgProgrammeDao.idsEndingBetween). Same
+     * bounds: endMillis > fromMillis and < toMillis + 26 h.
+     */
+    private suspend fun idsInWindowSliced(playlistId: String, fromMillis: Long, toMillis: Long): List<Long> {
+        val until = toMillis + 93_600_000L
+        val out = ArrayList<Long>()
+        var lo = fromMillis + 1
+        while (lo < until) {
+            val hi = minOf(until, lo + EPG_ID_SLICE_MS)
+            out += epgProgrammeDao.idsEndingBetween(playlistId, lo, hi)
+            lo = hi
+        }
+        return out
+    }
+
     /** Low-memory profile (DeviceMemory): keep less of the guide in memory. */
     val lowMemory: Boolean get() = com.aeriotv.android.core.system.DeviceMemory.isLow(context)
 
@@ -2155,7 +2172,7 @@ class PlaylistRepository @Inject constructor(
             // Returned in id order: the guide's dedup keeps the first of two
             // rows in a slot, which has always been the lower id.
             val startedAt = android.os.SystemClock.elapsedRealtime()
-            val ids = epgProgrammeDao.idsInWindow(playlistId, fromMillis, toMillis).sorted()
+            val ids = idsInWindowSliced(playlistId, fromMillis, toMillis).sorted()
             val idsMs = android.os.SystemClock.elapsedRealtime() - startedAt
             val out = ArrayList<EPGProgramme>(ids.size)
             // One copy per distinct string for this load: every row read from
@@ -3634,3 +3651,7 @@ private const val TAG_CAPS = "AerioCaps"
 /** Row ids per query of the launch guide read: under SQLite's 999 bound
  *  parameters, and a page of rows that fits one cursor window. */
 private const val EPG_READ_ID_CHUNK = 900
+
+// The guide ids are read 12 hours of end times at a time: about 15,000 ids on 1,500 channels,
+// a third of what one 2 MB cursor window holds (idsInWindowSliced)
+private const val EPG_ID_SLICE_MS = 12L * 3_600_000L

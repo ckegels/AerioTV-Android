@@ -58,6 +58,19 @@ interface EpgProgrammeDao {
     )
     suspend fun idsInWindow(playlistId: String, fromMillis: Long, toMillis: Long): List<Long>
 
+    /**
+     * [idsInWindow] for one slice of end times, [fromMillis, untilMillis). Read slice by slice
+     * (PlaylistRepository.idsInWindowSliced): one query for the whole window returned 177,000
+     * ids, more than Android's 2 MB cursor window holds, and on a Shield the read failed at row
+     * 43,575 ("Couldn't read row ... from CursorWindow") -- every rebuild of the guide after it
+     * failed and the guide stayed on "No info" (2026-10-02).
+     */
+    @Query(
+        "SELECT id FROM epg_programme INDEXED BY index_epg_programme_playlistId_endMillis " +
+            "WHERE playlistId = :playlistId AND endMillis >= :fromMillis AND endMillis < :untilMillis"
+    )
+    suspend fun idsEndingBetween(playlistId: String, fromMillis: Long, untilMillis: Long): List<Long>
+
     /** Rows by id (at most 900 ids: SQLite's bound-parameter limit), those
      *  starting before [toMillis], in id order. */
     @Query("SELECT * FROM epg_programme WHERE id IN (:ids) AND startMillis < :toMillis ORDER BY id")
