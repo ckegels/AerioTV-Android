@@ -687,6 +687,13 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_TELETEXT_SUBTITLES] = value }
     }
 
+    /** Generated captions (Dispatch More v247): the Subtitles menu offers captions the server
+     *  makes from the sound. On by default; off, the TS extractor is Media3's own again. */
+    val generatedCaptions: Flow<Boolean> = store.data.map { it[KEY_GENERATED_CAPTIONS] ?: true }
+    suspend fun setGeneratedCaptions(value: Boolean) {
+        store.edit { it[KEY_GENERATED_CAPTIONS] = value }
+    }
+
     val autoRecoverFrozenStreams: Flow<Boolean> =
         store.data.map { it[KEY_AUTO_RECOVER_FROZEN_STREAMS] ?: true }
     suspend fun setAutoRecoverFrozenStreams(value: Boolean) {
@@ -2155,6 +2162,7 @@ class AppPreferences @Inject constructor(
         val KEY_DVR_SORT_ORDER = stringPreferencesKey("dvr_sort_order")
         val KEY_MATCH_CONTENT_RESOLUTION = booleanPreferencesKey("match_content_resolution")
         val KEY_TELETEXT_SUBTITLES = booleanPreferencesKey("teletext_subtitles")
+        val KEY_GENERATED_CAPTIONS = booleanPreferencesKey("generated_captions")
         val KEY_AUTO_RECOVER_FROZEN_STREAMS =
             booleanPreferencesKey("app_behaviors_auto_recover_frozen_streams")
         // TV player overlay style (info bar); device-local.
