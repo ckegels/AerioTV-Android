@@ -2780,7 +2780,8 @@ private fun LiveRewindChromeSection(
     )
     // Info bar style (TV): the next channels in guide order for the card row,
     // their current programmes, and what follows the current programme.
-    val infoBar = if (infoBarStyle && isTvForm && !isCatchupMode) {
+    // A look-back replay too: PlayerChromeOverlay shows it trimmed (InfoBarReplay)
+    val infoBar = if (infoBarStyle && isTvForm) {
         var currentIndex by currentIndexState
         val idx = currentIndex
         val upcoming = remember(channels, idx) {
