@@ -1332,7 +1332,8 @@ class PlaylistViewModel @Inject constructor(
         val apiKey = active.apiKey?.takeIf { it.isNotBlank() } ?: return null
         val base = com.aeriotv.android.core.playback.CatchupUrlBuilder.dispatcharrBaseFromStreamUrl(streamUrl)
             ?: active.urlString.trimEnd('/')
-        return dispatcharrClient.pollLiveCaptions(base, apiKey, channelUuid, since)
+        val lang = com.aeriotv.android.core.playback.CaptionLanguage.code(appPreferences.captionLanguage.first())
+        return dispatcharrClient.pollLiveCaptions(base, apiKey, channelUuid, since, lang)
     }
 
     /** The TV is done with this channel's generated captions. */

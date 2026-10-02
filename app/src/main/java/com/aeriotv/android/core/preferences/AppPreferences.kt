@@ -628,6 +628,13 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_GENERATED_CAPTIONS] = value }
     }
 
+    /** Generated captions' language (Dispatch More v248 translation): "" the programme's own,
+     *  "tv" this TV's language, or a two-letter code. Sent as &lang= on the caption poll. */
+    val captionLanguage: Flow<String> = store.data.map { it[KEY_CAPTION_LANGUAGE] ?: "" }
+    suspend fun setCaptionLanguage(value: String) {
+        store.edit { it[KEY_CAPTION_LANGUAGE] = value }
+    }
+
     val autoRecoverFrozenStreams: Flow<Boolean> =
         store.data.map { it[KEY_AUTO_RECOVER_FROZEN_STREAMS] ?: true }
     suspend fun setAutoRecoverFrozenStreams(value: Boolean) {
@@ -1979,6 +1986,7 @@ class AppPreferences @Inject constructor(
         val KEY_MATCH_CONTENT_RESOLUTION = booleanPreferencesKey("match_content_resolution")
         val KEY_TELETEXT_SUBTITLES = booleanPreferencesKey("teletext_subtitles")
         val KEY_GENERATED_CAPTIONS = booleanPreferencesKey("generated_captions")
+        val KEY_CAPTION_LANGUAGE = stringPreferencesKey("caption_language")
         val KEY_AUTO_RECOVER_FROZEN_STREAMS =
             booleanPreferencesKey("app_behaviors_auto_recover_frozen_streams")
         // Player Info Card element toggles (App Behaviors); device-local.

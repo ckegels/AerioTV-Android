@@ -411,6 +411,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setTeletextSubtitles(value) }
     }
     val generatedCaptions: Flow<Boolean> = prefs.generatedCaptions
+    val captionLanguage: Flow<String> = prefs.captionLanguage
+    fun setCaptionLanguage(value: String) {
+        viewModelScope.launch { prefs.setCaptionLanguage(value) }
+    }
     fun setGeneratedCaptions(value: Boolean) {
         viewModelScope.launch { prefs.setGeneratedCaptions(value) }
     }

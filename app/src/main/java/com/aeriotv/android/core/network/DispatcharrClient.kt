@@ -1201,9 +1201,17 @@ class DispatcharrClient @Inject constructor() {
      * time (PTS, seconds) it belongs to. Asking keeps the channel's job going and starts it.
      * A server without the endpoint answers 404: state "unsupported". Null on a failed call.
      */
-    suspend fun pollLiveCaptions(baseUrl: String, apiKey: String, channelUuid: String, since: Long): LiveCaptions? =
+    suspend fun pollLiveCaptions(
+        baseUrl: String,
+        apiKey: String,
+        channelUuid: String,
+        since: Long,
+        lang: String? = null,
+    ): LiveCaptions? =
         runCatching {
-            val url = "${baseUrl.trimEnd('/')}/api/channels/captions/live/$channelUuid/?since=$since"
+            // lang (v248): the lines translated into it, same seq and times
+            val url = "${baseUrl.trimEnd('/')}/api/channels/captions/live/$channelUuid/?since=$since" +
+                (lang?.let { "&lang=$it" } ?: "")
             val response = client.get(url) { applyAuth(apiKey) }
             val body = response.bodyAsText()
             // The server's own answers are JSON; a plain "Not Found" page is a server without it
@@ -3386,4 +3394,15 @@ data class LiveCaptions(
     val language: String = "",
     val behind: Double = 0.0,
     val cues: List<LiveCaption> = emptyList(),
+    /** Asked with a language (v248): how the translation went. */
+    val translation: LiveCaptionTranslation? = null,
+)
+
+@kotlinx.serialization.Serializable
+data class LiveCaptionTranslation(
+    val to: String = "",
+    val from: String = "",
+    val state: String = "",
+    val engine: String = "",
+    val reason: String = "",
 )
