@@ -1487,7 +1487,13 @@ class AerioExoPlayerHolder @Inject constructor(
                     watchdogScope.launch {
                         delay(if (httpCode == 503) 2_000L else 600L)
                         withContext(Dispatchers.Main) {
-                            if (isCatchup) {
+                            // A jump re-minted the session meanwhile (and deleted this one on
+                            // the server): replaying the old address got a 400 and the
+                            // "Catch-up Unavailable" card over the new session that was
+                            // playing (Shield, 2026-10-02). The newer tune stands.
+                            if (lastCatchupUrl != cu) {
+                                Log.i(TAG, "[CATCHUP] retry dropped: a newer session replaced the one that failed")
+                            } else if (isCatchup) {
                                 catchupRetryPass = true
                                 playCatchup(cu, lastCatchupTitle, lastCatchupSubtitle, lastCatchupArtworkUri)
                                 catchupRetryPass = false
