@@ -843,6 +843,7 @@ fun PlayerChromeOverlay(
                         focusable = true,
                         onScrubStep = onScrubStep,
                         onScrubCommit = onScrubCommit,
+                        labels = false,
                     )
                 }
             } else timeshiftState?.takeIf { it.buffering }?.let { ts ->
@@ -1840,6 +1841,8 @@ private fun TvCatchupTimeline(
     focusable: Boolean = false,
     onScrubStep: (Int, Boolean) -> Unit = { _, _ -> },
     onScrubCommit: () -> Unit = {},
+    /** The title and time under the bar; off in the info bar, which shows both itself. */
+    labels: Boolean = true,
 ) {
     val dur = durationMs.coerceAtLeast(1L)
     val current = (previewMs ?: positionMs).coerceIn(0L, dur)
@@ -1921,8 +1924,8 @@ private fun TvCatchupTimeline(
                 )
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Row(
+        if (labels) Spacer(Modifier.height(6.dp))
+        if (labels) Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
