@@ -1417,7 +1417,11 @@ class AerioExoPlayerHolder @Inject constructor(
             if (resumeGateActive) return
             if (isTimeshifting || isCatchup) return
             val ts = timeshift.get()
-            if (ts.activeWriter == null) return
+            // Server rewind has no ring on this device (no writer), but a media-key pause
+            // must still tell the server where it paused and a long one resume there: this
+            // returned early and a remote's play/pause resumed the stale live connection
+            // (Shield, 2026-10-02, a 4 min pause)
+            if (ts.activeWriter == null && !ts.serverMode) return
             if (playWhenReady) {
                 // GH #62: a MediaSession resume (remote play/pause key, QS
                 // card, notification, Bluetooth) after a LONG pause used to
@@ -1435,8 +1439,10 @@ class AerioExoPlayerHolder @Inject constructor(
                 val pausedAt = mediaPauseWallMs
                 mediaPauseWallMs = 0L
                 val w = ts.activeWriter
-                if (pausedAt > 0 &&
-                    System.currentTimeMillis() - pausedAt > 6_000 &&
+                val longPause = pausedAt > 0 && System.currentTimeMillis() - pausedAt > 6_000
+                if (longPause && ts.serverMode && playTimeshift(pausedAt - 1_000)) {
+                    Log.i(TAG, "[REWIND] media-key long-pause resume -> server recording at pause point")
+                } else if (longPause &&
                     w != null && !w.closed &&
                     playTimeshift((pausedAt - 1_000).coerceAtLeast(w.tailWallMs))
                 ) {
