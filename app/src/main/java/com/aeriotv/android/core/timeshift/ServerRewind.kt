@@ -16,6 +16,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Server rewind (Dispatch More v248, its fork/pause-resume.md §4.3): the server keeps the
@@ -123,7 +124,10 @@ class ServerRewind @Inject constructor(
         val b = base ?: return
         val key = apiKey() ?: return
         val viewer = DispatchMore.deviceId ?: "tv"
-        val at = behindAtMs?.let { positionProvider?.invoke() ?: it }
+        // The player is read on the main thread
+        val at = behindAtMs?.let { paused ->
+            positionProvider?.let { ask -> runCatching { withContext(Dispatchers.Main) { ask() } }.getOrNull() } ?: paused
+        }
         val answer = client.rewindWatch(b, key, path, uuid, viewer, at)
         if (answer != null && channelUuid == uuid) {
             _window.value = answer

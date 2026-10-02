@@ -235,6 +235,10 @@ class AerioExoPlayerHolder @Inject constructor(
     @Volatile private var cachedBufferFloorMs: Int = com.aeriotv.android.feature.settings.bufferMillisFor("default")
 
     init {
+        // Server rewind keeps from where playback is while behind live
+        prefScope.launch {
+            runCatching { timeshift.get().serverRewind.positionProvider = { currentRewindWallMs() } }
+        }
         prefScope.launch {
             appPreferences.audioPassthroughEnabled.collect { cachedAudioPassthrough = it }
         }
