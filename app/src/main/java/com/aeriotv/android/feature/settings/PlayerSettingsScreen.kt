@@ -276,15 +276,17 @@ fun PlayerSettingsScreen(
                         checked = generatedCaptions,
                         onCheckedChange = viewModel::setGeneratedCaptions,
                     )
-                    if (generatedCaptions) {
-                        // Pressing steps through the choices
+                    run {
+                        // Pressing steps through the choices. Always shown: hidden until
+                        // Generated Captions was on, nobody found it (2026-10-02)
                         val choices = com.aeriotv.android.core.playback.CaptionLanguage.CHOICES
                         val at = choices.indexOfFirst { it.first == captionLanguage }.coerceAtLeast(0)
                         SettingsActionRow(
                             label = "Caption Language: ${com.aeriotv.android.core.playback.CaptionLanguage.label(captionLanguage)}",
                             leadingIcon = androidx.compose.material.icons.Icons.Outlined.Translate,
                             onClick = { viewModel.setCaptionLanguage(choices[(at + 1) % choices.size].first) },
-                            subtitle = "Generated captions in this language, translated by the server when the programme speaks another. Original shows them as spoken.",
+                            subtitle = "Generated captions in this language, translated by the server when the programme speaks another. Original shows them as spoken." +
+                                if (generatedCaptions) "" else " Needs Generated Captions on.",
                         )
                     }
                 }

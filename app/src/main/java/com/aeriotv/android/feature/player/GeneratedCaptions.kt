@@ -39,6 +39,21 @@ import kotlinx.coroutines.delay
 /** The Subtitles menu's id for generated captions (track ids are 0 and up). */
 const val GENERATED_CAPTIONS_ID = -1001
 
+/**
+ * The Subtitles menu's generated captions in a language: one entry per
+ * [com.aeriotv.android.core.playback.CaptionLanguage] choice, so the language is picked where
+ * the captions are (it was only in Settings -> Player, and only once Generated Captions was
+ * on). The plain [GENERATED_CAPTIONS_ID] is the first choice, as spoken.
+ */
+fun generatedCaptionsId(languageIndex: Int): Int =
+    if (languageIndex <= 0) GENERATED_CAPTIONS_ID else GENERATED_CAPTIONS_ID - languageIndex
+
+/** The [com.aeriotv.android.core.playback.CaptionLanguage.CHOICES] index of a menu id, or -1. */
+fun generatedCaptionsLanguageIndex(id: Int): Int {
+    val index = GENERATED_CAPTIONS_ID - id
+    return if (index in com.aeriotv.android.core.playback.CaptionLanguage.CHOICES.indices) index else -1
+}
+
 /** The Dispatcharr channel UUID in a live proxy URL (/proxy/ts/stream/<uuid>), or null. */
 fun generatedCaptionsChannelUuid(streamUrl: String?): String? {
     val url = streamUrl ?: return null

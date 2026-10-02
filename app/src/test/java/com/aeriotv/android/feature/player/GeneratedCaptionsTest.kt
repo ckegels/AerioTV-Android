@@ -43,4 +43,14 @@ class GeneratedCaptionsTest {
         assertEquals("Busy now", captionStatusLine(LiveCaptions(state = "busy", reason = "Busy now")))
         assertEquals("Captions: no sound", captionStatusLine(LiveCaptions(state = "error", error = "no sound")))
     }
+
+    @Test
+    fun eachLanguageHasItsOwnMenuEntry() {
+        val languages = com.aeriotv.android.core.playback.CaptionLanguage.CHOICES
+        assertEquals(GENERATED_CAPTIONS_ID, generatedCaptionsId(0))
+        languages.indices.forEach { assertEquals(it, generatedCaptionsLanguageIndex(generatedCaptionsId(it))) }
+        // Track ids are 0 and up; other negative ids are not captions
+        assertEquals(-1, generatedCaptionsLanguageIndex(0))
+        assertEquals(-1, generatedCaptionsLanguageIndex(generatedCaptionsId(languages.size)))
+    }
 }

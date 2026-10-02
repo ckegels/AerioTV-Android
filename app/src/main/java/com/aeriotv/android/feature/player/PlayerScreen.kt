@@ -895,6 +895,7 @@ fun PlayerScreen(
     val generatedCaptionsState = remember { mutableStateOf(false) }
     val generatedCaptionsOn by generatedCaptionsState
     val generatedCaptionsAllowed by settingsVm.generatedCaptions.collectAsStateWithLifecycle(initialValue = true)
+    val captionLanguage by settingsVm.captionLanguage.collectAsStateWithLifecycle(initialValue = "")
     val audioTracksState = remember { mutableStateOf<AudioTracksState?>(null) }
     var audioTracks by audioTracksState
     val switchStreamState = remember { mutableStateOf<SwitchStreamState?>(null) }
@@ -2195,6 +2196,8 @@ private fun PlayerSheets(
     var multiviewPickerOpen by multiviewPickerOpenState
     var streamInfo by streamInfoState
     var subtitles by subtitlesState
+    // The caption language the Subtitles menu sets (GeneratedCaptions.kt)
+    val captionSettingsVm: SettingsViewModel = hiltViewModel()
     var generatedCaptionsOn by generatedCaptionsState
     var audioTracks by audioTracksState
     var switchStream by switchStreamState
@@ -2258,8 +2261,11 @@ private fun PlayerSheets(
             tracks = state.tracks,
             currentTrackId = state.currentSid,
             onSelect = { sid ->
-                if (sid == GENERATED_CAPTIONS_ID) {
-                    // Generated captions draw themselves (GeneratedCaptions.kt): no track
+                val languageIndex = sid?.let { generatedCaptionsLanguageIndex(it) } ?: -1
+                if (languageIndex >= 0) {
+                    // Generated captions draw themselves (GeneratedCaptions.kt): no track. The
+                    // language is the setting the caption poll reads, so it applies at once
+                    captionSettingsVm.setCaptionLanguage(com.aeriotv.android.core.playback.CaptionLanguage.CHOICES[languageIndex].first)
                     generatedCaptionsOn = true
                     exoHolder.player?.selectSubtitleTrack(null)
                 } else {
@@ -2477,6 +2483,7 @@ private fun LiveRewindChromeSection(
     var recordTarget by recordTargetState
     var streamInfo by streamInfoState
     var subtitles by subtitlesState
+    val captionLanguage by hiltViewModel<SettingsViewModel>().captionLanguage.collectAsStateWithLifecycle(initialValue = "")
     var generatedCaptionsOn by generatedCaptionsState
     var audioTracks by audioTracksState
     var switchStream by switchStreamState
@@ -2720,12 +2727,21 @@ private fun LiveRewindChromeSection(
             // Generated captions (GeneratedCaptions.kt) on a live Dispatcharr channel
             val offerGenerated = generatedCaptionsAllowed && !isCatchupMode &&
                 generatedCaptionsChannelUuid(currentChannel?.url) != null
+            val languages = com.aeriotv.android.core.playback.CaptionLanguage.CHOICES
             subtitles = SubtitlesState(
-                tracks = player.readSubtitleTracks() + listOfNotNull(
-                    SubtitleTrack(GENERATED_CAPTIONS_ID, "Generated captions (from the sound)", "")
-                        .takeIf { offerGenerated },
-                ),
-                currentSid = if (generatedCaptionsOn) GENERATED_CAPTIONS_ID else player.readCurrentSid(),
+                tracks = player.readSubtitleTracks() + if (offerGenerated) {
+                    languages.mapIndexed { index, (value, _) ->
+                        SubtitleTrack(
+                            generatedCaptionsId(index),
+                            if (index == 0) "Generated captions (from the sound)"
+                            else "Generated captions -- translated to ${com.aeriotv.android.core.playback.CaptionLanguage.label(value)}",
+                            "",
+                        )
+                    }
+                } else emptyList(),
+                currentSid = if (generatedCaptionsOn) {
+                    generatedCaptionsId(languages.indexOfFirst { it.first == captionLanguage }.coerceAtLeast(0))
+                } else player.readCurrentSid(),
             )
         },
         onShowAudioTracks = {
