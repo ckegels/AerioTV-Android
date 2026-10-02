@@ -249,9 +249,9 @@ fun PlayerChromeOverlay(
     // panel up as long as it is open.
     LaunchedEffect(moreOpen, sleepOpen) { onInteractingChange(moreOpen || sleepOpen) }
     LaunchedEffect(optionsMenuRequest) { if (optionsMenuRequest > 0) moreOpen = true }
-    // Info bar style: TV live playback only (a catch-up replay keeps the
-    // standard transport controls).
-    val useInfoBar = isTv && infoBar != null && !catchupMode
+    // Info bar style on TV, a look-back replay included (the user, 2026-10-02): the replay
+    // gets the same bar in the same place, its own timeline, and no card row (InfoBarReplay)
+    val useInfoBar = isTv && infoBar != null
 
     // Initial focus target when chrome appears -- the leftmost "Options"
     // pill on the bottom row. Without this, focus stays on PlayerScreen's
@@ -816,15 +816,36 @@ fun PlayerChromeOverlay(
     }
 
     if (useInfoBar && infoBar != null) {
+        // In a replay the screen's programme IS the replayed one (PlayerScreen.nowProgramme)
+        val replayProgramme = nowProgramme.takeIf { catchupMode }
         PlayerInfoBarOverlay(
             visible = pillVisible && !inPip && !moreOpen,
             expanded = chromeVisible,
             channel = channel,
-            programme = nowProgramme,
+            programme = replayProgramme ?: nowProgramme,
             model = infoBar,
             formatBadge = formatBadge,
             sleepRemainingMillis = sleepRemainingMillis,
-            timeline = timeshiftState?.takeIf { it.buffering }?.let { ts ->
+            replay = replayProgramme?.let { p ->
+                val day = java.text.SimpleDateFormat(
+                    android.text.format.DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "EEEMMMd"),
+                    java.util.Locale.getDefault(),
+                ).format(java.util.Date(p.startMillis))
+                InfoBarReplay(label = "Look back · $day", positionWallMs = p.startMillis + catchupPositionMs)
+            },
+            timeline = if (replayProgramme != null) {
+                {
+                    TvCatchupTimeline(
+                        positionMs = catchupPositionMs,
+                        durationMs = catchupDurationMs,
+                        title = replayProgramme.title,
+                        previewMs = scrubPreviewWallMs,
+                        focusable = true,
+                        onScrubStep = onScrubStep,
+                        onScrubCommit = onScrubCommit,
+                    )
+                }
+            } else timeshiftState?.takeIf { it.buffering }?.let { ts ->
                 {
                     TvRewindTimeline(
                         state = ts,
@@ -840,7 +861,15 @@ fun PlayerChromeOverlay(
             onInteraction = onInteraction,
             paused = isPlayerPaused,
             onTogglePause = onRewindTogglePause,
-            transport = timeshiftState?.takeIf { it.buffering }?.let { ts ->
+            transport = if (replayProgramme != null) {
+                InfoBarTransport(
+                    tailWallMs = replayProgramme.startMillis,
+                    headWallMs = replayProgramme.startMillis + catchupDurationMs.coerceAtLeast(1L),
+                    positionWallMs = replayProgramme.startMillis + catchupPositionMs,
+                    onSeekWall = { wall -> onCatchupSeekTo(wall - replayProgramme.startMillis) },
+                    onGoLive = {},
+                )
+            } else timeshiftState?.takeIf { it.buffering }?.let { ts ->
                 val head = maxOf(ts.headWallMs, ts.tailWallMs + 1)
                 InfoBarTransport(
                     tailWallMs = ts.tailWallMs,
