@@ -1444,6 +1444,13 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_CREDS_ENCRYPTED_V1] = value }
     }
 
+    /** True once the ArrTV look was applied by default (BuildConfig.ARRTV_LOOK_BY_DEFAULT). */
+    suspend fun arrTvLookAppliedOnce(): Boolean =
+        store.data.first()[KEY_ARRTV_LOOK_APPLIED_V1] ?: false
+    suspend fun setArrTvLookApplied() {
+        store.edit { it[KEY_ARRTV_LOOK_APPLIED_V1] = true }
+    }
+
     /**
      * Whether the one-time "your server credentials sync to your Drive in
      * cleartext" disclosure has been shown (audit task #53). Server credentials
@@ -2133,6 +2140,7 @@ class AppPreferences @Inject constructor(
         val KEY_SYNC_ACCESS_TOKEN = stringPreferencesKey("sync_access_token")
         val KEY_SYNC_TOKEN_EXPIRY = longPreferencesKey("sync_token_expiry")
         val KEY_CREDS_ENCRYPTED_V1 = booleanPreferencesKey("creds_encrypted_v1")
+        val KEY_ARRTV_LOOK_APPLIED_V1 = booleanPreferencesKey("arrtv_look_applied_v1")
         val KEY_CREDENTIALS_SYNC_DISCLOSED = booleanPreferencesKey("credentials_sync_disclosed")
         val KEY_BG_REFRESH_ENABLED = booleanPreferencesKey("background_refresh_enabled")
         val KEY_BG_REFRESH_INTERVAL_MINS = intPreferencesKey("background_refresh_interval_mins")
