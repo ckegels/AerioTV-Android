@@ -136,6 +136,11 @@ Compared with AerioTV:
   programme preview, and compact guide rows. Turning it off restores your previous settings.
 - Monochrome theme by default, and the ArrTV icon and TV banner.
 
+**Language**
+- **English and French.** ArrTV follows the device: French when the TV or phone is set to any
+  French, English otherwise. Settings › Appearance › Language picks one for ArrTV only (on
+  Android 13 and newer this is also the system's App languages page).
+
 **Speed and reliability**
 - The guide loads several times faster on low-end boxes (22 s → 6 s on a Chromecast with Google
   TV HD), paints a small time window first, and stays on screen when memory runs low.
