@@ -71,7 +71,7 @@ fun HexPickerDialog(
                 SettingsDialogTextButton(label = stringResource(R.string.common_cancel), onClick = onDismiss)
             }
         },
-        title = { Text(stringResource(R.string.settings2_hex_title, bucket.displayName)) },
+        title = { Text(stringResource(R.string.settings2_hex_title, stringResource(bucket.labelRes))) },
         text = {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {

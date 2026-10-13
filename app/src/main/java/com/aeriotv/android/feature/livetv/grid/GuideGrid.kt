@@ -1298,7 +1298,7 @@ private fun GridRow(
                             // more (Logan 2026-09-17): it lives in the preview
                             // banner's meta line, so the cell does not even
                             // measure it.
-                            val badges = if (showBadges) cell.epgFlags().filter { it.label !in hiddenBadges }
+                            val badges = if (showBadges) cell.epgFlags().filter { it.key !in hiddenBadges }
                                 .map { measure(it.label, badgeStyle, 12.sp.toPx(), ellipsis = false) to it.color } else emptyList()
                             CellText(title, null, null, sub, badges)
                         } else {
@@ -1314,7 +1314,7 @@ private fun GridRow(
                                 shortFmt.format(Date(cell.startMillis)) + " - " + shortFmt.format(Date(cell.endMillis))
                             }
                             val time = measure(range, timeStyle, 15.sp.toPx() * subScale, ellipsis = false)
-                            val badges = if (showBadges) cell.epgFlags().filter { it.label !in hiddenBadges }
+                            val badges = if (showBadges) cell.epgFlags().filter { it.key !in hiddenBadges }
                                 .map { measure(it.label, badgeStyle, 12.sp.toPx(), ellipsis = false) to it.color } else emptyList()
                             CellText(title, time, desc, sub, badges)
                         }

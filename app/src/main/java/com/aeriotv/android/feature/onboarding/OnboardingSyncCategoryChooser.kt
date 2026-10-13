@@ -114,8 +114,8 @@ fun OnboardingSyncCategoryChooser(
                 ) {
                     SyncCategory.entries.forEachIndexed { index, category ->
                         SettingsToggleRow(
-                            title = category.displayName,
-                            subtitle = category.subtitle,
+                            title = stringResource(category.displayNameRes),
+                            subtitle = stringResource(category.subtitleRes),
                             checked = selection[category] ?: true,
                             onCheckedChange = { selection[category] = it },
                             modifier = if (index == 0) {

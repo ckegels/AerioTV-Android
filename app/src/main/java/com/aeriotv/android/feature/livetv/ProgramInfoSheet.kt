@@ -295,7 +295,7 @@ private fun TvProgramInfoCard(
                             isNew = target.isNew, isLiveBroadcast = target.isLiveBroadcast,
                             isPremiere = target.isPremiere, isFinale = target.isFinale,
                             isRepeat = target.isRepeat || enrichedRepeat,
-                        ).filter { it.label !in hidden },
+                        ).filter { it.key !in hidden },
                     )
                 }
             }
@@ -445,7 +445,7 @@ private fun ProgramInfoBody(
                             isPremiere = target.isPremiere,
                             isFinale = target.isFinale,
                             isRepeat = target.isRepeat || enrichedRepeat,
-                        ).filter { it.label !in hidden },
+                        ).filter { it.key !in hidden },
                     )
                 }
             }
