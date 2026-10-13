@@ -167,6 +167,7 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
                     if (!appPreferences.arrTvLookAppliedOnce()) {
                         appPreferences.applyArrTvLook()
                         appPreferences.setArrTvLookApplied()
+                        android.util.Log.i("ArrTvLook", "ArrTV look applied by default")
                     }
                 }
             }
