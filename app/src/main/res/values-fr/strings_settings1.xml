@@ -144,6 +144,7 @@
     <string name="settings_general_network_footer">Ajustez les délais d\'attente si votre connexion est lente ou instable.</string>
     <plurals name="settings_general_timeout_seconds">
         <item quantity="one">%d seconde</item>
+        <item quantity="many">%d secondes</item>
         <item quantity="other">%d secondes</item>
     </plurals>
     <string name="settings_general_memory_header">Mémoire</string>
@@ -270,15 +271,18 @@
     <string name="settings_player_rewind_up_to">Revenir jusqu\'à</string>
     <plurals name="settings_player_minutes">
         <item quantity="one">%d minute</item>
+        <item quantity="many">%d minutes</item>
         <item quantity="other">%d minutes</item>
     </plurals>
     <plurals name="settings_player_hours">
         <item quantity="one">%d heure</item>
+        <item quantity="many">%d heures</item>
         <item quantity="other">%d heures</item>
     </plurals>
     <string name="settings_player_hours_minutes">%1$d h %2$d min</string>
     <plurals name="settings_player_seconds">
         <item quantity="one">%d seconde</item>
+        <item quantity="many">%d secondes</item>
         <item quantity="other">%d secondes</item>
     </plurals>
     <string name="settings_player_keep_recent_header">Garder les chaînes récentes en direct</string>
@@ -390,6 +394,7 @@
     <string name="settings_playlists_delete_text">Cette action supprime « %1$s » et ses identifiants de cet appareil.</string>
     <plurals name="settings_playlists_row_subtitle">
         <item quantity="one">%1$d chaîne • %2$s</item>
+        <item quantity="many">%1$d chaînes • %2$s</item>
         <item quantity="other">%1$d chaînes • %2$s</item>
     </plurals>
     <string name="settings_playlists_active">Active</string>

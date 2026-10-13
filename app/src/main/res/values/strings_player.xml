@@ -312,4 +312,6 @@
     <string name="player_playback_problem">Playback Problem</string>
     <string name="player_switch_version">Switch Version</string>
     <string name="player_player_options">Player options</string>
+
+    <string name="player_switch_not_confirmed">Stream switch not confirmed; staying on current feed</string>
 </resources>

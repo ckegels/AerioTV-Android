@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.movies
 
+import com.aeriotv.android.core.locale.AppText
 import com.aeriotv.android.R
 import androidx.compose.ui.res.stringResource
 import com.aeriotv.android.ui.scale.subtext
@@ -138,8 +139,8 @@ fun MediaTabContent(
             rows.filter { it.vodType == "movie" }.mapNotNull { r ->
                 val m = viewModel.movieByUuid(r.videoId)
                 // A row the player saved before the title was known reads
-                // "On Demand"; without the movie loaded there is nothing to show.
-                if (m == null && (r.title.isBlank() || r.title == "On Demand")) return@mapNotNull null
+                // "On Demand" (in the app's language); without the movie loaded there is nothing to show.
+                if (m == null && (r.title.isBlank() || r.title == "On Demand" || r.title == AppText.get(R.string.ondemand_title))) return@mapNotNull null
                 MediaHeroPage(
                     key = "cw:" + r.videoId, title = m?.let { displayTitle(it.displayName, it.year) } ?: displayTitle(r.title, null),
                     artUrl = m?.posterUrl ?: r.posterUrl, year = m?.year, season = null, episode = null,

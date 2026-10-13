@@ -70,6 +70,7 @@
     <string name="player_auto_hr_min_left">Encore %1$d h %2$d min</string>
     <plurals name="player_auto_channel_count">
         <item quantity="one">%d chaîne</item>
+        <item quantity="many">%d chaînes</item>
         <item quantity="other">%d chaînes</item>
     </plurals>
     <string name="player_auto_no_playlist_title">Aucune playlist configurée</string>
@@ -94,6 +95,7 @@
     <string name="player_limit_user_message_unknown">Votre compte ne peut lire qu\'un nombre limité de sessions à la fois, et elles sont toutes utilisées. Arrêtez une lecture en cours ou contactez l\'administrateur de votre serveur.</string>
     <plurals name="player_limit_user_message">
         <item quantity="one">Votre compte peut lire %d session à la fois, et elle est déjà utilisée. Arrêtez une lecture en cours ou contactez l\'administrateur de votre serveur.</item>
+        <item quantity="many">Votre compte peut lire %d sessions à la fois, et elles sont toutes utilisées. Arrêtez une lecture en cours ou contactez l\'administrateur de votre serveur.</item>
         <item quantity="other">Votre compte peut lire %d sessions à la fois, et elles sont toutes utilisées. Arrêtez une lecture en cours ou contactez l\'administrateur de votre serveur.</item>
     </plurals>
     <!-- LiveStreamFailover.kt -->
@@ -312,4 +314,6 @@
     <string name="player_playback_problem">Problème de lecture</string>
     <string name="player_switch_version">Changer de version</string>
     <string name="player_player_options">Options du lecteur</string>
+
+    <string name="player_switch_not_confirmed">Changement de flux non confirmé ; le flux actuel est conservé</string>
 </resources>

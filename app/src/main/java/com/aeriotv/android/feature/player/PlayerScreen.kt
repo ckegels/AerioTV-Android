@@ -2569,7 +2569,7 @@ private fun PlayerSheets(
                         if (!confirmed) {
                             Toast.makeText(
                                 context,
-                                "Stream switch not confirmed; staying on current feed",
+                                context.getString(R.string.player_switch_not_confirmed),
                                 Toast.LENGTH_SHORT,
                             ).show()
                             return@launch

@@ -18,12 +18,12 @@
     <string name="ondemand_no_series">Aucune série</string>
     <string name="ondemand_try_different_search">Essayez un autre terme de recherche.</string>
     <plurals name="ondemand_hidden_groups_movies">
-        <item quantity="one">Le groupe que vous avez masqué contient tous les films de cette bibliothèque. Utilisez le bouton de filtre pour en réafficher.</item>
+        <item quantity="one">%1$d groupe que vous avez masqué contient tous les films de cette bibliothèque. Utilisez le bouton de filtre pour en réafficher.</item>
         <item quantity="many">Les %1$d groupes que vous avez masqués contiennent tous les films de cette bibliothèque. Utilisez le bouton de filtre pour en réafficher.</item>
         <item quantity="other">Les %1$d groupes que vous avez masqués contiennent tous les films de cette bibliothèque. Utilisez le bouton de filtre pour en réafficher.</item>
     </plurals>
     <plurals name="ondemand_hidden_groups_series">
-        <item quantity="one">Le groupe que vous avez masqué contient toutes les séries de cette bibliothèque. Utilisez le bouton de filtre pour en réafficher.</item>
+        <item quantity="one">%1$d groupe que vous avez masqué contient toutes les séries de cette bibliothèque. Utilisez le bouton de filtre pour en réafficher.</item>
         <item quantity="many">Les %1$d groupes que vous avez masqués contiennent toutes les séries de cette bibliothèque. Utilisez le bouton de filtre pour en réafficher.</item>
         <item quantity="other">Les %1$d groupes que vous avez masqués contiennent toutes les séries de cette bibliothèque. Utilisez le bouton de filtre pour en réafficher.</item>
     </plurals>

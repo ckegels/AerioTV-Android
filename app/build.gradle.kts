@@ -173,6 +173,14 @@ android {
         localeFilters += listOf("en", "fr")
     }
 
+    // Settings -> Appearance -> Language can pick a language the device is not
+    // set to, so an app bundle must keep every language in the base APK.
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

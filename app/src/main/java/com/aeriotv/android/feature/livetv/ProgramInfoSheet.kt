@@ -322,8 +322,10 @@ private fun TvProgramInfoCard(
                     verticalAlignment = Alignment.Top,
                     modifier = Modifier.padding(top = 5.dp),
                 ) {
+                    val windowLabel = stringResource(R.string.core_recording_fact_window)
+                    val windowSep = stringResource(R.string.core_recording_fact_window_range, "", "")
                     facts.rows().forEach { (label, value) ->
-                        TvInfoColumn(label, if (label == "Window") value.replace(" to ", " to\n") else value)
+                        TvInfoColumn(label, if (label == windowLabel) value.replace(windowSep, windowSep.trimEnd() + "\n") else value)
                     }
                 }
             }

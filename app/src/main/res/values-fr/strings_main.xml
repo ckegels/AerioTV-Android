@@ -181,4 +181,64 @@
         <item quantity="other">%1$d jours</item>
     </plurals>
     <string name="main_configure_guide_days_info">Nombre de jours de guide à charger, en arrière et en avant. Dispatcharr uniquement ; les autres sources affichent ce que contient leur guide.</string>
+
+    <!-- Navigation.kt, MainScaffold.kt, MainActivity.kt -->
+    <string name="main_playing_on">Lecture sur %1$s</string>
+    <string name="main_tv_fallback">TV</string>
+    <string name="main_recording_fallback">Enregistrement</string>
+    <string name="main_signed_in_restoring">Connecté en tant que %1$s. Restauration de vos données...</string>
+    <string name="main_signed_in_no_playlists">Connecté en tant que %1$s. Aucune playlist dans Drive pour l\'instant : configurez-en une ci-dessous.</string>
+    <string name="main_signed_in_no_playlists_plain">Connecté. Aucune playlist dans Drive pour l\'instant.</string>
+    <string name="main_sign_in_needs_activity">La connexion nécessite une activité au premier plan. Réessayez.</string>
+    <string name="main_drive_not_set_up">La synchronisation Drive n\'est pas encore configurée</string>
+    <string name="main_drive_not_configured_text">Cette version d\'AerioTV n\'intègre pas d\'identifiant client Web OAuth Google Cloud. Ajoutez GOOGLE_DRIVE_WEB_CLIENT_ID à local.properties (et enregistrez le SHA-1 du certificat de signature de cet APK dans le même projet Cloud) pour que Se connecter avec Google fonctionne.</string>
+    <string name="main_episode_fallback">Épisode</string>
+    <string name="main_arrtv_look_applied">Apparence ArrTV appliquée</string>
+    <string name="main_control_a_tv">Contrôler une TV</string>
+    <string name="main_show_tab_bar">Afficher la barre d\'onglets, %1$s</string>
+    <string name="main_apply_arrtv_look">Appliquer l\'apparence ArrTV</string>
+    <string name="main_refresh_channels_guide">Actualiser les chaînes et le guide</string>
+    <string name="main_close_app_title">Voulez-vous fermer AerioTV ?</string>
+    <string name="main_close_app">Fermer AerioTV</string>
+
+    <!-- PlaylistViewModel.kt -->
+    <string name="main_pl_refresh_saved_failed">Impossible d\'actualiser la source enregistrée : %1$s</string>
+    <string name="main_pl_unknown_error">erreur inconnue</string>
+    <string name="main_pl_enter_url">Saisissez une URL</string>
+    <string name="main_pl_source_later">La prise en charge de %1$s arrivera dans une prochaine version.</string>
+    <string name="main_pl_enter_key_or_login">Saisissez une clé API, ou un nom d\'utilisateur et un mot de passe.</string>
+    <string name="main_pl_user_pass_required">Le nom d\'utilisateur et le mot de passe sont obligatoires</string>
+    <string name="main_pl_no_channels">Aucune chaîne trouvée.</string>
+    <string name="main_pl_failed_to_load">Échec du chargement</string>
+    <string name="main_pl_save_failed">Échec de l\'enregistrement</string>
+    <string name="main_pl_too_large">%1$s : la playlist est trop volumineuse pour la mémoire de cet appareil. S\'il s\'agit d\'un lien get.php Xtream Codes, ajoutez-le plutôt avec le type de source Xtream Codes.</string>
+    <string name="main_pl_prefixed_error">%1$s : %2$s</string>
+    <string name="main_pl_no_active">Aucune playlist active</string>
+    <plurals name="main_pl_channels_loaded">
+        <item quantity="one">%1$d chaîne chargée</item>
+        <item quantity="many">%1$d chaînes chargées</item>
+        <item quantity="other">%1$d chaînes chargées</item>
+    </plurals>
+    <plurals name="main_pl_channels_reloaded">
+        <item quantity="one">%1$d chaîne rechargée</item>
+        <item quantity="many">%1$d chaînes rechargées</item>
+        <item quantity="other">%1$d chaînes rechargées</item>
+    </plurals>
+    <string name="main_pl_refresh_failed">Échec de l\'actualisation : %1$s</string>
+    <string name="main_pl_no_epg_source">Aucune source EPG configurée</string>
+    <plurals name="main_pl_epg_updated">
+        <item quantity="one">EPG mis à jour (%1$d programme)</item>
+        <item quantity="many">EPG mis à jour (%1$d programmes)</item>
+        <item quantity="other">EPG mis à jour (%1$d programmes)</item>
+    </plurals>
+    <string name="main_pl_epg_refresh_failed">Échec de l\'actualisation de l\'EPG : %1$s</string>
+    <plurals name="main_pl_connected_ok">
+        <item quantity="one">Connexion réussie (%1$d chaîne)</item>
+        <item quantity="many">Connexion réussie (%1$d chaînes)</item>
+        <item quantity="other">Connexion réussie (%1$d chaînes)</item>
+    </plurals>
+    <string name="main_pl_connection_failed">Échec de la connexion : %1$s</string>
+    <string name="main_pl_using_local">Serveur local joignable, URL locale utilisée</string>
+    <string name="main_pl_using_remote">URL distante utilisée</string>
+    <string name="main_pl_switch_failed">Échec du changement : %1$s</string>
 </resources>

@@ -23,6 +23,7 @@
     <string name="settings2_playlist_set_active">Définir comme active</string>
     <plurals name="settings2_channel_count">
         <item quantity="one">%d chaîne</item>
+        <item quantity="many">%d chaînes</item>
         <item quantity="other">%d chaînes</item>
     </plurals>
     <string name="settings2_about_device">Appareil</string>
@@ -150,6 +151,7 @@
     <string name="settings2_edit_all_available">Maximum disponible</string>
     <plurals name="settings2_edit_guide_days_count">
         <item quantity="one">%d jour</item>
+        <item quantity="many">%d jours</item>
         <item quantity="other">%d jours</item>
     </plurals>
     <string name="settings2_edit_channel_profile">Profil de chaînes</string>
@@ -301,11 +303,13 @@
     <string name="settings2_sync_no_categories">Aucune catégorie de synchronisation activée</string>
     <plurals name="settings2_sync_pushed">
         <item quantity="one">%d catégorie envoyée vers Drive</item>
+        <item quantity="many">%d catégories envoyées vers Drive</item>
         <item quantity="other">%d catégories envoyées vers Drive</item>
     </plurals>
     <string name="settings2_sync_push_failed">Échec de l\'envoi de %1$d catégorie(s) sur %2$d</string>
     <plurals name="settings2_sync_pulled">
         <item quantity="one">%d catégorie récupérée depuis Drive</item>
+        <item quantity="many">%d catégories récupérées depuis Drive</item>
         <item quantity="other">%d catégories récupérées depuis Drive</item>
     </plurals>
     <string name="settings2_sync_pull_failed">%1$d catégorie(s) sur %2$d non appliquée(s) (absente(s) de Drive ou en échec)</string>

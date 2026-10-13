@@ -1,5 +1,6 @@
 package com.aeriotv.android
 
+import androidx.compose.ui.res.stringResource
 import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -1148,13 +1149,13 @@ class MainActivity : ComponentActivity() {
                             if (showExitConfirm.value) {
                                 val exitGuard = rememberTvMenuGuard()
                                 TvActionMenuDialog(
-                                    title = "Would you like to close AerioTV?",
+                                    title = stringResource(R.string.main_close_app_title),
                                     guard = exitGuard,
                                     onDismiss = { showExitConfirm.value = false },
                                     // TvActionMenuDialog appends its own Cancel row.
                                     actions = listOf(
                                         TvMenuAction(
-                                            label = "Close AerioTV",
+                                            label = stringResource(R.string.main_close_app),
                                             icon = Icons.Outlined.Close,
                                             destructive = true,
                                             onClick = { finish() },

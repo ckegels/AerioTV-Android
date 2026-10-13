@@ -126,15 +126,26 @@ object AppLocale {
 object AppText {
     private lateinit var app: Context
 
+    /** Plain JVM unit tests have no Application: they hand in a lookup instead. */
+    private var testLookup: ((id: Int, count: Int?) -> String)? = null
+
     /** Application.attachBaseContext, so it is ready before anything runs. */
     fun init(application: Context) {
         app = application
     }
 
-    fun get(@StringRes id: Int): String = app.getString(id)
+    /** Unit tests: resolve ids with [lookup] (the plural count is null for plain strings). */
+    @androidx.annotation.VisibleForTesting
+    fun initForTests(lookup: (id: Int, count: Int?) -> String) {
+        testLookup = lookup
+    }
 
-    fun get(@StringRes id: Int, vararg args: Any): String = app.getString(id, *args)
+    fun get(@StringRes id: Int): String = testLookup?.invoke(id, null) ?: app.getString(id)
+
+    fun get(@StringRes id: Int, vararg args: Any): String =
+        testLookup?.let { String.format(it(id, null), *args) } ?: app.getString(id, *args)
 
     fun plural(id: Int, count: Int, vararg args: Any): String =
-        app.resources.getQuantityString(id, count, *args)
+        testLookup?.let { String.format(it(id, count), *args) }
+            ?: app.resources.getQuantityString(id, count, *args)
 }
