@@ -845,6 +845,12 @@ class MainActivity : ComponentActivity() {
         resolutionModeApplied = false
     }
 
+    // The app's language (Settings -> Appearance -> Language).
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(newBase)
+        com.aeriotv.android.core.locale.AppLocale.applyTo(this, newBase)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // GH#40 rate match: the seamless matcher reports the content rate

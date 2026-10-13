@@ -42,6 +42,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.aeriotv.android.R
+import com.aeriotv.android.core.locale.AppLanguage
+import com.aeriotv.android.core.locale.AppLocale
+import com.aeriotv.android.core.pip.findActivity
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -136,6 +142,11 @@ fun AppearanceSettingsScreen(
     val compactModernLayout by viewModel.compactModernLayout.collectAsStateWithLifecycle(initialValue = false)
 
     var accentPickerOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val language = remember { AppLocale.current(context) }
+    val languageHeader = stringResource(R.string.language_header)
+    val languageFooter = stringResource(R.string.language_footer)
+    val languageSystem = stringResource(R.string.language_system)
 
     Column(modifier = Modifier.fillMaxSize()) {
         SettingsDetailTopBar(title = "Appearance", onBack = onBack)
@@ -165,6 +176,21 @@ fun AppearanceSettingsScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
+                // LANGUAGE card: the device's language, or one for this app only.
+                settingsCard(header = languageHeader, footer = languageFooter) {
+                    AppLanguage.entries.forEachIndexed { i, option ->
+                        if (i > 0) DividerRow()
+                        CheckRow(
+                            title = option.nativeName ?: languageSystem,
+                            selected = option == language,
+                            onClick = {
+                                if (option != language) {
+                                    context.findActivity()?.let { AppLocale.set(it, option) }
+                                }
+                            },
+                        )
+                    }
+                }
                 // LAYOUT card (TV only) — the compact modern layout switch.
                 if (isTvDevice) {
                     settingsCard(
