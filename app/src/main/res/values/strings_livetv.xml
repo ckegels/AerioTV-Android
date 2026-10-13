@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Live TV: channel list, guide, groups, programme info, search, reminders,
+     remote-control hints and the home-screen channel. -->
+<resources>
+    <string name="livetv_title">Live TV</string>
+    <string name="livetv_live_badge">LIVE</string>
+    <string name="livetv_badge_on_now">ON NOW</string>
+    <string name="livetv_untitled">Untitled</string>
+    <string name="livetv_today">Today</string>
+    <string name="livetv_yesterday">Yesterday</string>
+    <string name="livetv_tomorrow">Tomorrow</string>
+    <!-- "Today, Sep 10": the day's name, then the date -->
+    <string name="livetv_day_with_date">%1$s, %2$s</string>
+    <string name="livetv_dismiss">Dismiss</string>
+
+    <!-- ProgramCategory.kt -->
+    <string name="livetv_category_sports">Sports</string>
+    <string name="livetv_category_movies">Movies</string>
+    <string name="livetv_category_kids">Kids</string>
+    <string name="livetv_category_news">News</string>
+    <string name="livetv_category_documentary">Documentary</string>
+    <string name="livetv_category_drama">Drama</string>
+    <string name="livetv_category_comedy">Comedy</string>
+    <string name="livetv_category_reality">Reality</string>
+    <string name="livetv_category_educational">Educational</string>
+    <string name="livetv_category_scifi">Sci-Fi / Fantasy</string>
+    <string name="livetv_category_music">Music</string>
+
+    <!-- GuideIndex.kt: guide entries made from an event channel's name -->
+    <string name="livetv_event_starts_at">Starts %1$s</string>
+    <string name="livetv_event_started_at">Started %1$s</string>
+    <string name="livetv_event_from_channel_name">Event listing from the channel name; the provider has no guide data for it.</string>
+
+    <!-- RemoteControlHints.kt: key names -->
+    <string name="livetv_remote_key_hold_ok">Hold OK</string>
+    <string name="livetv_remote_key_up">Up</string>
+    <string name="livetv_remote_key_hold_up">Hold Up</string>
+    <string name="livetv_remote_key_down">Down</string>
+    <string name="livetv_remote_key_hold_down">Hold Down</string>
+    <string name="livetv_remote_key_left">Left</string>
+    <string name="livetv_remote_key_hold_left">Hold Left</string>
+    <string name="livetv_remote_key_right">Right</string>
+    <string name="livetv_remote_key_hold_right">Hold Right</string>
+    <string name="livetv_remote_key_play_pause">Play/Pause</string>
+    <string name="livetv_remote_key_ffwd">Fast Forward</string>
+    <string name="livetv_remote_key_rewind">Rewind</string>
+    <string name="livetv_remote_key_channel_up">Channel Up</string>
+    <string name="livetv_remote_key_channel_down">Channel Down</string>
+    <string name="livetv_remote_key_back">Back</string>
+    <string name="livetv_remote_key_double_back">Double Back</string>
+    <string name="livetv_remote_key_back_twice">Back twice</string>
+    <string name="livetv_remote_key_left_right">Left/Right</string>
+    <string name="livetv_remote_key_up_down">Up/Down</string>
+
+    <!-- RemoteControlHints.kt: player actions inside a sentence -->
+    <string name="livetv_remote_phrase_program_info">program info</string>
+    <string name="livetv_remote_phrase_player_controls">player controls</string>
+    <string name="livetv_remote_phrase_options">options</string>
+    <string name="livetv_remote_phrase_channel_list">the channel list</string>
+    <string name="livetv_remote_phrase_recent_channels">recently watched channels</string>
+    <string name="livetv_remote_phrase_search">search</string>
+    <string name="livetv_remote_phrase_previous_channel">the previous channel</string>
+    <string name="livetv_remote_phrase_tv_guide">the TV guide</string>
+    <string name="livetv_remote_select_is">Select: %1$s</string>
+    <string name="livetv_remote_hold_select_is">Hold Select: %1$s</string>
+    <string name="livetv_remote_left_channel_list">Left = channel list</string>
+    <string name="livetv_remote_left_again_groups">Left again = groups</string>
+    <string name="livetv_remote_left_is">Left = %1$s</string>
+    <string name="livetv_remote_right_is">Right = %1$s</string>
+
+    <!-- RemoteControlHints.kt: guide actions inside a sentence -->
+    <string name="livetv_remote_guide_earlier">browse earlier programs</string>
+    <string name="livetv_remote_guide_later">browse later programs</string>
+    <string name="livetv_remote_guide_group_pills">jump to the group pills</string>
+    <string name="livetv_remote_guide_page_up">page channels up</string>
+    <string name="livetv_remote_guide_page_down">page channels down</string>
+    <string name="livetv_remote_guide_now">jump to now</string>
+    <string name="livetv_remote_guide_day">jump to a day and time</string>
+    <string name="livetv_remote_guide_top">jump to the top channel</string>
+    <string name="livetv_remote_guide_player">return to the player</string>
+    <string name="livetv_remote_hold_left_to">Hold left on remote to %1$s.</string>
+    <string name="livetv_remote_short_earlier">earlier</string>
+    <string name="livetv_remote_short_later">later</string>
+    <string name="livetv_remote_short_group_pills">group pills</string>
+    <string name="livetv_remote_short_page_up">page up</string>
+    <string name="livetv_remote_short_page_down">page down</string>
+    <string name="livetv_remote_short_now">now</string>
+    <string name="livetv_remote_short_jump_to">jump to</string>
+    <string name="livetv_remote_short_top">top channel</string>
+    <string name="livetv_remote_short_player">player</string>
+    <string name="livetv_remote_hold_left_is">Hold Left = %1$s</string>
+
+    <!-- RemoteControlHints.kt: the hint strip -->
+    <string name="livetv_remote_strip_groups">Groups</string>
+    <string name="livetv_remote_strip_group_pills">Group pills</string>
+    <string name="livetv_remote_strip_earlier">Earlier programs</string>
+    <string name="livetv_remote_strip_later">Later programs</string>
+    <string name="livetv_remote_strip_page_up">Page up</string>
+    <string name="livetv_remote_strip_page_down">Page down</string>
+    <string name="livetv_remote_strip_now">Now</string>
+    <string name="livetv_remote_strip_jump_to_day">Jump to day</string>
+    <string name="livetv_remote_strip_top_channel">Top channel</string>
+    <string name="livetv_remote_strip_resume">Resume</string>
+    <string name="livetv_remote_strip_close_mini">Close mini</string>
+    <string name="livetv_remote_strip_program_info">Program info</string>
+    <string name="livetv_remote_strip_program_menu">Program menu</string>
+    <string name="livetv_remote_strip_record">Record</string>
+    <string name="livetv_remote_strip_player_controls">Player controls</string>
+    <string name="livetv_remote_strip_options">Options</string>
+    <string name="livetv_remote_strip_channel_list">Channel list</string>
+    <string name="livetv_remote_strip_recent_channels">Recent channels</string>
+    <string name="livetv_remote_strip_previous_channel">Previous channel</string>
+    <string name="livetv_remote_strip_tv_guide">TV Guide</string>
+    <string name="livetv_remote_strip_channel_up">Channel up</string>
+    <string name="livetv_remote_strip_channel_down">Channel down</string>
+    <string name="livetv_remote_strip_play_pause">Play or pause</string>
+    <string name="livetv_remote_strip_seek_forward">Seek forward</string>
+    <string name="livetv_remote_strip_seek_back">Seek back</string>
+    <string name="livetv_remote_strip_restart">Restart</string>
+    <string name="livetv_remote_strip_jump_to_live">Jump to live</string>
+    <string name="livetv_remote_strip_subtitles">Subtitles</string>
+    <string name="livetv_remote_strip_audio">Audio</string>
+    <string name="livetv_remote_strip_aspect_ratio">Aspect ratio</string>
+    <string name="livetv_remote_strip_sleep_timer">Sleep timer</string>
+    <string name="livetv_remote_strip_stop">Stop</string>
+    <string name="livetv_remote_strip_scrub">Scrub</string>
+    <string name="livetv_remote_strip_channels">Channels</string>
+    <string name="livetv_remote_strip_exit">Exit</string>
+    <string name="livetv_remote_strip_mini_player">Mini player</string>
+    <string name="livetv_remote_strip_go_to_time">Go to time</string>
+    <string name="livetv_remote_strip_controls">Controls</string>
+    <string name="livetv_remote_strip_scrubber">Scrubber</string>
+
+    <!-- HomeChannelsPublisher.kt: the Android TV home-screen row -->
+    <string name="livetv_home_top_channels">Top Channels</string>
+    <string name="livetv_home_channel_number">Channel %1$s</string>
+
+    <!-- TvQrLinkDialog.kt -->
+    <string name="livetv_qr_code_for">QR code for %1$s</string>
+
+    <!-- Groups -->
+    <string name="livetv_group_all_channels">All Channels</string>
+    <string name="livetv_group_favorites">Favorites</string>
+    <string name="livetv_group_recently_watched">Recently Watched</string>
+    <string name="livetv_group_collection">Collection</string>
+    <string name="livetv_groups">Groups</string>
+    <string name="livetv_channel_groups">Channel Groups</string>
+    <string name="livetv_channel_groups_header">CHANNEL GROUPS</string>
+    <string name="livetv_default_group">Default group</string>
+    <string name="livetv_manage_groups">Manage Groups</string>
+    <plurals name="livetv_manage_groups_hidden">
+        <item quantity="one">Manage Groups (%1$d hidden)</item>
+        <item quantity="other">Manage Groups (%1$d hidden)</item>
+    </plurals>
+    <string name="livetv_manage_groups_short">Manage groups</string>
+    <plurals name="livetv_manage_groups_short_hidden">
+        <item quantity="one">Manage groups (%1$d hidden)</item>
+        <item quantity="other">Manage groups (%1$d hidden)</item>
+    </plurals>
+    <string name="livetv_group_order">Order</string>
+    <string name="livetv_group_sort_az">A-Z</string>
+    <string name="livetv_group_sort_manual">Manual</string>
+    <string name="livetv_group_moving">Moving</string>
+    <string name="livetv_manage_groups_hint">Check groups to show, uncheck to hide.</string>
+    <string name="livetv_manage_groups_hint_manual">Drag to reorder, check to show or hide.</string>
+    <string name="livetv_manage_groups_tv_hint">Toggle groups on or off to show or hide them.</string>
+    <string name="livetv_manage_groups_tv_hint_manual">Hold OK on a group to move it, then use up and down. OK or Back to finish.</string>
+    <string name="livetv_no_groups_available">No groups available</string>
+    <string name="livetv_drag_to_reorder">Drag to reorder</string>
+    <string name="livetv_sidebar_layout">Sidebar layout</string>
+    <string name="livetv_sidebar_overlay">Overlay</string>
+    <string name="livetv_sidebar_shift">Shift guide</string>
+    <string name="livetv_sidebar_shift_hint">Shift guide moves the TV Guide over so the sidebar never covers programs.</string>
+
+    <!-- Favorites tab -->
+    <string name="livetv_favorites_empty_title">No Favorites</string>
+    <string name="livetv_favorites_empty_body">Long-press a channel in Live TV and tap Add to Favorites.</string>
+
+    <!-- Channel list -->
+    <string name="livetv_no_channel_number">No channel %1$s</string>
+    <string name="livetv_sort_by_number">By Number</string>
+    <string name="livetv_sort_by_name">By Name</string>
+    <string name="livetv_sort_favorites_first">Favorites First</string>
+    <string name="livetv_sort_is">Sort: %1$s</string>
+    <string name="livetv_empty_group_title">No Channels in This Group</string>
+    <string name="livetv_empty_group_body">This group has no channels yet. It fills in as soon as the provider assigns some.</string>
+    <string name="livetv_empty_group_no_matches_title">No Matching Channels</string>
+    <string name="livetv_empty_group_no_matches_body">No channels in this group match that search.</string>
+    <string name="livetv_show_all_channels">Show All Channels</string>
+    <string name="livetv_hide_options">Hide options</string>
+    <string name="livetv_more_options">More options</string>
+    <string name="livetv_close_search">Close search</string>
+    <string name="livetv_show_list">Show List</string>
+    <string name="livetv_show_guide">Show Guide</string>
+
+    <!-- GuideJumpSheet.kt -->
+    <string name="livetv_jump_title">Jump To</string>
+    <string name="livetv_jump_day">Day</string>
+    <string name="livetv_jump_time">Time</string>
+    <string name="livetv_jump_upcoming">Upcoming</string>
+    <string name="livetv_jump_previous">Previous</string>
+    <string name="livetv_jump_go">Go</string>
+    <string name="livetv_jump_back_to_now">Back to Now</string>
+    <string name="livetv_jump_slot_same_time">Same Time</string>
+    <string name="livetv_jump_slot_morning">Morning</string>
+    <string name="livetv_jump_slot_afternoon">Afternoon</string>
+    <string name="livetv_jump_slot_evening">Evening</string>
+    <string name="livetv_jump_slot_prime_time">Prime Time</string>
+    <string name="livetv_jump_slot_late">Late</string>
+    <!-- "Morning 7 AM" -->
+    <string name="livetv_jump_slot_with_hour">%1$s %2$s</string>
+    <!-- "Saturday, September 12, 2026 at 8:00 PM" -->
+    <string name="livetv_jump_target_at">%1$s at %2$s</string>
+
+    <!-- ProgramInfoSheet.kt -->
+    <string name="livetv_info_airs">Airs</string>
+    <string name="livetv_info_date">Date</string>
+    <string name="livetv_info_duration">Duration</string>
+    <string name="livetv_info_episode">Episode</string>
+    <string name="livetv_info_channel">Channel</string>
+    <string name="livetv_info_description">Description</string>
+    <string name="livetv_info_metadata">Metadata</string>
+    <string name="livetv_info_categories">Categories</string>
+    <string name="livetv_no_description">No program description provided in XMLTV.</string>
+    <string name="livetv_duration_minutes">%1$d min</string>
+    <string name="livetv_duration_hours">%1$d h</string>
+    <string name="livetv_duration_hours_minutes">%1$d h %2$d min</string>
+
+    <!-- RetainedChannelsIndicator.kt -->
+    <plurals name="livetv_channels_kept_live">
+        <item quantity="one">%1$d channel kept live</item>
+        <item quantity="other">%1$d channels kept live</item>
+    </plurals>
+    <string name="livetv_kept_live_title">Kept Live</string>
+    <string name="livetv_watch_channel">Watch %1$s</string>
+    <string name="livetv_stop_channel">Stop %1$s</string>
+    <string name="livetv_stop_all">Stop All</string>
+
+    <!-- Reminders -->
+    <string name="livetv_reminder_starting_now">Starting now</string>
+    <string name="livetv_reminder_starting_now_on">Starting now on %1$s</string>
+    <string name="livetv_reminder_starting_soon_on">Starting soon on %1$s</string>
+    <string name="livetv_reminder_channel_name">Programme reminders</string>
+    <string name="livetv_reminder_channel_description">Heads-up when a programme you set a reminder on is about to start.</string>
+
+    <!-- SearchScreen.kt -->
+    <string name="livetv_search_placeholder">Search movies, shows, programs…</string>
+    <string name="livetv_search_prompt">Search for movies, shows, or EPG programs</string>
+    <string name="livetv_search_no_results">No results for “%1$s”</string>
+    <string name="livetv_search_no_results_hint">Try a different search term or change the scope filter.</string>
+    <string name="livetv_search_result_movie">Movie</string>
+    <string name="livetv_search_result_tv_show">TV Show</string>
+    <string name="livetv_search_scope_movies">Movies</string>
+    <string name="livetv_search_scope_tv_shows">TV Shows</string>
+    <string name="livetv_search_scope_epg">EPG</string>
+</resources>

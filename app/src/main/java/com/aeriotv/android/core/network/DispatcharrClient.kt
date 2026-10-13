@@ -9,6 +9,8 @@ import io.ktor.utils.io.jvm.javaio.toInputStream
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.request.prepareGet
 import com.aeriotv.android.BuildConfig
+import com.aeriotv.android.R
+import com.aeriotv.android.core.locale.AppText
 import com.aeriotv.android.feature.ondemand.vodMeasuredDescriptors
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -178,15 +180,13 @@ class DispatcharrClient @Inject constructor() {
             }
         } catch (t: Throwable) {
             throw DispatcharrError.Transport(
-                "Login transport error: ${t.message ?: t::class.simpleName}",
+                AppText.get(R.string.core_dispatcharr_login_transport_error, t.message ?: t::class.simpleName.toString()),
             )
         }
         val code = response.status.value
         if (code == 401 || code == 403) {
             throw DispatcharrError.InvalidCredentials(
-                "Invalid username or password. AerioTV uses your Dispatcharr " +
-                    "Dashboard password (System -> Users -> Account tab), " +
-                    "not your Dispatcharr XC password.",
+                AppText.get(R.string.core_dispatcharr_invalid_credentials),
             )
         }
         if (code == 429) {
@@ -196,19 +196,17 @@ class DispatcharrClient @Inject constructor() {
             // credential problems that did not exist (Discord 2026-08-16,
             // iOS twin fixed the same day). Self-clearing: say WAIT.
             throw DispatcharrError.Transport(
-                "The server is rate-limiting login attempts (HTTP 429). " +
-                    "Wait a minute and try again.",
+                AppText.get(R.string.core_dispatcharr_login_rate_limited),
             )
         }
         if (!response.status.isSuccess()) {
-            throw DispatcharrError.Transport("Login transport error: HTTP $code")
+            throw DispatcharrError.Transport(AppText.get(R.string.core_dispatcharr_login_http_error, code))
         }
         return try {
             response.body()
         } catch (e: SerializationException) {
             throw DispatcharrError.UnexpectedResponse(
-                "Server returned an unexpected response shape during login. " +
-                    "Verify the URL points at a Dispatcharr 0.23.0 or newer instance.",
+                AppText.get(R.string.core_dispatcharr_login_unexpected),
             )
         }
     }
@@ -234,23 +232,23 @@ class DispatcharrClient @Inject constructor() {
             }
         } catch (t: Throwable) {
             throw DispatcharrError.Transport(
-                "Refresh transport error: ${t.message ?: t::class.simpleName}",
+                AppText.get(R.string.core_dispatcharr_refresh_transport_error, t.message ?: t::class.simpleName.toString()),
             )
         }
         val code = response.status.value
         if (code == 401 || code == 403) {
             throw DispatcharrError.RefreshExpired(
-                "Refresh token expired. AerioTV will re-authenticate from saved credentials.",
+                AppText.get(R.string.core_dispatcharr_refresh_expired),
             )
         }
         if (!response.status.isSuccess()) {
-            throw DispatcharrError.Transport("Refresh transport error: HTTP $code")
+            throw DispatcharrError.Transport(AppText.get(R.string.core_dispatcharr_refresh_http_error, code))
         }
         val body: RefreshResponse = try {
             response.body()
         } catch (e: SerializationException) {
             throw DispatcharrError.UnexpectedResponse(
-                "Refresh returned an unexpected response shape.",
+                AppText.get(R.string.core_dispatcharr_refresh_unexpected),
             )
         }
         return body.access
@@ -271,18 +269,17 @@ class DispatcharrClient @Inject constructor() {
             }
         } catch (t: Throwable) {
             throw DispatcharrError.Transport(
-                "Couldn't read user profile: ${t.message ?: t::class.simpleName}",
+                AppText.get(R.string.core_dispatcharr_profile_read_failed, t.message ?: t::class.simpleName.toString()),
             )
         }
         if (!response.status.isSuccess()) {
-            throw DispatcharrError.Transport("Couldn't read user profile: HTTP ${response.status.value}")
+            throw DispatcharrError.Transport(AppText.get(R.string.core_dispatcharr_profile_read_http, response.status.value))
         }
         val me: MeResponse = try {
             response.body()
         } catch (e: SerializationException) {
             throw DispatcharrError.UnexpectedResponse(
-                "Server returned an unexpected user profile shape. Verify the URL " +
-                    "points at a Dispatcharr 0.23.0 or newer instance.",
+                AppText.get(R.string.core_dispatcharr_profile_unexpected),
             )
         }
         // An account without an api_key is a fixable server-side state, not
@@ -291,9 +288,7 @@ class DispatcharrClient @Inject constructor() {
         // fix instead of the generic "unexpected shape" copy.
         return me.apiKey?.takeIf { it.isNotBlank() }
             ?: throw DispatcharrError.UnexpectedResponse(
-                "The Dispatcharr account '${me.username}' has no API key. In " +
-                    "Dispatcharr, open System, then Users, edit this user, and " +
-                    "generate an API key, then try again.",
+                AppText.get(R.string.core_dispatcharr_no_api_key, me.username.toString()),
             )
     }
 
