@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.livetv.grid
 
+import com.aeriotv.android.R
+import com.aeriotv.android.core.locale.AppText
 import com.aeriotv.android.ui.theme.decorSecondary
 import com.aeriotv.android.ui.theme.textAccent
 import com.aeriotv.android.ui.tv.TvFocusTrace
@@ -844,7 +846,7 @@ private fun GridRow(
         buildString {
             channel.channelNumber?.let { append(it).append(", ") }
             append(channel.name)
-            if (onNow != null) append(", now: ").append(onNow)
+            if (onNow != null) append(AppText.get(R.string.livetv_a11y_now, onNow))
         }
     }
     Canvas(
