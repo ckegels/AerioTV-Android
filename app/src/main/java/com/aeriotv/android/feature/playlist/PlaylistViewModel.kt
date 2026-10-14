@@ -102,8 +102,10 @@ class PlaylistViewModel @Inject constructor(
          *  setting. */
         val dvrDestinationServer: Boolean = true,
         /** Catch-up guide-history retention draft for the add flow (task
-         *  #135); threaded into SaveRequest.epgRetentionDays on submit. */
-        val epgRetentionDays: Int = 7,
+         *  #135); threaded into SaveRequest.epgRetentionDays on submit. One
+         *  day back and ahead by default: most TV boxes cannot hold a week of
+         *  a large guide (Settings › Playlists › Edit raises it). */
+        val epgRetentionDays: Int = NEW_PLAYLIST_GUIDE_DAYS,
         val playlist: PlaylistEntity? = null,
         /** Id of the row THIS add-draft created (null until its first successful
          *  Test Connection). Used as the loadAndPersist existingId so a re-test
@@ -194,6 +196,9 @@ class PlaylistViewModel @Inject constructor(
          *  long, as "<reason>-retry" (not again after that). */
         private const val CATALOG_RETRY_MS = 15_000L
         private const val RETRY_SUFFIX = "-retry"
+
+        /** Guide Days for a playlist set up from scratch. */
+        const val NEW_PLAYLIST_GUIDE_DAYS = 1
 
         /** ensureGuideCovers: how close to an edge, and how far one step widens. */
         private const val GUIDE_EDGE_MARGIN_AHEAD_MS = 2L * 3_600_000L
@@ -381,7 +386,7 @@ class PlaylistViewModel @Inject constructor(
                 username = "",
                 password = "",
                 vodEnabled = true,
-                epgRetentionDays = 7,
+                epgRetentionDays = NEW_PLAYLIST_GUIDE_DAYS,
                 draftPlaylistId = null,
                 availableProfiles = emptyList(),
                 isLoading = false,
