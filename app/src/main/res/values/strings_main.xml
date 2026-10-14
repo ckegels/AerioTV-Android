@@ -145,8 +145,8 @@
     <string name="main_configure_username">Username</string>
     <string name="main_configure_password">Password</string>
     <string name="main_configure_missing_api_key">API key</string>
-    <string name="main_configure_dispatcharr_username_placeholder">Dispatcharr admin username</string>
-    <string name="main_configure_dispatcharr_password_placeholder">Dispatcharr admin password</string>
+    <string name="main_configure_dispatcharr_username_placeholder">Your Dispatcharr username</string>
+    <string name="main_configure_dispatcharr_password_placeholder">Your Dispatcharr password</string>
     <string name="main_configure_dispatcharr_password_hint">Use your Dispatcharr Dashboard password (System -> Users -> Account tab), not your Dispatcharr XC password.</string>
     <string name="main_configure_userpass_info">Save credentials and refresh automatically. AerioTV signs in with these credentials, then keeps your session alive in the background. If your Dispatcharr admin rotates your API key, AerioTV silently re-authenticates without prompting. Credentials are stored in encrypted Android storage.</string>
     <string name="main_configure_xc_username_placeholder">XC Username</string>
@@ -246,4 +246,6 @@
     <string name="main_choose_unsupported_header">Not supported</string>
     <string name="main_choose_unsupported_note">%1$s is built for Dispatcharr with Dispatch More. Xtream Codes and M3U playlists still play, but they are not supported: live updates, server recordings, problem reports and guide choice need Dispatcharr.</string>
     <string name="main_choose_other_title">Other sources</string>
+    <string name="main_configure_server_details">Server details</string>
+    <string name="main_configure_sign_in">Sign in</string>
 </resources>
