@@ -396,6 +396,17 @@ class PlaylistViewModel @Inject constructor(
     }
 
     init {
+        // A silent re-login replaced a rejected api_key: the player's stream
+        // headers are built from this copy, so it must carry the new key or
+        // every retry is refused (401) until the app restarts.
+        viewModelScope.launch {
+            com.aeriotv.android.core.network.DispatcharrAuthBroker.keyRenewed.collect { (id, key) ->
+                _state.update { st ->
+                    val pl = st.playlist
+                    if (pl != null && pl.id == id && pl.apiKey != key) st.copy(playlist = pl.copy(apiKey = key)) else st
+                }
+            }
+        }
         bootstrap()
         observeMemoryPressure()
         observeUpstreamLayering()
