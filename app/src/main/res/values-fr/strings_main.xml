@@ -241,4 +241,15 @@
     <string name="main_pl_using_local">Serveur local joignable, URL locale utilisée</string>
     <string name="main_pl_using_remote">URL distante utilisée</string>
     <string name="main_pl_switch_failed">Échec du changement : %1$s</string>
+
+    <!-- First run: language step, Dispatcharr-first welcome, other sources -->
+    <string name="main_onboarding_language_title">Language · Langue</string>
+    <string name="main_onboarding_language_subtitle">Choisissez la langue de %1$s. Vous pourrez la changer plus tard dans Paramètres › Apparence.</string>
+    <string name="main_welcome_connect_dispatcharr">Se connecter à Dispatcharr</string>
+    <string name="main_welcome_connect_dispatcharr_subtitle">Connectez-vous avec votre nom d\'utilisateur et votre mot de passe Dispatcharr. Fonctionne au mieux avec Dispatch More sur le serveur.</string>
+    <string name="main_welcome_other_sources">Autres options</string>
+    <string name="main_welcome_other_sources_header">Autres sources (non prises en charge)</string>
+    <string name="main_choose_unsupported_header">Non pris en charge</string>
+    <string name="main_choose_unsupported_note">%1$s est conçu pour Dispatcharr avec Dispatch More. Les playlists Xtream Codes et M3U restent lisibles, mais ne sont pas prises en charge : les mises à jour en direct, les enregistrements sur le serveur, les rapports de problème et le choix du guide nécessitent Dispatcharr.</string>
+    <string name="main_choose_other_title">Autres sources</string>
 </resources>

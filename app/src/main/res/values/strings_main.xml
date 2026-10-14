@@ -235,4 +235,15 @@
     <string name="main_pl_using_local">Local server reachable, using local URL</string>
     <string name="main_pl_using_remote">Using remote URL</string>
     <string name="main_pl_switch_failed">Switch failed: %1$s</string>
+
+    <!-- First run: language step, Dispatcharr-first welcome, other sources -->
+    <string name="main_onboarding_language_title">Language · Langue</string>
+    <string name="main_onboarding_language_subtitle">Choose the language for %1$s. You can change it later in Settings › Appearance.</string>
+    <string name="main_welcome_connect_dispatcharr">Connect to Dispatcharr</string>
+    <string name="main_welcome_connect_dispatcharr_subtitle">Sign in with your Dispatcharr username and password. Works best with Dispatch More on the server.</string>
+    <string name="main_welcome_other_sources">Other options</string>
+    <string name="main_welcome_other_sources_header">Other sources (not supported)</string>
+    <string name="main_choose_unsupported_header">Not supported</string>
+    <string name="main_choose_unsupported_note">%1$s is built for Dispatcharr with Dispatch More. Xtream Codes and M3U playlists still play, but they are not supported: live updates, server recordings, problem reports and guide choice need Dispatcharr.</string>
+    <string name="main_choose_other_title">Other sources</string>
 </resources>
