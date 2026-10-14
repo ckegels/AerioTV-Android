@@ -166,8 +166,8 @@
         <item quantity="one">%1$d field needs attention.</item>
         <item quantity="other">%1$d fields need attention.</item>
     </plurals>
-    <string name="main_configure_vod_enabled">Fetch On Demand from this playlist</string>
-    <string name="main_configure_vod_enabled_info">When off, this playlist\'s movies and TV shows aren\'t loaded into On Demand. Useful if you only want Live TV from this server, or if you have a second playlist that already provides On Demand. You can change this later in Settings.</string>
+    <string name="main_configure_vod_enabled">Load Movies &amp; TV Shows</string>
+    <string name="main_configure_vod_enabled_info">Off: only Live TV and the guide load, which is quicker on a TV box. Turn it on now or later in Settings › Playlists › Edit Playlist.</string>
     <string name="main_configure_dvr_destination">Default Recording Destination</string>
     <string name="main_configure_dvr_destination_server">Server (Dispatcharr)</string>
     <string name="main_configure_dvr_destination_device">This device</string>

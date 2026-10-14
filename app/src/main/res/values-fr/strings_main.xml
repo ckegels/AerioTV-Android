@@ -167,8 +167,8 @@
         <item quantity="many">%1$d champs à vérifier.</item>
         <item quantity="other">%1$d champs à vérifier.</item>
     </plurals>
-    <string name="main_configure_vod_enabled">Charger « À la demande » depuis cette playlist</string>
-    <string name="main_configure_vod_enabled_info">Désactivé, les films et séries de cette playlist ne sont pas chargés dans À la demande. Utile si vous ne voulez que la TV en direct de ce serveur, ou si une autre playlist fournit déjà À la demande. Vous pourrez changer cela plus tard dans les Paramètres.</string>
+    <string name="main_configure_vod_enabled">Charger les films et séries</string>
+    <string name="main_configure_vod_enabled_info">Désactivé : seules la TV en direct et le guide sont chargés, plus rapide sur un boîtier TV. Activez-le maintenant ou plus tard dans Paramètres › Playlists › Modifier la playlist.</string>
     <string name="main_configure_dvr_destination">Destination des enregistrements par défaut</string>
     <string name="main_configure_dvr_destination_server">Serveur (Dispatcharr)</string>
     <string name="main_configure_dvr_destination_device">Cet appareil</string>

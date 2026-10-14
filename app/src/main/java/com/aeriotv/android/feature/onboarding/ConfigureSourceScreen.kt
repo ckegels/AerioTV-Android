@@ -224,6 +224,9 @@ fun ConfigureSourceScreen(
                     subtitle = state.url,
                 )
                 DispatcharrLoginFields(state, viewModel, dispatcharrAuthMode, showInfo = false)
+                // The one choice worth making at sign-in, under the login: off by
+                // default so the first load is Live TV and the guide only.
+                VodEnabledRow(checked = state.vodEnabled, onCheckedChange = viewModel::onVodEnabledChange)
                 ConfigureStatusAndSubmit(sourceType, state, viewModel, dispatcharrAuthMode, compact = true)
                 ServerDetailsToggle(open = detailsOpen, onToggle = { detailsOpen = !detailsOpen })
                 if (detailsOpen) {
@@ -239,7 +242,6 @@ fun ConfigureSourceScreen(
                             )
                         },
                     )
-                    VodEnabledRow(checked = state.vodEnabled, onCheckedChange = viewModel::onVodEnabledChange)
                     DvrDestinationRow(server = state.dvrDestinationServer, onSelect = viewModel::onDvrDestinationChange)
                     GuideHistoryRow(selectedDays = state.epgRetentionDays, onSelect = viewModel::onEpgRetentionDaysChange)
                 }
