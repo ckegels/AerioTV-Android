@@ -160,6 +160,11 @@ Standard buttons in the player (all of them can be changed in Settings › Remot
 
 In the guide, OK plays the selected channel and holding OK opens the programme menu (reminder, recording, catch-up).
 
+**Remote tour.** The first time a TV has the guide loaded, ArrTV offers a short tour: the app
+moves through the guide and the player by itself while a remote at the side of the screen lights
+up each button and says what it does (in English or French). Back stops it. Start it again any
+time from Settings › Remote Control › Show the remote tutorial.
+
 ## Features
 
 Everything from AerioTV, including:
