@@ -237,6 +237,13 @@ class AerioExoPlayerHolder @Inject constructor(
     @Volatile private var cachedBufferFloorMs: Int = com.aeriotv.android.feature.settings.bufferMillisFor("default")
 
     init {
+        // One device at a time (Dispatch More): another TV of this login took over. The
+        // server has closed our stream already; stop now rather than play out the buffer
+        prefScope.launch {
+            DispatcharrConnectionLimit.replaced.collect { notice ->
+                withContext(Dispatchers.Main) { stopForOtherDevice(notice) }
+            }
+        }
         // Server rewind keeps from where playback is while behind live
         prefScope.launch {
             runCatching { timeshift.get().serverRewind.positionProvider = { currentRewindWallMs() } }
@@ -3851,6 +3858,27 @@ class AerioExoPlayerHolder @Inject constructor(
         _connectionLimit.value = notice
         stop()
         return true
+    }
+
+    /** The socket said another device of this login took over: the same stop and
+     *  notice as the refusal of our next request would bring, only at once. Live only,
+     *  and not while playing from the local rewind buffer (that ends by itself). */
+    private fun stopForOtherDevice(notice: DispatcharrConnectionLimit.Notice) {
+        val url = lastPlayUrl ?: return
+        if (_connectionLimit.value != null || isTimeshifting || isCatchup) return
+        if (PlaybackTracer.urlKind(url) != "live") return
+        Log.w(TAG, "[LIMIT] ${notice.kind} (socket) \"${notice.title}\"; stopping, waiting for Watch here")
+        tracer.recover("another device took over; stopping")
+        resetCleanEndBudget()
+        stoppingRetryJob?.cancel()
+        stoppingRetryJob = null
+        reconnectUrl = url
+        reconnectChannelId = currentChannelIdForRebuild ?: currentChannelId ?: reconnectChannelId
+        connectionLimitWasCatchup = false
+        liveFailover.resetWalk()
+        liveFailover.publishServerStatus(null)
+        _connectionLimit.value = notice
+        stop()
     }
 
     /** Retry button of the connection-limit notice: one fresh tune of what

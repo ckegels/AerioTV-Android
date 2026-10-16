@@ -103,13 +103,29 @@ object DispatcharrConnectionLimit {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
+    private val _replaced = kotlinx.coroutines.flow.MutableSharedFlow<Notice>(extraBufferCapacity = 1)
+
+    /** The server said on its socket that another device of this login took over: the
+     *  player stops at once with [otherDeviceNotice] instead of playing out its buffer
+     *  first. The refusal of its next request says the same, for when the socket is closed. */
+    val replaced: kotlinx.coroutines.flow.SharedFlow<Notice> = _replaced
+
+    fun replacedNow(byName: String?) {
+        _replaced.tryEmit(otherDeviceNotice(byName))
+    }
+
     /** The other-device notice, when this is Dispatch More's refusal of a
      *  replaced device, naming the device that took over. */
     private fun otherDevice(code: Int, body: String): Notice? {
         if (code != 409 || !body.contains("device_replaced")) return null
         val root = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
         if ((root["device_replaced"] as? JsonPrimitive)?.booleanOrNull != true) return null
-        val by = (root["by"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        return otherDeviceNotice((root["by"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    /** "Playing on Bedroom TV" (or on another device, when [byName] is blank). */
+    fun otherDeviceNotice(byName: String?): Notice {
+        val by = byName?.trim()?.takeIf { it.isNotEmpty() && it != "another device" }
         return Notice(
             kind = Kind.OTHER_DEVICE,
             title = if (by != null) {
