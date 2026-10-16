@@ -1333,6 +1333,8 @@ fun PlayerScreen(
     LaunchedEffect(Unit) {
         if (!isCatchupMode) return@LaunchedEffect
         exoHolder.httpHeaders = httpHeaders
+        // The viewer opened this look back: on a login held to one device it is watched here
+        com.aeriotv.android.core.network.DispatchMore.takeOver()
         exoHolder.playCatchup(
             url = catchupUrl,
             title = catchupTitle.ifBlank { currentChannel?.name },
@@ -1385,6 +1387,8 @@ fun PlayerScreen(
         catchupOffsetMs = offsetMs
         catchupPositionMs = offsetMs
         catchupCurrentUrl = newUrl
+        // A move the viewer made (a scrub into another window)
+        com.aeriotv.android.core.network.DispatchMore.takeOver()
         exoHolder.playCatchup(
             url = newUrl,
             title = catchupTitle.ifBlank { currentChannel?.name },
@@ -1398,12 +1402,16 @@ fun PlayerScreen(
     val commitScrubCatchup: (Long) -> Unit = { target ->
         val clamped = target.coerceIn(0L, (catchupDurationMs - 5_000L).coerceAtLeast(0L))
         if (isNativeCatchup) {
+            // A whole minute, the finest start the provider's archive has (CatchupMinuteStep)
+            val minute = com.aeriotv.android.core.playback.CatchupMinuteStep.snap(
+                catchupStartMillis, catchupPositionMs, clamped, catchupDurationMs,
+            )
             if (nativeRemintInFlight) {
-                nativeRemintPendingMs = clamped
-                catchupPositionMs = clamped
+                nativeRemintPendingMs = minute
+                catchupPositionMs = minute
             } else scope.launch {
                 nativeRemintInFlight = true
-                var t = clamped
+                var t = minute
                 while (true) {
                     val outgoing = catchupCurrentUrl
                     val minted = onRemintCatchup(catchupChannelUuid, outgoing, catchupStartMillis + t)
@@ -1459,9 +1467,15 @@ fun PlayerScreen(
         scrubLastStepAt = now
         val mult = minOf(12, 1 + scrubAccelCount / 2)
         if (isCatchupMode) {
-            // Catch-up domain: PROGRAMME-relative ms in [0, duration].
+            // Catch-up domain: PROGRAMME-relative ms in [0, duration]. A native session moves
+            // a minute a step, the finest the provider's archive has (CatchupMinuteStep)
             val base = scrubTargetWallMs ?: catchupPositionMs
-            scrubTargetWallMs = (base + SkipIntervals.scrubDeltaMs(dir, isRepeat, mult)).coerceIn(0L, catchupDurationMs)
+            val delta = if (isNativeCatchup) {
+                dir * com.aeriotv.android.core.playback.CatchupMinuteStep.MINUTE_MS * mult
+            } else {
+                SkipIntervals.scrubDeltaMs(dir, isRepeat, mult)
+            }
+            scrubTargetWallMs = (base + delta).coerceIn(0L, catchupDurationMs)
         } else {
             val w = timeshiftController.activeWriter
             val head = w?.headWallMs ?: tsState.headWallMs
@@ -1521,6 +1535,18 @@ fun PlayerScreen(
                 // seek commits after the presses stop). Consume both
                 // actions so the release can't click anything behind.
                 val native = event.nativeKeyEvent
+                // A refusal notice (stream limit, another device took over) owns the
+                // screen, and OK is its button: the bare-video OK handling below would
+                // otherwise take the press for the info bar, and the button never got it
+                if (isTvForm && exoHolder.connectionLimit.value != null &&
+                    (native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                        native.keyCode == android.view.KeyEvent.KEYCODE_ENTER)
+                ) {
+                    if (native.action == android.view.KeyEvent.ACTION_UP && !native.isCanceled) {
+                        exoHolder.retryConnectionLimit()
+                    }
+                    return@onPreviewKeyEvent true
+                }
                 // Info bar style: hold OK opens the options menu, also while
                 // the card row is up (a short press still reaches the focused
                 // card: DOWN passes through, only the hold and its release
