@@ -32,6 +32,9 @@ object DispatchMore {
     const val HEADER_MULTIVIEW = "X-Dispatch-Multiview"
     const val HEADER_PREVIOUS = "X-Dispatch-Previous-Channel"
     const val HEADER_MAX_VIDEO = "X-Dispatch-Max-Video"
+    /** "Watch here" on a login the server holds to one device at a time:
+     *  take the stream back from the device that replaced this one. */
+    const val HEADER_TAKE_OVER = "X-Dispatch-Take-Over"
     const val DEFAULT_REPORT_PATH = "/api/core/app-reports/"
     const val DEFAULT_STALL_PATH = "/api/core/app-stall/"
     const val DEFAULT_GUIDE_CHOICE_PATH = "/api/core/app-guide/"
@@ -149,6 +152,19 @@ object DispatchMore {
         multiviewSession = null
     }
 
+    /** Set by "Watch here" (see [takeOver]); the next stream request carries
+     *  [HEADER_TAKE_OVER] and clears it, so only the tune it asked for takes
+     *  the stream back and later reconnects do not. */
+    @Volatile
+    private var takeOverNext = false
+
+    /** The viewer pressed "Watch here" on the other-device notice: the next
+     *  stream request takes the stream back from the device that replaced
+     *  this one (contract §5a). */
+    fun takeOver() {
+        takeOverNext = true
+    }
+
     /** The device headers for any request to [url]; empty for any other server. */
     fun deviceHeaders(url: String?): Map<String, String> {
         if (!com.aeriotv.android.core.playback.ArrTvOptimizations.identifyDevice) return emptyMap()
@@ -182,6 +198,10 @@ object DispatchMore {
             putAll(device)
             multiview?.takeIf { CHANNEL_REF.matches(it) }?.let { put(HEADER_MULTIVIEW, it) }
             previousChannel(url, previousUrl)?.let { put(HEADER_PREVIOUS, it) }
+            if (takeOverNext) {
+                takeOverNext = false
+                put(HEADER_TAKE_OVER, "1")
+            }
         }
     }
 

@@ -3856,7 +3856,11 @@ class AerioExoPlayerHolder @Inject constructor(
     /** Retry button of the connection-limit notice: one fresh tune of what
      *  was refused. */
     fun retryConnectionLimit() {
-        if (_connectionLimit.value == null) return
+        val notice = _connectionLimit.value ?: return
+        // "Watch here": this tune takes the stream back from the other device
+        if (notice.kind == DispatcharrConnectionLimit.Kind.OTHER_DEVICE) {
+            com.aeriotv.android.core.network.DispatchMore.takeOver()
+        }
         _connectionLimit.value = null
         if (connectionLimitWasCatchup) {
             val cu = lastCatchupUrl ?: return

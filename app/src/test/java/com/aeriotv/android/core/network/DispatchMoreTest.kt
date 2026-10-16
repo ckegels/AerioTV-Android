@@ -42,6 +42,15 @@ class DispatchMoreTest {
     }
 
     @Test
+    fun watchHereTakesOverOnTheNextStreamRequestOnly() {
+        assertNull(DispatchMore.streamHeaders(direct(lan, a))[DispatchMore.HEADER_TAKE_OVER])
+        DispatchMore.takeOver()
+        assertEquals("1", DispatchMore.streamHeaders(direct(lan, a))[DispatchMore.HEADER_TAKE_OVER])
+        // A later reconnect does not take the stream back again by itself
+        assertNull(DispatchMore.streamHeaders(direct(lan, a))[DispatchMore.HEADER_TAKE_OVER])
+    }
+
+    @Test
     fun identifyOffSendsNothingAtAll() {
         DispatchMore.setMaxVideo(1080)
         com.aeriotv.android.core.playback.ArrTvOptimizations.identifyDevice = false

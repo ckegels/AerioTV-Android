@@ -70,9 +70,21 @@ fun ConnectionLimitCard(
             onClick = onRetry,
             modifier = Modifier.focusRequester(retryFocus),
         ) {
-            Text(stringResource(R.string.player_retry))
+            // Another TV took this login's stream: pressing takes it back
+            Text(
+                stringResource(
+                    if (notice.kind == DispatcharrConnectionLimit.Kind.OTHER_DEVICE) {
+                        R.string.player_watch_here
+                    } else {
+                        R.string.player_retry
+                    },
+                ),
+            )
         }
-        if (!compact && notice.kind != DispatcharrConnectionLimit.Kind.STREAM_ENDED) {
+        if (!compact &&
+            notice.kind != DispatcharrConnectionLimit.Kind.STREAM_ENDED &&
+            notice.kind != DispatcharrConnectionLimit.Kind.OTHER_DEVICE
+        ) {
             Text(
                 text = stringResource(R.string.player_close_another_stream),
                 style = MaterialTheme.typography.bodySmall,
