@@ -175,6 +175,23 @@ object DispatchMore {
 
     private fun monotonicMs(): Long = System.nanoTime() / 1_000_000
 
+    /** [HEADER_TAKE_OVER] when the viewer just asked for this ([takeOver]), else
+     *  nothing; asking clears it, so only the one request carries it. */
+    fun takeOverHeader(): Map<String, String> {
+        if (takeOverUntilMs == 0L) return emptyMap()
+        val wanted = monotonicMs() < takeOverUntilMs
+        takeOverUntilMs = 0L
+        return if (wanted) mapOf(HEADER_TAKE_OVER to "1") else emptyMap()
+    }
+
+    /** The headers for a look back or movie request to [url]: which device this is
+     *  (a login held to one device at a time counts those too, contract §5a), and
+     *  the take-over the viewer asked for. Empty for any other server. */
+    fun playbackHeaders(url: String?): Map<String, String> {
+        val device = deviceHeaders(url)
+        return if (device.isEmpty()) device else device + takeOverHeader()
+    }
+
     /** The device headers for any request to [url]; empty for any other server. */
     fun deviceHeaders(url: String?): Map<String, String> {
         if (!com.aeriotv.android.core.playback.ArrTvOptimizations.identifyDevice) return emptyMap()
@@ -208,11 +225,7 @@ object DispatchMore {
             putAll(device)
             multiview?.takeIf { CHANNEL_REF.matches(it) }?.let { put(HEADER_MULTIVIEW, it) }
             previousChannel(url, previousUrl)?.let { put(HEADER_PREVIOUS, it) }
-            if (takeOverUntilMs > 0L) {
-                val wanted = monotonicMs() < takeOverUntilMs
-                takeOverUntilMs = 0L
-                if (wanted) put(HEADER_TAKE_OVER, "1")
-            }
+            putAll(takeOverHeader())
         }
     }
 

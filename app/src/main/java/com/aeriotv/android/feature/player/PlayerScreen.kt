@@ -1333,6 +1333,8 @@ fun PlayerScreen(
     LaunchedEffect(Unit) {
         if (!isCatchupMode) return@LaunchedEffect
         exoHolder.httpHeaders = httpHeaders
+        // The viewer opened this look back: on a login held to one device it is watched here
+        com.aeriotv.android.core.network.DispatchMore.takeOver()
         exoHolder.playCatchup(
             url = catchupUrl,
             title = catchupTitle.ifBlank { currentChannel?.name },
@@ -1385,6 +1387,8 @@ fun PlayerScreen(
         catchupOffsetMs = offsetMs
         catchupPositionMs = offsetMs
         catchupCurrentUrl = newUrl
+        // A move the viewer made (a scrub into another window)
+        com.aeriotv.android.core.network.DispatchMore.takeOver()
         exoHolder.playCatchup(
             url = newUrl,
             title = catchupTitle.ifBlank { currentChannel?.name },
