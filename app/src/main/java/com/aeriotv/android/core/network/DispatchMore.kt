@@ -152,18 +152,28 @@ object DispatchMore {
         multiviewSession = null
     }
 
-    /** Set by "Watch here" (see [takeOver]); the next stream request carries
-     *  [HEADER_TAKE_OVER] and clears it, so only the tune it asked for takes
-     *  the stream back and later reconnects do not. */
+    /** Until when ([monotonicMs]) the next stream request takes the stream back
+     *  (see [takeOver]); that request carries [HEADER_TAKE_OVER] and clears it,
+     *  so only the tune the viewer asked for takes over and later automatic
+     *  reconnects do not -- they would take it back from the other device at
+     *  every reconnect, and that one from us. */
     @Volatile
-    private var takeOverNext = false
+    private var takeOverUntilMs = 0L
 
-    /** The viewer pressed "Watch here" on the other-device notice: the next
-     *  stream request takes the stream back from the device that replaced
-     *  this one (contract §5a). */
-    fun takeOver() {
-        takeOverNext = true
+    /** The viewer asked for this: "Watch here" on the other-device notice, or
+     *  a channel picked in the guide, the list or with the remote. The next
+     *  stream request, within [TAKE_OVER_WINDOW_MS], takes the stream back
+     *  from the device that replaced this one (contract §5a). */
+    fun takeOver(nowMs: Long = monotonicMs()) {
+        takeOverUntilMs = nowMs + TAKE_OVER_WINDOW_MS
     }
+
+    /** A press is followed by its stream request at once; one that never
+     *  makes a request (a channel that is not live) must not leave the next
+     *  automatic reconnect taking over long afterwards. */
+    const val TAKE_OVER_WINDOW_MS = 10_000L
+
+    private fun monotonicMs(): Long = System.nanoTime() / 1_000_000
 
     /** The device headers for any request to [url]; empty for any other server. */
     fun deviceHeaders(url: String?): Map<String, String> {
@@ -198,9 +208,10 @@ object DispatchMore {
             putAll(device)
             multiview?.takeIf { CHANNEL_REF.matches(it) }?.let { put(HEADER_MULTIVIEW, it) }
             previousChannel(url, previousUrl)?.let { put(HEADER_PREVIOUS, it) }
-            if (takeOverNext) {
-                takeOverNext = false
-                put(HEADER_TAKE_OVER, "1")
+            if (takeOverUntilMs > 0L) {
+                val wanted = monotonicMs() < takeOverUntilMs
+                takeOverUntilMs = 0L
+                if (wanted) put(HEADER_TAKE_OVER, "1")
             }
         }
     }

@@ -51,6 +51,12 @@ class DispatchMoreTest {
     }
 
     @Test
+    fun aPressThatMadeNoRequestDoesNotTakeOverLongAfter() {
+        DispatchMore.takeOver(nowMs = System.nanoTime() / 1_000_000 - DispatchMore.TAKE_OVER_WINDOW_MS - 1)
+        assertNull(DispatchMore.streamHeaders(direct(lan, a))[DispatchMore.HEADER_TAKE_OVER])
+    }
+
+    @Test
     fun identifyOffSendsNothingAtAll() {
         DispatchMore.setMaxVideo(1080)
         com.aeriotv.android.core.playback.ArrTvOptimizations.identifyDevice = false

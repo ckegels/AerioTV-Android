@@ -113,7 +113,12 @@ class AerioExoPlayerHolder @Inject constructor(
      * press->firstFrame is measured end to end (D-pad zap, number entry,
      * channel-list / recents pick, the guide's select press).
      */
-    fun markTunePress(channelName: String?) = tracer.markPress(channelName)
+    fun markTunePress(channelName: String?) {
+        tracer.markPress(channelName)
+        // A channel the viewer picked: on a login held to one device at a time it is
+        // watched here now, even after another device took over (Dispatch More §5a)
+        com.aeriotv.android.core.network.DispatchMore.takeOver()
+    }
 
     /**
      * Observable mirror of [player] so the persistent PlayerView can REBIND

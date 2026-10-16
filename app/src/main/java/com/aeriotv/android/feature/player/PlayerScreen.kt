@@ -1521,6 +1521,18 @@ fun PlayerScreen(
                 // seek commits after the presses stop). Consume both
                 // actions so the release can't click anything behind.
                 val native = event.nativeKeyEvent
+                // A refusal notice (stream limit, another device took over) owns the
+                // screen, and OK is its button: the bare-video OK handling below would
+                // otherwise take the press for the info bar, and the button never got it
+                if (isTvForm && exoHolder.connectionLimit.value != null &&
+                    (native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                        native.keyCode == android.view.KeyEvent.KEYCODE_ENTER)
+                ) {
+                    if (native.action == android.view.KeyEvent.ACTION_UP && !native.isCanceled) {
+                        exoHolder.retryConnectionLimit()
+                    }
+                    return@onPreviewKeyEvent true
+                }
                 // Info bar style: hold OK opens the options menu, also while
                 // the card row is up (a short press still reaches the focused
                 // card: DOWN passes through, only the hold and its release
