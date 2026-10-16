@@ -631,7 +631,12 @@ fun VODPlayerScreen(
             return@seek
         }
         val progLenMs = catchupEndMillis - catchupStartMillis
-        val target = rawTarget.coerceIn(0L, (progLenMs - 5_000L).coerceAtLeast(0L))
+        // Native: a whole minute, the finest start the provider's archive has (CatchupMinuteStep)
+        val target = if (isNativeCatchup) {
+            com.aeriotv.android.core.playback.CatchupMinuteStep.snap(catchupStartMillis, positionMs, rawTarget, progLenMs)
+        } else {
+            rawTarget.coerceIn(0L, (progLenMs - 5_000L).coerceAtLeast(0L))
+        }
         // NO in-buffer fast path: the catch-up stream reports LENGTH_UNSET
         // (UnboundedLengthDataSource) so TsExtractor emits an UNSEEKABLE
         // SeekMap and media3 collapses every seekTo into t=0 - which, with

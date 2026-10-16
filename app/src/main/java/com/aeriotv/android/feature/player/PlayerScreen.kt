@@ -1402,12 +1402,16 @@ fun PlayerScreen(
     val commitScrubCatchup: (Long) -> Unit = { target ->
         val clamped = target.coerceIn(0L, (catchupDurationMs - 5_000L).coerceAtLeast(0L))
         if (isNativeCatchup) {
+            // A whole minute, the finest start the provider's archive has (CatchupMinuteStep)
+            val minute = com.aeriotv.android.core.playback.CatchupMinuteStep.snap(
+                catchupStartMillis, catchupPositionMs, clamped, catchupDurationMs,
+            )
             if (nativeRemintInFlight) {
-                nativeRemintPendingMs = clamped
-                catchupPositionMs = clamped
+                nativeRemintPendingMs = minute
+                catchupPositionMs = minute
             } else scope.launch {
                 nativeRemintInFlight = true
-                var t = clamped
+                var t = minute
                 while (true) {
                     val outgoing = catchupCurrentUrl
                     val minted = onRemintCatchup(catchupChannelUuid, outgoing, catchupStartMillis + t)
@@ -1463,9 +1467,15 @@ fun PlayerScreen(
         scrubLastStepAt = now
         val mult = minOf(12, 1 + scrubAccelCount / 2)
         if (isCatchupMode) {
-            // Catch-up domain: PROGRAMME-relative ms in [0, duration].
+            // Catch-up domain: PROGRAMME-relative ms in [0, duration]. A native session moves
+            // a minute a step, the finest the provider's archive has (CatchupMinuteStep)
             val base = scrubTargetWallMs ?: catchupPositionMs
-            scrubTargetWallMs = (base + SkipIntervals.scrubDeltaMs(dir, isRepeat, mult)).coerceIn(0L, catchupDurationMs)
+            val delta = if (isNativeCatchup) {
+                dir * com.aeriotv.android.core.playback.CatchupMinuteStep.MINUTE_MS * mult
+            } else {
+                SkipIntervals.scrubDeltaMs(dir, isRepeat, mult)
+            }
+            scrubTargetWallMs = (base + delta).coerceIn(0L, catchupDurationMs)
         } else {
             val w = timeshiftController.activeWriter
             val head = w?.headWallMs ?: tsState.headWallMs
