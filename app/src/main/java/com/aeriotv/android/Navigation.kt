@@ -929,7 +929,10 @@ fun AerioTVNavHost(
                             androidx.compose.material3.Text(
                                 stringResource(
                                     R.string.watch_together_offer_message,
-                                    offer.name,
+                                    // The server's stand-in for a device that never said its
+                                    // name is English: in the app's own language instead
+                                    offer.name.takeIf { it.isNotBlank() && it != "another device" }
+                                        ?: stringResource(R.string.watch_together_unnamed_device),
                                     offer.channelName.ifBlank { offer.channel.take(8) },
                                 ),
                             )
