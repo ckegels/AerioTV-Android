@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 object WatchTogether {
     /** A channel this device is to tune to, by its Dispatcharr uuid. [seq] tells two
      *  requests for the same channel apart. */
-    data class Follow(val channelUuid: String, val seq: Long = System.nanoTime())
+    data class Follow(val channelUuid: String, val seq: Long = System.nanoTime(), val fresh: Boolean = false)
 
     private val _follow = MutableStateFlow<Follow?>(null)
 
@@ -65,10 +65,17 @@ object WatchTogether {
         leaver?.invoke()
     }
 
-    fun followChannel(channelUuid: String) {
-        Log.i(TAG, "follow channel $channelUuid")
-        _follow.value = Follow(channelUuid)
+    /** [fresh]: tune it afresh even when it is the channel playing (joining: in step at once). */
+    fun followChannel(channelUuid: String, fresh: Boolean = false) {
+        Log.i(TAG, "follow channel $channelUuid${if (fresh) " (fresh)" else ""}")
+        _follow.value = Follow(channelUuid, fresh = fresh)
     }
+
+    private val _resync = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /** A device joined this one: tune the channel afresh, at the same moment the joiner tunes
+     *  it, so the two start in step (DispatchMoreLinks). */
+    val resync: kotlinx.coroutines.flow.SharedFlow<Unit> = _resync
 
     fun consumed(request: Follow) {
         _follow.compareAndSet(request, null)
@@ -81,9 +88,10 @@ object WatchTogether {
     /** The server said another device joined this one (or told it to follow): linked. Only
      *  the joiner knew before, so the joined one never reported where it was and the two
      *  were never put in step (the Shield, 2026-10-17). */
-    fun linkJoined() {
+    fun linkJoined(resync: Boolean = false) {
         if (!_linked.value) Log.i(TAG, "joined by another device; linked")
         _linked.value = true
+        if (resync) _resync.tryEmit(Unit)
     }
 
     /** The server said the other device left: this one watches on alone. */
@@ -134,7 +142,13 @@ class DispatchMoreLinks @Inject constructor(
                 },
             )
         }
-        // In step: while linked, the devices compare where they are, and the one ahead waits
+        // In step: joined, this device tunes afresh with the joiner; while linked, the devices
+        // compare where they are, and the one behind tunes afresh
+        scope.launch {
+            WatchTogether.resync.collect {
+                withContext(Dispatchers.Main) { holder.freshTuneForInStep("joined") }
+            }
+        }
         scope.launch {
             WatchTogether.linked.collectLatest { linked -> if (linked) keepInStep() }
         }
@@ -142,9 +156,10 @@ class DispatchMoreLinks @Inject constructor(
 
     /**
      * Every [STEP_CHECK_MS] while linked: this device's position (the stream timestamp on
-     * screen) goes to the server and the others' come back; ahead by more than [STEP_SLACK_MS],
-     * this device waits the difference. Only the one ahead moves, so two never overshoot each
-     * other. Cancelled when the link ends.
+     * screen) goes to the server and the others' come back; behind by more than
+     * [STEP_SLACK_MS], this device tunes afresh, which puts it as far behind live as a fresh
+     * connection is -- where the other one is, or ahead of it, and then that one catches up the
+     * same way. Never a wait. Cancelled when the link ends.
      */
     private suspend fun keepInStep() {
         while (true) {
@@ -155,26 +170,16 @@ class DispatchMoreLinks @Inject constructor(
             val others = runCatching {
                 auth.withApiKeyRetry(target.first) { key -> client.reportLinkPosition(target.second, key, target.third, pts, at) }
             }.getOrNull().orEmpty()
-            // The furthest behind is the one to wait for
-            val (ahead, behindOf) = others
+            // The one furthest ahead is the one this device is behind of
+            val (ahead, of) = others
                 .map { com.aeriotv.android.core.playback.InStep.aheadMs(pts, at, it.pts, it.atMs) to it }
-                .maxByOrNull { it.first } ?: continue
-            if (ahead <= STEP_SLACK_MS || ahead > STEP_MAX_MS) continue
-            Log.i(TAG, "in step: ${ahead}ms ahead of ${behindOf.name}; waiting")
-            withContext(Dispatchers.Main) {
-                holder.holdForInStep(ahead)
-                android.widget.Toast.makeText(
-                    context,
-                    com.aeriotv.android.core.locale.AppText.get(
-                        com.aeriotv.android.R.string.watch_together_waiting,
-                        ((ahead + 500) / 1000).toInt(),
-                        behindOf.name,
-                    ),
-                    android.widget.Toast.LENGTH_LONG,
-                ).show()
-            }
-            // Let the wait end and playback settle before looking again
-            kotlinx.coroutines.delay(ahead + STEP_SETTLE_MS)
+                .minByOrNull { it.first } ?: continue
+            val behind = -ahead
+            if (behind <= STEP_SLACK_MS || behind > STEP_MAX_MS) continue
+            Log.i(TAG, "in step: ${behind}ms behind ${of.name}; tuning afresh")
+            withContext(Dispatchers.Main) { holder.freshTuneForInStep("${behind}ms behind ${of.name}") }
+            // Let the fresh connection start and settle before looking again
+            kotlinx.coroutines.delay(STEP_SETTLE_MS)
         }
     }
 
@@ -213,7 +218,8 @@ class DispatchMoreLinks @Inject constructor(
         } ?: return@withContext Joined.NOT_WATCHING
         Log.i(TAG, "joined $device on $channel")
         WatchTogether.setLinked(true)
-        WatchTogether.followChannel(channel)
+        // Afresh even when it is the channel playing: the device joined tunes afresh now too
+        WatchTogether.followChannel(channel, fresh = true)
         Joined.YES
     }
 
@@ -241,6 +247,6 @@ class DispatchMoreLinks @Inject constructor(
         const val STEP_SLACK_MS = 1_500L
         /** Further than this is not the same moment of one broadcast (a wrap, a restart). */
         const val STEP_MAX_MS = 15 * 60_000L
-        const val STEP_SETTLE_MS = 10_000L
+        const val STEP_SETTLE_MS = 20_000L
     }
 }

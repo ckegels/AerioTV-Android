@@ -2720,18 +2720,24 @@ class AerioExoPlayerHolder @Inject constructor(
         return InStep.shown(origin, p.currentPosition)
     }
 
-    /** Watching together in step: this device is [ms] ahead, so it waits that long, as a pause
-     *  of the remote's would (with Live Rewind or server rewind it then plays on from the
-     *  recording, exactly that much later). Main thread. */
-    fun holdForInStep(ms: Long) {
-        val p = player ?: return
-        if (!p.playWhenReady) return
-        Log.i(TAG, "[TOGETHER] ${ms}ms ahead of the device watched with; waiting")
-        p.playWhenReady = false
-        watchdogScope.launch {
-            delay(ms)
-            if (player === p && !p.playWhenReady) p.playWhenReady = true
-        }
+    /**
+     * Watching together in step: a fresh connection to the channel playing. A fresh connection
+     * starts as far behind live as any does, on any device, so two devices tuned fresh are in
+     * step; a device only falls behind afterwards (a stall, a pause, a rewind). Waiting instead,
+     * as the one ahead, left a black screen and the paused player lost its connection and
+     * jumped to live again (the Shield and a Pixel, 2026-10-17). Same channel, never a
+     * take-over; out of a rewind too. Main thread.
+     */
+    fun freshTuneForInStep(reason: String): Boolean {
+        val url = lastPlayUrl ?: return false
+        if (isCatchup || _connectionLimit.value != null || PlaybackTracer.urlKind(url) != "live") return false
+        Log.i(TAG, "[TOGETHER] fresh tune ($reason) ch=$currentChannelId")
+        tracer.recover("watch together: fresh tune ($reason)")
+        playUrl(
+            url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
+            drmLicenseType = lastPlayDrmType, drmLicenseKey = lastPlayDrmKey,
+        )
+        return true
     }
 
     /**

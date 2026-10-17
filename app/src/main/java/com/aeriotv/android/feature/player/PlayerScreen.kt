@@ -1992,7 +1992,9 @@ fun PlayerScreen(
             val hadNotice = exoHolder.connectionLimit.value != null
             exoHolder.clearNoticeForJoin()
             if (i == currentIndex) {
-                if (hadNotice) exoHolder.retryUnavailable()
+                // Joining: afresh, at the moment the device joined tunes afresh too
+                if (request.fresh) exoHolder.freshTuneForInStep("joining")
+                else if (hadNotice) exoHolder.retryUnavailable()
             } else {
                 com.aeriotv.android.core.data.repository.EpgSweepGate.onTuneStart()
                 exoHolder.markTunePress(channels[i].name)

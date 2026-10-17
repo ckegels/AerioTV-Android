@@ -96,7 +96,6 @@
     <string name="player_option_stop_watch_together">Stop watching together</string>
     <string name="watch_together_offer_title">Watch together?</string>
     <string name="watch_together_offer_message">%1$s is watching %2$s on this login. Join it, and from then on whichever of you changes channel, the other follows.</string>
-    <string name="watch_together_waiting">Waiting %1$d s to stay in step with %2$s</string>
     <string name="watch_together_not_now">Not now</string>
     <string name="player_watch_here">Watch here</string>
     <string name="player_limit_stream_ended_title">Stream ended</string>
