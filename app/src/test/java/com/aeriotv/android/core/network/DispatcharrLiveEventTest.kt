@@ -18,6 +18,33 @@ class DispatcharrLiveEventTest {
     }
 
     @Test
+    fun anotherDeviceTookOver() {
+        // Dispatch More v253 (app_one_device.tell), sent the moment it closes this TV's stream
+        val frame = """{"type": "update", "data": {"type": "device_replaced", "user_id": 1, "device": "3f2a9c1e-0b7d-4e21-9a55-0f1c2d3e4f50", "by": "Pixel 9"}}"""
+        assertEquals(
+            DispatcharrLiveEvent.DeviceReplaced("3f2a9c1e-0b7d-4e21-9a55-0f1c2d3e4f50", "Pixel 9"),
+            DispatcharrLiveEvent.parse(frame),
+        )
+        assertNull(DispatcharrLiveEvent.parse("""{"type": "update", "data": {"type": "device_replaced"}}"""))
+    }
+
+    @Test
+    fun theDeviceWatchedTogetherWithChangedChannel() {
+        // Dispatch More v260 (app_links.mirror)
+        val frame = """{"type": "update", "data": {"type": "linked_channel", "user_id": 1, "channel": "6014de0c", "by": "shield-1", "devices": ["pixel-9"]}}"""
+        assertEquals(
+            DispatcharrLiveEvent.LinkedChannel("6014de0c", "shield-1", listOf("pixel-9")),
+            DispatcharrLiveEvent.parse(frame),
+        )
+        // Who took over, so the replaced device can offer to join it
+        val replaced = """{"type": "update", "data": {"type": "device_replaced", "device": "pixel-9", "by": "SHIELD", "by_device": "shield-1"}}"""
+        assertEquals(
+            DispatcharrLiveEvent.DeviceReplaced("pixel-9", "SHIELD", "shield-1"),
+            DispatcharrLiveEvent.parse(replaced),
+        )
+    }
+
+    @Test
     fun epgImportFinished() {
         assertEquals(DispatcharrLiveEvent.EpgRefreshed(42), DispatcharrLiveEvent.parse(epgDone))
     }
