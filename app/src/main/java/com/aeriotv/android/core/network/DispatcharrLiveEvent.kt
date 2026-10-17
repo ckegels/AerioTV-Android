@@ -67,6 +67,10 @@ sealed interface DispatcharrLiveEvent {
      *  changed to [channel]; [devices] are the ones to follow. */
     data class LinkedChannel(val channel: String, val by: String?, val devices: List<String>) : DispatcharrLiveEvent
 
+    /** Dispatch More v261: the other device left; [devices] (this one among them) watch on
+     *  alone, no longer linked. */
+    data class LinkEnded(val devices: List<String>) : DispatcharrLiveEvent
+
     /** A recording was scheduled, started, stopped, changed or removed. */
     data object RecordingsChanged : DispatcharrLiveEvent
 
@@ -87,7 +91,7 @@ sealed interface DispatcharrLiveEvent {
             if (!text.contains("m3u_refresh") && !text.contains("epg_refresh") &&
                 !text.contains("channels_changed") && !text.contains("lookback_moved") &&
                 !text.contains("recording") && !text.contains("connection_established") &&
-                !text.contains("device_replaced") && !text.contains("linked_channel")
+                !text.contains("device_replaced") && !text.contains("linked_channel") && !text.contains("link_ended")
             ) return null
             val root = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return null
             if (root.string("type") == "connection_established") return Connected
@@ -119,6 +123,10 @@ sealed interface DispatcharrLiveEvent {
                     data.string("device") ?: return null,
                     data.string("by"),
                     data.string("by_device"),
+                )
+                "link_ended" -> LinkEnded(
+                    (data["devices"] as? kotlinx.serialization.json.JsonArray)
+                        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty(),
                 )
                 "linked_channel" -> LinkedChannel(
                     data.string("channel") ?: return null,

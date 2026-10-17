@@ -78,6 +78,12 @@ object WatchTogether {
         _linked.value = linked
     }
 
+    /** The server said the other device left: this one watches on alone. */
+    fun linkEnded() {
+        Log.i(TAG, "the other device left; watching alone")
+        _linked.value = false
+    }
+
     private const val TAG = "WatchTogether"
 }
 
@@ -108,6 +114,18 @@ class DispatchMoreLinks @Inject constructor(
             }
         }
         WatchTogether.leaver = { leaveInBackground() }
+        // Leaving the app (Home, another app, closing it) leaves watching together: the other
+        // device plays on, and this one does not follow it when it comes back later
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(
+                androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && WatchTogether.linked.value) {
+                        Log.i(TAG, "left the app; leaving watching together")
+                        leaveInBackground()
+                    }
+                },
+            )
+        }
         // In step: while linked, the devices compare where they are, and the one ahead waits
         scope.launch {
             WatchTogether.linked.collectLatest { linked -> if (linked) keepInStep() }
