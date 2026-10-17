@@ -575,6 +575,30 @@ class DispatcharrClient @Inject constructor() {
         return (response.body<JsonElement>() as? JsonObject)?.str("channel")
     }
 
+    /** Watching together in step: another linked device's latest position on the same channel. */
+    data class LinkPosition(val device: String, val name: String, val pts: Long, val atMs: Long)
+
+    /** POST this device's position ({"position": {pts, at}}); the others' come back. */
+    suspend fun reportLinkPosition(baseUrl: String, apiKey: String, path: String, pts: Long, atMs: Long): List<LinkPosition> {
+        val response = client.post("${baseUrl.trimEnd('/')}$path") {
+            applyAuth(apiKey)
+            contentType(ContentType.Application.Json)
+            setBody(JsonObject(mapOf("position" to JsonObject(mapOf("pts" to JsonPrimitive(pts), "at" to JsonPrimitive(atMs))))))
+        }
+        if (response.status.value == 401) throw DispatcharrError.Unauthorized("Link refused: 401")
+        if (!response.status.isSuccess()) return emptyList()
+        val others = ((response.body<JsonElement>() as? JsonObject)?.get("others") as? kotlinx.serialization.json.JsonArray).orEmpty()
+        return others.mapNotNull { item ->
+            val o = item as? JsonObject ?: return@mapNotNull null
+            LinkPosition(
+                device = o.str("device") ?: return@mapNotNull null,
+                name = o.str("name").orEmpty(),
+                pts = (o["pts"] as? JsonPrimitive)?.longOrNull ?: return@mapNotNull null,
+                atMs = (o["at"] as? JsonPrimitive)?.longOrNull ?: return@mapNotNull null,
+            )
+        }
+    }
+
     /** DELETE the link url: this device stops watching together. */
     suspend fun leaveLink(baseUrl: String, apiKey: String, path: String) {
         val response = client.delete("${baseUrl.trimEnd('/')}$path") { applyAuth(apiKey) }

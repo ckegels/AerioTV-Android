@@ -2703,7 +2703,35 @@ class AerioExoPlayerHolder @Inject constructor(
             tuneHeaders + httpHeaders.filterKeys { !it.equals("User-Agent", ignoreCase = true) },
         )
         if (nonUaHeaders.isNotEmpty()) factory.setDefaultRequestProperties(nonUaHeaders)
-        return factory
+        // Watching together in step: the stream's own clock (LivePtsProbe), read along
+        livePtsOrigin = null
+        return LivePtsProbe.Factory(factory) { pts -> livePtsOrigin = pts }
+    }
+
+    /** The first PTS of the live connection playing now (LivePtsProbe), null until seen. */
+    @Volatile private var livePtsOrigin: Long? = null
+
+    /** Watching together in step: the broadcast moment on screen as a PTS (90 kHz), or null
+     *  when it cannot be told -- not live, playing from the rewind buffer, not playing. Main thread. */
+    fun inStepPosition(): Long? {
+        val p = player ?: return null
+        if (isTimeshifting || isCatchup || !p.isPlaying || _connectionLimit.value != null) return null
+        val origin = livePtsOrigin ?: return null
+        return InStep.shown(origin, p.currentPosition)
+    }
+
+    /** Watching together in step: this device is [ms] ahead, so it waits that long, as a pause
+     *  of the remote's would (with Live Rewind or server rewind it then plays on from the
+     *  recording, exactly that much later). Main thread. */
+    fun holdForInStep(ms: Long) {
+        val p = player ?: return
+        if (!p.playWhenReady) return
+        Log.i(TAG, "[TOGETHER] ${ms}ms ahead of the device watched with; waiting")
+        p.playWhenReady = false
+        watchdogScope.launch {
+            delay(ms)
+            if (player === p && !p.playWhenReady) p.playWhenReady = true
+        }
     }
 
     /**

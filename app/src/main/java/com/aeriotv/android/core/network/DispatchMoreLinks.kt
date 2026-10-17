@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -87,6 +88,7 @@ class DispatchMoreLinks @Inject constructor(
     private val repository: PlaylistRepository,
     private val client: DispatcharrClient,
     private val auth: DispatcharrAuthBroker,
+    private val holder: com.aeriotv.android.core.playback.AerioExoPlayerHolder,
 ) {
     /** Joins and leaves outlive the press (the notice or the menu closes at once). */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -106,6 +108,48 @@ class DispatchMoreLinks @Inject constructor(
             }
         }
         WatchTogether.leaver = { leaveInBackground() }
+        // In step: while linked, the devices compare where they are, and the one ahead waits
+        scope.launch {
+            WatchTogether.linked.collectLatest { linked -> if (linked) keepInStep() }
+        }
+    }
+
+    /**
+     * Every [STEP_CHECK_MS] while linked: this device's position (the stream timestamp on
+     * screen) goes to the server and the others' come back; ahead by more than [STEP_SLACK_MS],
+     * this device waits the difference. Only the one ahead moves, so two never overshoot each
+     * other. Cancelled when the link ends.
+     */
+    private suspend fun keepInStep() {
+        while (true) {
+            kotlinx.coroutines.delay(STEP_CHECK_MS)
+            val target = target() ?: continue
+            val pts = withContext(Dispatchers.Main) { holder.inStepPosition() } ?: continue
+            val at = System.currentTimeMillis()
+            val others = runCatching {
+                auth.withApiKeyRetry(target.first) { key -> client.reportLinkPosition(target.second, key, target.third, pts, at) }
+            }.getOrNull().orEmpty()
+            // The furthest behind is the one to wait for
+            val (ahead, behindOf) = others
+                .map { com.aeriotv.android.core.playback.InStep.aheadMs(pts, at, it.pts, it.atMs) to it }
+                .maxByOrNull { it.first } ?: continue
+            if (ahead <= STEP_SLACK_MS || ahead > STEP_MAX_MS) continue
+            Log.i(TAG, "in step: ${ahead}ms ahead of ${behindOf.name}; waiting")
+            withContext(Dispatchers.Main) {
+                holder.holdForInStep(ahead)
+                android.widget.Toast.makeText(
+                    context,
+                    com.aeriotv.android.core.locale.AppText.get(
+                        com.aeriotv.android.R.string.watch_together_waiting,
+                        ((ahead + 500) / 1000).toInt(),
+                        behindOf.name,
+                    ),
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+            // Let the wait end and playback settle before looking again
+            kotlinx.coroutines.delay(ahead + STEP_SETTLE_MS)
+        }
     }
 
     /** The active playlist's server, when it is a Dispatch More server that offers it. */
@@ -166,5 +210,11 @@ class DispatchMoreLinks @Inject constructor(
 
     private companion object {
         const val TAG = "WatchTogether"
+        const val STEP_CHECK_MS = 10_000L
+        /** Closer than this is in step: lips and laughs land together. */
+        const val STEP_SLACK_MS = 1_500L
+        /** Further than this is not the same moment of one broadcast (a wrap, a restart). */
+        const val STEP_MAX_MS = 15 * 60_000L
+        const val STEP_SETTLE_MS = 10_000L
     }
 }
