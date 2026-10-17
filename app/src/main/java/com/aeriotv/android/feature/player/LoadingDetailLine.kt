@@ -263,7 +263,12 @@ fun LiveFailoverStatusOverlay(
             notice = notice,
             isTv = isTv,
             onRetry = { exoHolder.retryConnectionLimit() },
-            onJoin = if (together.joiner != null) ({ notice.byDevice?.let(together::join) }) else null,
+            // Only where the server offers it (its Watch together switch is on)
+            onJoin = if (together.joiner != null && com.aeriotv.android.core.network.DispatchMore.linkDevicesOffered()) {
+                { notice.byDevice?.let(together::join) }
+            } else {
+                null
+            },
             choice = choice,
         )
         return

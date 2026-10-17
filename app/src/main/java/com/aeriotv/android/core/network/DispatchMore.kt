@@ -134,6 +134,10 @@ object DispatchMore {
         servers.computeIfPresent(origin) { _, s -> s.copy(stallSwitch = false) }
     }
 
+    /** Whether a Dispatch More server this app uses offers watch together (its switch is
+     *  on): Join is shown only then. */
+    fun linkDevicesOffered(): Boolean = servers.values.any { it.linkDevices }
+
     /** The server behind [url], when it is a Dispatch More server. */
     fun serverFor(url: String?): Server? = originOf(url)?.let { servers[it] }
 

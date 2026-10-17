@@ -65,6 +65,13 @@ class DispatchMoreTest {
     }
 
     @Test
+    fun joinIsOfferedOnlyWhereTheServerSwitchedWatchTogetherOn() {
+        assertFalse(DispatchMore.linkDevicesOffered())
+        DispatchMore.register(listOf(lan), DispatchMore.Server(linkDevices = true))
+        assertTrue(DispatchMore.linkDevicesOffered())
+    }
+
+    @Test
     fun aPressThatMadeNoRequestDoesNotTakeOverLongAfter() {
         DispatchMore.takeOver(nowMs = System.nanoTime() / 1_000_000 - DispatchMore.TAKE_OVER_WINDOW_MS - 1)
         assertNull(DispatchMore.streamHeaders(direct(lan, a))[DispatchMore.HEADER_TAKE_OVER])

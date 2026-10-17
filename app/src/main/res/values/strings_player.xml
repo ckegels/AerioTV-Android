@@ -91,6 +91,7 @@
     <string name="player_other_device_title_unnamed">Playing on another device</string>
     <string name="player_other_device_message">This login watches on one device at a time. Press Watch here to watch on this TV instead; the other one stops.</string>
     <string name="player_join_other_device">Join</string>
+    <string name="player_join_switched_off">Watch together is switched off on the server (Settings › Streaming › arrTV)</string>
     <string name="player_join_failed">That device is no longer watching a channel</string>
     <string name="player_option_stop_watch_together">Stop watching together</string>
     <string name="watch_together_offer_title">Watch together?</string>

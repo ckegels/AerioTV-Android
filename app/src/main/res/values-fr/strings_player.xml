@@ -92,6 +92,7 @@
     <string name="player_other_device_title_unnamed">Lecture sur un autre appareil</string>
     <string name="player_other_device_message">Ce compte regarde sur un seul appareil à la fois. Appuyez sur Regarder ici pour regarder sur ce téléviseur ; l\'autre s\'arrête.</string>
     <string name="player_join_other_device">Rejoindre</string>
+    <string name="player_join_switched_off">Regarder ensemble est désactivé sur le serveur (Paramètres › Streaming › arrTV)</string>
     <string name="player_join_failed">Cet appareil ne regarde plus de chaîne</string>
     <string name="player_option_stop_watch_together">Ne plus regarder ensemble</string>
     <string name="watch_together_offer_title">Regarder ensemble ?</string>

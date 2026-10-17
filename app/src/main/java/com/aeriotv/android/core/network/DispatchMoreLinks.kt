@@ -94,12 +94,15 @@ class DispatchMoreLinks @Inject constructor(
     init {
         // For the screens without this helper (the other-device notice, the Options menu)
         WatchTogether.joiner = { device ->
-            joinInBackground(device) {
-                android.widget.Toast.makeText(
-                    context,
-                    com.aeriotv.android.core.locale.AppText.get(com.aeriotv.android.R.string.player_join_failed),
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
+            joinInBackground(device) { why ->
+                val text = com.aeriotv.android.core.locale.AppText.get(
+                    when (why) {
+                        Joined.SWITCHED_OFF -> com.aeriotv.android.R.string.player_join_switched_off
+                        Joined.UNREACHABLE -> com.aeriotv.android.R.string.core_dispatchmore_unreachable_plain
+                        else -> com.aeriotv.android.R.string.player_join_failed
+                    },
+                )
+                android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_LONG).show()
             }
         }
         WatchTogether.leaver = { leaveInBackground() }
@@ -123,21 +126,31 @@ class DispatchMoreLinks @Inject constructor(
         }.getOrNull()?.also { WatchTogether.setLinked(it.linked) }
     }
 
+    /** How a join went: the reason is what the viewer is told when it did not. */
+    enum class Joined { YES, SWITCHED_OFF, NOT_WATCHING, UNREACHABLE }
+
     /** Join [device]: links the two, and tunes to its channel (WatchTogether.follow). */
-    suspend fun join(device: String): Boolean = withContext(Dispatchers.IO) {
-        val (playlistId, base, path) = target() ?: return@withContext false
-        val channel = runCatching {
+    suspend fun join(device: String): Joined = withContext(Dispatchers.IO) {
+        // Not a Dispatch More server, or its Watch together switch is off (as the last
+        // capabilities answer said): nothing to ask
+        val (playlistId, base, path) = target() ?: return@withContext Joined.SWITCHED_OFF
+        val answer = runCatching {
             auth.withApiKeyRetry(playlistId) { key -> client.joinLink(base, key, path, device) }
-        }.getOrNull() ?: return@withContext false
+        }
+        val channel = answer.getOrElse {
+            Log.w(TAG, "join $device failed: ${it.message}")
+            return@withContext Joined.UNREACHABLE
+        } ?: return@withContext Joined.NOT_WATCHING
         Log.i(TAG, "joined $device on $channel")
         WatchTogether.setLinked(true)
         WatchTogether.followChannel(channel)
-        true
+        Joined.YES
     }
 
-    fun joinInBackground(device: String, onFailed: () -> Unit = {}) {
+    fun joinInBackground(device: String, onFailed: (Joined) -> Unit = {}) {
         scope.launch {
-            if (!join(device)) withContext(Dispatchers.Main) { onFailed() }
+            val joined = join(device)
+            if (joined != Joined.YES) withContext(Dispatchers.Main) { onFailed(joined) }
         }
     }
 

@@ -1546,7 +1546,8 @@ fun PlayerScreen(
                     val joinable = shownNotice.kind ==
                         com.aeriotv.android.core.playback.DispatcharrConnectionLimit.Kind.OTHER_DEVICE &&
                         shownNotice.byDevice != null &&
-                        com.aeriotv.android.core.network.WatchTogether.joiner != null
+                        com.aeriotv.android.core.network.WatchTogether.joiner != null &&
+                        com.aeriotv.android.core.network.DispatchMore.linkDevicesOffered()
                     val together = com.aeriotv.android.core.network.WatchTogether
                     when (native.keyCode) {
                         android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT ->
