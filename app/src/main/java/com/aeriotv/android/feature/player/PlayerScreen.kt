@@ -2830,8 +2830,12 @@ private fun LiveRewindChromeSection(
             timeshiftController.refreshWindow()
             tsPaused = exoHolder.isPaused()
             if (tsState.timeshifting) {
+                // Through the holder: on the server's recording the player's position counts
+                // from the start of that recording, not from where the rewind went in, and
+                // base + position put the playhead an hour past live -- so the snap below
+                // sent every server rewind back to live a moment after its first frame
                 val pos = exoHolder.player?.currentPosition ?: 0L
-                tsPositionWallMs = tsState.baseWallMs + pos
+                tsPositionWallMs = exoHolder.currentRewindWallMs() ?: (tsState.baseWallMs + pos)
                 // Cable-DVR catch-up snap: riding the write head keeps
                 // ExoPlayer in perpetual BUFFERING (it can never build
                 // its minimum buffer against a source that grows in
