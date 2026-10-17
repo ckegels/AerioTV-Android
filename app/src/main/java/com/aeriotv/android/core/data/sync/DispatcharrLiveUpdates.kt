@@ -274,6 +274,22 @@ class DispatcharrLiveUpdates @Inject constructor(
                 DispatcharrLiveEvent.RecordingsChanged -> Unit
                 is DispatcharrLiveEvent.LookBackMoved ->
                     com.aeriotv.android.core.playback.CatchupRoom.moved(event.channelUuid, event.text)
+                // This TV was replaced by another of the login's: stop now, not once the
+                // buffer has played out (which looked like nothing stopped at all)
+                is DispatcharrLiveEvent.DeviceReplaced ->
+                    if (event.device == com.aeriotv.android.core.network.DispatchMore.deviceId) {
+                        com.aeriotv.android.core.playback.DispatcharrConnectionLimit.replacedNow(event.by, event.byDevice)
+                    }
+                // Watching together: the other device left, this one plays on alone
+                is DispatcharrLiveEvent.LinkEnded ->
+                    if (com.aeriotv.android.core.network.DispatchMore.deviceId in event.devices) {
+                        com.aeriotv.android.core.network.WatchTogether.linkEnded()
+                    }
+                // Watching together: the other device changed channel, this one follows
+                is DispatcharrLiveEvent.LinkedChannel ->
+                    if (com.aeriotv.android.core.network.DispatchMore.deviceId in event.devices) {
+                        com.aeriotv.android.core.network.WatchTogether.followChannel(event.channel)
+                    }
             }
         }
     }
