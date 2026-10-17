@@ -42,6 +42,11 @@ class DispatcharrLiveEventTest {
             DispatcharrLiveEvent.DeviceReplaced("pixel-9", "SHIELD", "shield-1"),
             DispatcharrLiveEvent.parse(replaced),
         )
+        // Another device joined this one: linked too
+        assertEquals(
+            DispatcharrLiveEvent.LinkJoined("pixel-9", listOf("shield-1")),
+            DispatcharrLiveEvent.parse("""{"type": "update", "data": {"type": "link_joined", "user_id": 1, "by": "pixel-9", "devices": ["shield-1"]}}"""),
+        )
         // The other device left: this one watches on alone
         assertEquals(
             DispatcharrLiveEvent.LinkEnded(listOf("shield-1")),

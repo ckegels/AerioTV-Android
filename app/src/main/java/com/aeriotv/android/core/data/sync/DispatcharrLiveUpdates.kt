@@ -285,9 +285,16 @@ class DispatcharrLiveUpdates @Inject constructor(
                     if (com.aeriotv.android.core.network.DispatchMore.deviceId in event.devices) {
                         com.aeriotv.android.core.network.WatchTogether.linkEnded()
                     }
+                // Watching together: another device joined this one, which is linked too now
+                // (and so reports where it is, which keeps the two in step)
+                is DispatcharrLiveEvent.LinkJoined ->
+                    if (com.aeriotv.android.core.network.DispatchMore.deviceId in event.devices) {
+                        com.aeriotv.android.core.network.WatchTogether.linkJoined()
+                    }
                 // Watching together: the other device changed channel, this one follows
                 is DispatcharrLiveEvent.LinkedChannel ->
                     if (com.aeriotv.android.core.network.DispatchMore.deviceId in event.devices) {
+                        com.aeriotv.android.core.network.WatchTogether.linkJoined()
                         com.aeriotv.android.core.network.WatchTogether.followChannel(event.channel)
                     }
             }

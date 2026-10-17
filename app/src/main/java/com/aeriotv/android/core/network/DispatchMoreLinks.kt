@@ -78,6 +78,14 @@ object WatchTogether {
         _linked.value = linked
     }
 
+    /** The server said another device joined this one (or told it to follow): linked. Only
+     *  the joiner knew before, so the joined one never reported where it was and the two
+     *  were never put in step (the Shield, 2026-10-17). */
+    fun linkJoined() {
+        if (!_linked.value) Log.i(TAG, "joined by another device; linked")
+        _linked.value = true
+    }
+
     /** The server said the other device left: this one watches on alone. */
     fun linkEnded() {
         Log.i(TAG, "the other device left; watching alone")
