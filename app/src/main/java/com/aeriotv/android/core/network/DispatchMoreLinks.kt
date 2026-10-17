@@ -156,16 +156,20 @@ class DispatchMoreLinks @Inject constructor(
 
     /**
      * Every [STEP_CHECK_MS] while linked: this device's position (the stream timestamp on
-     * screen) goes to the server and the others' come back; behind by more than
-     * [STEP_SLACK_MS], this device tunes afresh, which puts it as far behind live as a fresh
-     * connection is -- where the other one is, or ahead of it, and then that one catches up the
-     * same way. Never a wait. Cancelled when the link ends.
+     * screen) goes to the server and the others' come back; well behind (InStepCatchUp), this
+     * device tunes afresh, which puts it as far behind live as a fresh connection is -- where
+     * the other one is, or ahead of it, and then that one catches up the same way. Never a
+     * wait. Cancelled when the link ends.
      */
     private suspend fun keepInStep() {
+        val catchUp = com.aeriotv.android.core.playback.InStepCatchUp()
         while (true) {
             kotlinx.coroutines.delay(STEP_CHECK_MS)
             val target = target() ?: continue
-            val pts = withContext(Dispatchers.Main) { holder.inStepPosition() } ?: continue
+            val (pts, channelId) = withContext(Dispatchers.Main) {
+                holder.inStepPosition() to holder.currentChannelId
+            }
+            if (pts == null) continue
             val at = System.currentTimeMillis()
             val others = runCatching {
                 auth.withApiKeyRetry(target.first) { key -> client.reportLinkPosition(target.second, key, target.third, pts, at) }
@@ -175,7 +179,7 @@ class DispatchMoreLinks @Inject constructor(
                 .map { com.aeriotv.android.core.playback.InStep.aheadMs(pts, at, it.pts, it.atMs) to it }
                 .minByOrNull { it.first } ?: continue
             val behind = -ahead
-            if (behind <= STEP_SLACK_MS || behind > STEP_MAX_MS) continue
+            if (!catchUp.decide(channelId, behind, android.os.SystemClock.elapsedRealtime())) continue
             Log.i(TAG, "in step: ${behind}ms behind ${of.name}; tuning afresh")
             withContext(Dispatchers.Main) { holder.freshTuneForInStep("${behind}ms behind ${of.name}") }
             // Let the fresh connection start and settle before looking again
@@ -243,10 +247,6 @@ class DispatchMoreLinks @Inject constructor(
     private companion object {
         const val TAG = "WatchTogether"
         const val STEP_CHECK_MS = 10_000L
-        /** Closer than this is in step: lips and laughs land together. */
-        const val STEP_SLACK_MS = 1_500L
-        /** Further than this is not the same moment of one broadcast (a wrap, a restart). */
-        const val STEP_MAX_MS = 15 * 60_000L
         const val STEP_SETTLE_MS = 20_000L
     }
 }

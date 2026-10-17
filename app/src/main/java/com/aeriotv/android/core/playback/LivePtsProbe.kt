@@ -132,3 +132,52 @@ object InStep {
     /** The position on screen as a PTS: the first timestamp plus the player's position. */
     fun shown(firstPts: Long, positionMs: Long): Long = Math.floorMod(firstPts + positionMs * 90, WRAP)
 }
+
+/**
+ * Whether a device behind the one it watches together with should catch up by tuning afresh.
+ *
+ * A fresh connection only takes away what a stall, a pause or a rewind added. What a device
+ * itself adds -- a slower start, a deeper buffer before it plays -- stays: on a Pixel 9 against
+ * a Shield (2026-10-17) that was about 5 s, every fresh tune landed 5 s behind again, and with
+ * a 1.5 s slack the phone reconnected every 30 s, which looked like endless buffering. So:
+ * only more than [SLACK_MS] behind (the user: 5 s apart is fine), at most once per [MIN_GAP_MS],
+ * and when one catch-up did not take away at least [IMPROVE_MS], not again on this channel.
+ */
+class InStepCatchUp {
+    private var channel: String? = null
+    private var lastTuneAtMs = Long.MIN_VALUE / 2
+    private var behindBeforeTune: Long? = null
+    private var givenUp = false
+
+    /** True: tune afresh now. [behindMs] is how far behind the other this device shows. */
+    fun decide(channelId: String?, behindMs: Long, nowMs: Long): Boolean {
+        if (channelId != channel) {
+            channel = channelId
+            lastTuneAtMs = Long.MIN_VALUE / 2
+            behindBeforeTune = null
+            givenUp = false
+        }
+        if (givenUp) return false
+        behindBeforeTune?.let { before ->
+            behindBeforeTune = null
+            // The first look after a catch-up: no better, so it is this device's own delay
+            if (behindMs > SLACK_MS && before - behindMs < IMPROVE_MS) {
+                givenUp = true
+                return false
+            }
+        }
+        if (behindMs <= SLACK_MS || behindMs > MAX_MS) return false
+        if (nowMs - lastTuneAtMs < MIN_GAP_MS) return false
+        lastTuneAtMs = nowMs
+        behindBeforeTune = behindMs
+        return true
+    }
+
+    companion object {
+        const val SLACK_MS = 6_000L
+        const val IMPROVE_MS = 3_000L
+        const val MIN_GAP_MS = 120_000L
+        /** Further than this is not the same moment of one broadcast (a wrap, a restart). */
+        const val MAX_MS = 15 * 60_000L
+    }
+}
