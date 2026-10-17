@@ -29,6 +29,22 @@ class DispatcharrLiveEventTest {
     }
 
     @Test
+    fun theDeviceWatchedTogetherWithChangedChannel() {
+        // Dispatch More v260 (app_links.mirror)
+        val frame = """{"type": "update", "data": {"type": "linked_channel", "user_id": 1, "channel": "6014de0c", "by": "shield-1", "devices": ["pixel-9"]}}"""
+        assertEquals(
+            DispatcharrLiveEvent.LinkedChannel("6014de0c", "shield-1", listOf("pixel-9")),
+            DispatcharrLiveEvent.parse(frame),
+        )
+        // Who took over, so the replaced device can offer to join it
+        val replaced = """{"type": "update", "data": {"type": "device_replaced", "device": "pixel-9", "by": "SHIELD", "by_device": "shield-1"}}"""
+        assertEquals(
+            DispatcharrLiveEvent.DeviceReplaced("pixel-9", "SHIELD", "shield-1"),
+            DispatcharrLiveEvent.parse(replaced),
+        )
+    }
+
+    @Test
     fun epgImportFinished() {
         assertEquals(DispatcharrLiveEvent.EpgRefreshed(42), DispatcharrLiveEvent.parse(epgDone))
     }

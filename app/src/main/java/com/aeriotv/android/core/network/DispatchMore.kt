@@ -39,6 +39,7 @@ object DispatchMore {
     const val DEFAULT_STALL_PATH = "/api/core/app-stall/"
     const val DEFAULT_GUIDE_CHOICE_PATH = "/api/core/app-guide/"
     const val DEFAULT_REWIND_PATH = "/api/channels/rewind/"
+    const val DEFAULT_LINK_PATH = "/api/core/app-link/"
 
     /** What one server said on /api/core/capabilities/. */
     @Serializable
@@ -67,6 +68,10 @@ object DispatchMore {
          *  pause and rewind need nothing on this device (core/timeshift/ServerRewind.kt). */
         val rewind: Boolean = false,
         val rewindPath: String = DEFAULT_REWIND_PATH,
+        /** Watch together (v260): devices of one login may join each other and then
+         *  follow each other's channel changes (WatchTogether). */
+        val linkDevices: Boolean = false,
+        val linkPath: String = DEFAULT_LINK_PATH,
     )
 
     // The formats the server accepts; anything else it ignores.

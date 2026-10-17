@@ -3899,6 +3899,12 @@ class AerioExoPlayerHolder @Inject constructor(
         stop()
     }
 
+    /** Watch together: the notice goes, and the caller tunes the other device's
+     *  channel (or, when it is this one, [retryUnavailable]) -- never a take-over. */
+    fun clearNoticeForJoin() {
+        _connectionLimit.value = null
+    }
+
     /** Retry button of the connection-limit notice: one fresh tune of what
      *  was refused. */
     fun retryConnectionLimit() {

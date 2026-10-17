@@ -278,7 +278,12 @@ class DispatcharrLiveUpdates @Inject constructor(
                 // buffer has played out (which looked like nothing stopped at all)
                 is DispatcharrLiveEvent.DeviceReplaced ->
                     if (event.device == com.aeriotv.android.core.network.DispatchMore.deviceId) {
-                        com.aeriotv.android.core.playback.DispatcharrConnectionLimit.replacedNow(event.by)
+                        com.aeriotv.android.core.playback.DispatcharrConnectionLimit.replacedNow(event.by, event.byDevice)
+                    }
+                // Watching together: the other device changed channel, this one follows
+                is DispatcharrLiveEvent.LinkedChannel ->
+                    if (com.aeriotv.android.core.network.DispatchMore.deviceId in event.devices) {
+                        com.aeriotv.android.core.network.WatchTogether.followChannel(event.channel)
                     }
             }
         }

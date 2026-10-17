@@ -51,6 +51,9 @@ object DispatcharrConnectionLimit {
         val kind: Kind,
         val title: String,
         val message: String,
+        /** [Kind.OTHER_DEVICE]: the id of the device that took over, so this one can
+         *  offer to join it (watch together); null when the server did not say. */
+        val byDevice: String? = null,
     )
 
     /** True while the active playlist is a Dispatcharr API (Direct Connect)
@@ -110,8 +113,8 @@ object DispatcharrConnectionLimit {
      *  first. The refusal of its next request says the same, for when the socket is closed. */
     val replaced: kotlinx.coroutines.flow.SharedFlow<Notice> = _replaced
 
-    fun replacedNow(byName: String?) {
-        _replaced.tryEmit(otherDeviceNotice(byName))
+    fun replacedNow(byName: String?, byDevice: String? = null) {
+        _replaced.tryEmit(otherDeviceNotice(byName, byDevice))
     }
 
     /** The other-device notice, when this is Dispatch More's refusal of a
@@ -120,11 +123,14 @@ object DispatcharrConnectionLimit {
         if (code != 409 || !body.contains("device_replaced")) return null
         val root = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
         if ((root["device_replaced"] as? JsonPrimitive)?.booleanOrNull != true) return null
-        return otherDeviceNotice((root["by"] as? JsonPrimitive)?.contentOrNull)
+        return otherDeviceNotice(
+            (root["by"] as? JsonPrimitive)?.contentOrNull,
+            (root["by_device"] as? JsonPrimitive)?.contentOrNull,
+        )
     }
 
     /** "Playing on Bedroom TV" (or on another device, when [byName] is blank). */
-    fun otherDeviceNotice(byName: String?): Notice {
+    fun otherDeviceNotice(byName: String?, byDevice: String? = null): Notice {
         val by = byName?.trim()?.takeIf { it.isNotEmpty() && it != "another device" }
         return Notice(
             kind = Kind.OTHER_DEVICE,
@@ -134,6 +140,7 @@ object DispatcharrConnectionLimit {
                 AppText.get(R.string.player_other_device_title_unnamed)
             },
             message = AppText.get(R.string.player_other_device_message),
+            byDevice = byDevice?.trim()?.takeIf { it.isNotEmpty() },
         )
     }
 

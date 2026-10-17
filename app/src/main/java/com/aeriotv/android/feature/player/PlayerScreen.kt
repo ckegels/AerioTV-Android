@@ -203,6 +203,8 @@ fun PlayerScreen(
     val problemReports = remember { playerEntry.dispatchMoreReports() }
     var problemReport by remember { mutableStateOf<ProblemReportRequest?>(null) }
     val guideChoices = remember { playerEntry.dispatchMoreGuides() }
+    // Watch together: created here too, so Join works from the player (its hooks, see init)
+    remember { playerEntry.dispatchMoreLinks() }
     var guideChoice by remember { mutableStateOf<GuideChoiceRequest?>(null) }
     val exoWindowState = remember { playerEntry.exoWindowState() }
     val timeshiftController = remember { playerEntry.timeshiftController() }
@@ -1537,15 +1539,36 @@ fun PlayerScreen(
                 val native = event.nativeKeyEvent
                 // A refusal notice (stream limit, another device took over) owns the
                 // screen, and OK is its button: the bare-video OK handling below would
-                // otherwise take the press for the info bar, and the button never got it
-                if (isTvForm && exoHolder.connectionLimit.value != null &&
-                    (native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
-                        native.keyCode == android.view.KeyEvent.KEYCODE_ENTER)
-                ) {
-                    if (native.action == android.view.KeyEvent.ACTION_UP && !native.isCanceled) {
-                        exoHolder.retryConnectionLimit()
+                // otherwise take the press for the info bar, and the button never got it.
+                // With Join beside Watch here (watch together), Left / Right choose.
+                val shownNotice = exoHolder.connectionLimit.value
+                if (isTvForm && shownNotice != null) {
+                    val joinable = shownNotice.kind ==
+                        com.aeriotv.android.core.playback.DispatcharrConnectionLimit.Kind.OTHER_DEVICE &&
+                        shownNotice.byDevice != null &&
+                        com.aeriotv.android.core.network.WatchTogether.joiner != null
+                    val together = com.aeriotv.android.core.network.WatchTogether
+                    when (native.keyCode) {
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT ->
+                            if (joinable) {
+                                if (native.action == android.view.KeyEvent.ACTION_DOWN) {
+                                    together.noticeChoice.value =
+                                        if (native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) 0 else 1
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+                        android.view.KeyEvent.KEYCODE_DPAD_CENTER, android.view.KeyEvent.KEYCODE_ENTER -> {
+                            if (native.action == android.view.KeyEvent.ACTION_UP && !native.isCanceled) {
+                                if (joinable && together.noticeChoice.value == 1) {
+                                    together.join(shownNotice.byDevice!!)
+                                } else {
+                                    exoHolder.retryConnectionLimit()
+                                }
+                                together.noticeChoice.value = 0
+                            }
+                            return@onPreviewKeyEvent true
+                        }
                     }
-                    return@onPreviewKeyEvent true
                 }
                 // Info bar style: hold OK opens the options menu, also while
                 // the card row is up (a short press still reaches the focused
@@ -1946,6 +1969,35 @@ fun PlayerScreen(
                 reports = problemReports,
                 onDismiss = { problemReport = null },
             )
+        }
+        // Watch together (Dispatch More v260): a channel the device this one watches
+        // together with changed to, or the one it just joined, is tuned here in place
+        DisposableEffect(Unit) {
+            com.aeriotv.android.core.network.WatchTogether.playerOpen = true
+            onDispose { com.aeriotv.android.core.network.WatchTogether.playerOpen = false }
+        }
+        val followRequest by com.aeriotv.android.core.network.WatchTogether.follow.collectAsStateWithLifecycle()
+        LaunchedEffect(followRequest) {
+            val request = followRequest ?: return@LaunchedEffect
+            com.aeriotv.android.core.network.WatchTogether.consumed(request)
+            val i = channels.indexOfFirst {
+                com.aeriotv.android.core.network.DispatchMore.channelRef(it.url) == request.channelUuid
+            }
+            if (i < 0) {
+                Log.w(TAG, "[TOGETHER] channel ${request.channelUuid} is not in this list")
+                return@LaunchedEffect
+            }
+            // The other-device notice goes; its channel plays, never as a take-over
+            val hadNotice = exoHolder.connectionLimit.value != null
+            exoHolder.clearNoticeForJoin()
+            if (i == currentIndex) {
+                if (hadNotice) exoHolder.retryUnavailable()
+            } else {
+                com.aeriotv.android.core.data.repository.EpgSweepGate.onTuneStart()
+                exoHolder.markTunePress(channels[i].name)
+                currentIndex = i
+            }
+            Log.i(TAG, "[TOGETHER] following to ${channels[i].name}")
         }
         // "Wrong guide? Choose another": offered when the stream's server allows it
         DisposableEffect(Unit) {
@@ -3379,6 +3431,7 @@ interface PlayerScreenEntryPoint {
     fun exoPlayerHolder(): com.aeriotv.android.core.playback.AerioExoPlayerHolder
     fun dispatchMoreReports(): com.aeriotv.android.core.network.DispatchMoreReports
     fun dispatchMoreGuides(): com.aeriotv.android.core.network.DispatchMoreGuides
+    fun dispatchMoreLinks(): com.aeriotv.android.core.network.DispatchMoreLinks
     fun exoWindowState(): ExoWindowState
     fun timeshiftController(): com.aeriotv.android.core.timeshift.TimeshiftController
     fun castSender(): com.aeriotv.android.core.cast.AerioCastSender

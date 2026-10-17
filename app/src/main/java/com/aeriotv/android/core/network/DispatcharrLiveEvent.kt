@@ -61,7 +61,11 @@ sealed interface DispatcharrLiveEvent {
 
     /** Dispatch More: another arrTV device of this login took over (contract §5a). [device]
      *  is the replaced device's own id: only that device acts on it. */
-    data class DeviceReplaced(val device: String, val by: String?) : DispatcharrLiveEvent
+    data class DeviceReplaced(val device: String, val by: String?, val byDevice: String? = null) : DispatcharrLiveEvent
+
+    /** Dispatch More v260, watch together: a device this one watches together with ([by])
+     *  changed to [channel]; [devices] are the ones to follow. */
+    data class LinkedChannel(val channel: String, val by: String?, val devices: List<String>) : DispatcharrLiveEvent
 
     /** A recording was scheduled, started, stopped, changed or removed. */
     data object RecordingsChanged : DispatcharrLiveEvent
@@ -83,7 +87,7 @@ sealed interface DispatcharrLiveEvent {
             if (!text.contains("m3u_refresh") && !text.contains("epg_refresh") &&
                 !text.contains("channels_changed") && !text.contains("lookback_moved") &&
                 !text.contains("recording") && !text.contains("connection_established") &&
-                !text.contains("device_replaced")
+                !text.contains("device_replaced") && !text.contains("linked_channel")
             ) return null
             val root = runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return null
             if (root.string("type") == "connection_established") return Connected
@@ -114,6 +118,13 @@ sealed interface DispatcharrLiveEvent {
                 "device_replaced" -> DeviceReplaced(
                     data.string("device") ?: return null,
                     data.string("by"),
+                    data.string("by_device"),
+                )
+                "linked_channel" -> LinkedChannel(
+                    data.string("channel") ?: return null,
+                    data.string("by"),
+                    (data["devices"] as? kotlinx.serialization.json.JsonArray)
+                        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty(),
                 )
                 in RECORDING_TYPES -> RecordingsChanged
                 else -> null

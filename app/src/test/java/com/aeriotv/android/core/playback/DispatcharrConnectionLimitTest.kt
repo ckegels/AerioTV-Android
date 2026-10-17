@@ -24,6 +24,17 @@ class DispatcharrConnectionLimitTest {
         )!!
         assertEquals(DispatcharrConnectionLimit.Kind.OTHER_DEVICE, notice.kind)
         assertEquals("Playing on Bedroom TV", notice.title)
+        // An older server does not say which device: no Join
+        assertEquals(null, notice.byDevice)
+    }
+
+    @Test
+    fun theDeviceThatTookOverCanBeJoined() {
+        val notice = DispatcharrConnectionLimit.fromResponse(
+            409,
+            """{"error": "Playing on another device: SHIELD", "device_replaced": true, "by": "SHIELD", "by_device": "shield-1"}""",
+        )!!
+        assertEquals("shield-1", notice.byDevice)
     }
 
     @Test
