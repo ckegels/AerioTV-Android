@@ -35,6 +35,29 @@ class InStepTest {
     }
 
     @Test
+    fun foundWhenTheStreamStartsMidPacketAndArrivesInTinyReads() {
+        val stream = ByteArray(77) { 0x11 } + nullPacket() + nullPacket() + nullPacket() +
+            pesPacket(0x100, 0xE0, 123_456_789L) + nullPacket()
+        val finder = FirstPtsFinder()
+        var found: Long? = null
+        var i = 0
+        while (i < stream.size && found == null) {
+            val n = minOf(50, stream.size - i)
+            found = finder.feed(stream, i, n)
+            i += n
+        }
+        assertEquals(123_456_789L, found)
+    }
+
+    @Test
+    fun givesUpAfterAMegabyteWithoutATimestamp() {
+        val nothing = ByteArray(188 * 1000).also { b -> for (k in b.indices step 188) { b[k] = 0x47; b[k + 1] = 0x1F; b[k + 2] = 0xFF.toByte() } }
+        val finder = FirstPtsFinder()
+        repeat(6) { finder.feed(nothing, 0, nothing.size) }
+        assertEquals(true, finder.done)
+    }
+
+    @Test
     fun aheadIsHowMuchFurtherThisDeviceShows() {
         // Both measured at the same moment, this one 30 s further on
         assertEquals(30_000L, InStep.aheadMs(90_000L * 100, 1_000L, 90_000L * 70, 1_000L))
